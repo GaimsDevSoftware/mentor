@@ -85,6 +85,80 @@ def _fix_meta_tensors(pipe, dtype):
             logger.info(f"  Fixed {fixed} meta tensors in {name}")
 
 
+def _free_vram_for_diffusion():
+    """Make room on the GPU before loading a diffusion model.
+
+    Odysseus and a local Ollama share one GPU. When Ollama is holding a model
+    (~21GB on a 24GB card) a diffusion model load OOMs (CUDA OOM /
+    vkAllocateMemory failed). This unloads idle Ollama models — keep_alive=0,
+    which Ollama honours by freeing VRAM immediately and reloads them on the
+    next chat request — but only when free VRAM is below
+    DIFFUSION_VRAM_HEADROOM_GB (default 16). No-op when there is already room,
+    when no Ollama model is loaded, or in CPU-offload mode.
+
+    Kept as one self-contained function + a single call in load_model() so it
+    survives upstream `git pull` with minimal merge surface.
+    """
+    try:
+        if getattr(_args, "cpu_offload", False) or not torch.cuda.is_available():
+            return
+        import json as _json
+        import subprocess as _sub
+        import time as _time
+        import urllib.request as _url
+
+        headroom = float(os.environ.get("DIFFUSION_VRAM_HEADROOM_GB", "16"))
+
+        def _free_gb():
+            # Use nvidia-smi, not torch.cuda.mem_get_info(): when the card is
+            # nearly full, creating a CUDA context just to measure free memory
+            # itself OOMs. nvidia-smi allocates nothing.
+            try:
+                out = _sub.run(
+                    ["nvidia-smi", "--query-gpu=memory.free",
+                     "--format=csv,noheader,nounits", "-i", "0"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                return int(out.stdout.strip().splitlines()[0]) / 1024.0
+            except Exception:
+                return float("inf")  # can't measure → assume room, don't churn
+
+        if _free_gb() >= headroom:
+            return
+        base = (os.environ.get("OLLAMA_BASE_URL") or os.environ.get("OLLAMA_URL")
+                or "http://127.0.0.1:11434").replace("/v1", "").rstrip("/")
+        try:
+            with _url.urlopen(base + "/api/ps", timeout=3) as r:
+                loaded = _json.loads(r.read()).get("models", [])
+        except Exception as e:
+            logger.warning(f"VRAM guard: could not query Ollama ({e}); continuing")
+            return
+        if not loaded:
+            return
+        logger.info(f"VRAM guard: {_free_gb():.1f}GB free < {headroom}GB headroom; "
+                    f"unloading {len(loaded)} Ollama model(s)")
+        for m in loaded:
+            name = m.get("name") or m.get("model")
+            if not name:
+                continue
+            try:
+                req = _url.Request(
+                    base + "/api/generate",
+                    data=_json.dumps({"model": name, "keep_alive": 0}).encode(),
+                    headers={"Content-Type": "application/json"},
+                )
+                _url.urlopen(req, timeout=10).read()
+            except Exception as e:
+                logger.warning(f"VRAM guard: unload of {name} failed: {e}")
+        for _ in range(40):  # wait up to ~20s for the driver to release VRAM
+            if _free_gb() >= headroom:
+                break
+            _time.sleep(0.5)
+        logger.info(f"VRAM guard: {_free_gb():.1f}GB free after unload")
+    except Exception as e:
+        logger.warning(f"VRAM guard error (continuing anyway): {e}")
+
+
 def load_model():
     global _pipe, _model_id
     import diffusers
@@ -94,6 +168,8 @@ def load_model():
     dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
     torch_dtype = dtype_map.get(_args.dtype, torch.bfloat16)
     use_offload = _args.cpu_offload
+
+    _free_vram_for_diffusion()
 
     logger.info(f"Loading model from {model_path} (dtype={_args.dtype}, offload={use_offload})...")
 
