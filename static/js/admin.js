@@ -685,10 +685,22 @@ function initEndpointForm() {
     });
   }
 
+  // Guided: a known provider's base URL is derived, so hide the URL box and let
+  // the provider picker be the whole interaction (pick provider + paste key).
+  // The URL field only appears for "Custom URL".
+  function _applyProviderUrlVis() {
+    if (!urlInput) return;
+    const custom = !provider.value;
+    urlInput.style.display = custom ? '' : 'none';
+    urlInput.placeholder = custom ? 'Custom base URL, e.g. https://host:port/v1' : 'Base URL or pick provider';
+    if (pickerBtn) pickerBtn.style.flex = custom ? '' : '1';
+  }
   provider.addEventListener('change', () => {
     if (provider.value) urlInput.value = provider.value;
     else urlInput.value = '';
+    _applyProviderUrlVis();
   });
+  _applyProviderUrlVis();
   urlInput.addEventListener('input', () => {
     if (provider.value && urlInput.value.trim() !== provider.value) {
       provider.value = '';
@@ -944,6 +956,21 @@ function initEndpointForm() {
       }
     });
   }
+
+  // More one-click local quickstarts — fill the URL so the user clicks instead
+  // of typing an endpoint. Defaults match each server's documented port.
+  [['adm-epLmsBtn', 'http://localhost:1234/v1', 'LM Studio'],
+   ['adm-epLlamaBtn', 'http://localhost:8080/v1', 'llama.cpp'],
+   ['adm-epJanBtn', 'http://localhost:1337/v1', 'Jan']].forEach(([id, url, name]) => {
+    const b = el(id);
+    if (!b) return;
+    b.addEventListener('click', () => {
+      const input = el('adm-epLocalUrl');
+      if (input) { input.value = url; input.focus(); }
+      const msg = _endpointMsg('local');
+      if (msg) { msg.innerHTML = '<span style="font-size:11px;opacity:0.55;">' + name + ' ready to test.</span>'; msg.className = ''; }
+    });
+  });
 
   // Discover local models button
   const discoverBtn = el('adm-epDiscoverBtn');
