@@ -421,7 +421,7 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
   });
 })();
 const $=s=>document.querySelector(s);
-let HW_CONTEXT='';  // a short hardware summary, fed to the AI explainers for personalised answers
+let HW_CONTEXT='', HW_VRAM=0, HW_RAM=0;  // hardware summary + numeric VRAM/RAM (for headroom-aware fit)
 const j=(u,o)=>fetch(u,Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},o)).then(r=>{if(!r.ok)throw r.status;return r.json();});
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 // Tiny, XSS-safe markdown → HTML for AI guide text (escape first, then add our own tags).
@@ -453,7 +453,9 @@ j('/api/hwfit/system').then(s=>{
     cell('RAM', `${s.available_ram_gb||'?'} GB free`, `of ${s.total_ram_gb||'?'} GB`)+
     cell('CPU', `${s.cpu_cores||'?'} cores`, s.cpu_name||'');
   HW_CONTEXT = `${s.has_gpu?(s.gpu_name||'GPU')+' with '+(s.gpu_vram_gb||'?')+'GB VRAM ('+(s.backend||'')+')':'no GPU, CPU-only'}, ${s.total_ram_gb||'?'}GB RAM (${s.available_ram_gb||'?'}GB free)`;
-}).catch(e=>{ $('#hw').innerHTML = e===401?adminNote:'<span class="muted">Could not read hardware.</span>'; $('#hw-pill').textContent='hardware n/a'; });
+  HW_VRAM = +(s.gpu_vram_gb||0); HW_RAM = +(s.available_ram_gb||0);
+  loadFits();
+}).catch(e=>{ $('#hw').innerHTML = e===401?adminNote:'<span class="muted">Could not read hardware.</span>'; $('#hw-pill').textContent='hardware n/a'; loadFits(); });
 
 // 2) Running now — poll every 3s
 function renderTasks(d){
@@ -499,20 +501,32 @@ $('#rec-btn').addEventListener('click',async()=>{
   btn.disabled=false; btn.textContent='Recommend roles';
 });
 
-// 4) Fits this machine
-j('/api/hwfit/models?fit_only=1&limit=24').then(d=>{
-  const el=$('#fits'); const ms=(d&&d.models)||[];
-  if(!ms.length){ el.innerHTML='<span class="muted" style="font-size:13px">No catalog models fit this machine — or the catalog is empty.</span>'; return; }
-  el.innerHTML=ms.map(m=>{
-    const name=m.model||m.name||'?';
-    const v=m.vram_q4_gb||m.vram_gb;
-    return `<div class="item"><span class="badge fit">fits</span>`
-      +`<span class="grow"><div class="name">${esc(name)}</div>`
-      +`<div class="meta">${v?`~${esc(v)} GB VRAM`:''}${m.context_length?` · ${esc(m.context_length)} ctx`:''}${m.size_gb?` · ${esc(m.size_gb)} GB`:''}</div></span>`
-      +`${m.score!=null?`<span class="badge">${Math.round((m.score||0)*100)}</span>`:''}`
-      +`${m.name?`<button class="btn mini" data-dl="${esc(m.name)}">Download</button>`:''}</div>`;
-  }).join('');
-}).catch(e=>{ $('#fits').innerHTML = e===401?adminNote:'<span class="muted">Could not rank models.</span>'; });
+// 4) Fits this machine — RESERVE headroom for the OS + browser (they run
+// alongside the model and use real VRAM/RAM), so we never recommend a model
+// that would starve the desktop.
+const VRAM_RESERVE=3, RAM_RESERVE=4;  // GB kept free for KDE Plasma + browser
+function loadFits(){
+  const el=$('#fits');
+  const effV = HW_VRAM>0 ? Math.max(0, +(HW_VRAM-VRAM_RESERVE).toFixed(1)) : 0;
+  j('/api/hwfit/models?limit=80').then(d=>{
+    let ms=(d&&d.models)||[];
+    if(HW_VRAM>0) ms=ms.filter(m=>{const v=+(m.vram_q4_gb||m.vram_gb||0);return v>0&&v<=effV;});
+    else ms=ms.filter(m=>m.fit);
+    ms=ms.slice(0,24);
+    const banner = HW_VRAM>0
+      ? `<div class="muted" style="font-size:12px;margin-bottom:8px">Reserving <b>~${VRAM_RESERVE} GB VRAM</b> + <b>~${RAM_RESERVE} GB RAM</b> for your desktop + browser → recommending models up to <b>~${effV} GB</b> (of ${HW_VRAM} GB).</div>`
+      : '';
+    if(!ms.length){ el.innerHTML=banner+'<span class="muted" style="font-size:13px">Nothing fits once desktop+browser headroom is reserved — try a smaller/quantized model, or free VRAM.</span>'; return; }
+    el.innerHTML=banner+ms.map(m=>{
+      const name=m.model||m.name||'?'; const v=m.vram_q4_gb||m.vram_gb;
+      return `<div class="item"><span class="badge fit">fits</span>`
+        +`<span class="grow"><div class="name">${esc(name)}</div>`
+        +`<div class="meta">${v?`~${esc(v)} GB VRAM`:''}${m.context_length?` · ${esc(m.context_length)} ctx`:''}${m.size_gb?` · ${esc(m.size_gb)} GB`:''}</div></span>`
+        +`${m.score!=null?`<span class="badge">${Math.round((m.score||0)*100)}</span>`:''}`
+        +`${m.name?`<button class="btn mini" data-dl="${esc(m.name)}">Download</button>`:''}</div>`;
+    }).join('');
+  }).catch(e=>{ el.innerHTML = e===401?adminNote:'<span class="muted">Could not rank models.</span>'; });
+}
 
 // 5) Downloaded & ready
 j('/api/model/cached').then(d=>{
