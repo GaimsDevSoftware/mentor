@@ -12,7 +12,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APPS_DIR="$HOME/.local/share/applications"
 DESKTOP="$APPS_DIR/mentor.desktop"
 LAUNCHER="$REPO_DIR/scripts/odysseus-app.sh"
-ICON="$REPO_DIR/static/odysseus-icon.svg"
+ICON="$REPO_DIR/static/mentor-icon.png"
 
 if [ "${1:-}" = "--uninstall" ]; then
   rm -f "$DESKTOP"

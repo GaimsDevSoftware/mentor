@@ -9,7 +9,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNNER="$HERE/mentor_runner.py"
 DBUS_DIR="$HOME/.local/share/dbus-1/services"
 PLUG_DIR="$HOME/.local/share/krunner/dbusplugins"
-ICON="$(cd "$HERE/../.." && pwd)/static/odysseus-icon.svg"
+ICON="$(cd "$HERE/../.." && pwd)/static/mentor-icon.png"
 SVC="$DBUS_DIR/org.mentor.krunner.service"
 PLUG="$PLUG_DIR/mentor.desktop"
 

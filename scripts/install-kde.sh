@@ -5,7 +5,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 LAUNCHER="$REPO/scripts/odysseus-app.sh"
-ICON="$REPO/static/odysseus-icon.svg"
+ICON="$REPO/static/mentor-icon.png"
 TRAY="$REPO/scripts/mentor_tray.py"
 UNIT="$HOME/.config/systemd/user/mentor-tray.service"
 
