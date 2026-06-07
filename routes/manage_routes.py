@@ -1464,6 +1464,7 @@ const CONNECT_PROVIDERS=[
  {name:'Anthropic',url:'https://api.anthropic.com',hint:'Claude'},
  {name:'OpenAI',url:'https://api.openai.com/v1',hint:'GPT'},
  {name:'OpenRouter',url:'https://openrouter.ai/api/v1',hint:'many models',req:true},
+ {name:'OpenCode Zen',url:'https://opencode.ai/zen/v1',hint:'free + paid · coding',req:true},
  {name:'DeepSeek',url:'https://api.deepseek.com/v1',hint:'cheap & strong'},
  {name:'Groq',url:'https://api.groq.com/openai/v1',hint:'very fast'},
  {name:'Google Gemini',url:'https://generativelanguage.googleapis.com/v1beta/openai',hint:'Gemini'},
