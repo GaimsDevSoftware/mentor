@@ -1356,20 +1356,36 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
   <label class="lab">Repository</label>
   <div class="row">
     <select id="proj" class="fld" style="flex:1"><option>scanning for repos…</option></select>
+    <button class="btn" id="proj-new" title="Start a brand-new app from scratch">＋ New</button>
     <button class="btn" id="proj-refresh" title="Rescan for git repos">↻</button>
   </div>
   <div id="proj-custom" style="display:none;margin-top:8px"><input id="proj-path" class="fld" placeholder="/full/path/to/your/repo"></div>
+  <div id="newproj" style="display:none;margin-top:8px;padding:11px;border:1px solid var(--sep-2);border-radius:9px;background:var(--tint)">
+    <div class="row" style="flex-wrap:wrap;gap:8px">
+      <input id="np-name" class="fld" style="flex:1;min-width:150px" placeholder="project name — e.g. my-notes-app">
+      <select id="np-kind" class="fld" style="flex:0 0 220px">
+        <option value="gtk">Linux desktop app · GTK</option>
+        <option value="qt">Linux desktop app · Qt (PySide6)</option>
+        <option value="flask">Web app · Flask</option>
+        <option value="cli">Command-line tool</option>
+        <option value="empty">Empty project</option>
+      </select>
+      <button class="btn primary" id="np-create">Create</button>
+    </div>
+    <div id="np-msg" class="faint" style="font-size:12px;margin-top:6px">Mentor scaffolds a runnable starter app + git repo under <span class="mono">~/mentor-projects</span>, then you describe what to build below.</div>
+  </div>
   <label class="lab">Coder model</label>
   <select id="model" class="fld"><option>loading models…</option></select>
   <div class="faint" style="font-size:11px;margin-top:8px">Edits run on a feature branch (never main) and are <b>not committed</b> — you review the diff, then commit what you like. Choices are remembered.</div>
 </div>
 
-<div class="sec-title">Make a change</div>
+<div class="sec-title">Describe what to build</div>
 <div class="card">
-  <label class="lab">What should change?</label>
-  <textarea id="instr" class="fld" rows="3" placeholder="e.g. add a /api/health endpoint that returns {ok:true, version:...}"></textarea>
+  <label class="lab">What should Mentor build or change? Think big — a whole app, a feature, a redesign.</label>
+  <textarea id="instr" class="fld" rows="3" placeholder="e.g. Build a GTK desktop app: a window with a sidebar list of notes and a + button that adds one, saved to ~/.mentor-notes.json. Clean, modern look."></textarea>
+  <div class="row" id="ex-chips" style="flex-wrap:wrap;gap:6px;margin-top:8px"></div>
   <label class="lab">Files to focus on (optional — leave blank and the AI picks)</label>
-  <input id="files" class="fld" placeholder="src/app.py routes/health.py">
+  <input id="files" class="fld" placeholder="leave blank — the AI picks the files itself">
   <div class="row" style="margin-top:10px"><button class="btn" id="run-btn">Vibe-code it</button><span id="run-msg" class="muted" style="font-size:12px"></span></div>
   <div id="prog" style="margin-top:10px"></div>
   <div id="result"></div>
@@ -1429,6 +1445,34 @@ async function installAider(){
   const poll=setInterval(async()=>{ try{ const s=await j('/api/code/status'); if(s.aider_installed){ clearInterval(poll); msg.textContent='Installed ✓'; load(); } }catch(e){} }, 3000);
 }
 $('#proj-refresh').onclick=()=>loadProjects();
+
+// New project — scaffold a runnable starter app + git repo, then select it.
+$('#proj-new').onclick=()=>{ const n=$('#newproj'); n.style.display = n.style.display==='none'?'':'none'; if(n.style.display==='')$('#np-name').focus(); };
+$('#np-create').onclick=async()=>{
+  const name=($('#np-name').value||'').trim(); const kind=$('#np-kind').value; const m=$('#np-msg');
+  if(!name){ m.textContent='Give the project a name.'; m.style.color='var(--err)'; return; }
+  m.textContent='Creating…'; m.style.color='var(--dim)'; $('#np-create').disabled=true;
+  try{ const r=await j('/api/code/new-project',{method:'POST',body:JSON.stringify({name,kind})});
+    if(r.ok){ m.textContent='Created ✓ — now describe what to build below.'; m.style.color='var(--ok)';
+      await loadProjects(r.path); $('#newproj').style.display='none'; $('#np-name').value=''; }
+    else { m.textContent=r.error||'Could not create.'; m.style.color='var(--err)'; }
+  }catch(e){ m.textContent=e===401?'Admin only.':'Could not create.'; m.style.color='var(--err)'; }
+  $('#np-create').disabled=false;
+};
+
+// Ambitious example prompts — click to fill the box. Sets the bar: whole apps.
+const EXAMPLES=[
+  'Build a GTK desktop app: a window with a sidebar list of notes and a + button that adds one, saved to ~/.mentor-notes.json. Clean, modern look.',
+  'Make a Qt (PySide6) Pomodoro timer with start/pause/reset, a big countdown, and a system-tray icon.',
+  'Build a Flask web dashboard showing live CPU, RAM and disk usage with small charts, auto-refreshing every 2 seconds.',
+  'Create a command-line tool that watches a folder and converts every new image to WebP, printing a summary.',
+  'Add a Settings dialog with a dark-mode toggle that persists between launches.',
+];
+(function(){ const c=$('#ex-chips'); if(!c) return;
+  c.innerHTML='<span class="faint" style="font-size:11px;align-self:center">Try:</span>'+
+    EXAMPLES.map((e,i)=>'<button class="btn mini ex-chip" data-i="'+i+'" type="button">'+esc(e.split(':')[0].split(' ').slice(0,4).join(' '))+'…</button>').join('');
+  c.querySelectorAll('.ex-chip').forEach(b=>b.onclick=()=>{ $('#instr').value=EXAMPLES[+b.dataset.i]; $('#instr').focus(); });
+})();
 
 function stageHtml(s){ return '<div class="row"><span class="spin"></span><span class="muted" style="font-size:13px">'+esc(s)+'</span></div>'; }
 function colorDiff(diff){

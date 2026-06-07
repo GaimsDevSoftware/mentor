@@ -50,6 +50,65 @@ def setup_code_routes() -> APIRouter:
         from src.code_edit import list_local_models
         return {"models": await list_local_models(), "current": _get("aider_model", "")}
 
+    @router.post("/api/code/new-project")
+    async def new_project(payload: Dict[str, Any] = Body(...), _admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Scaffold a fresh git repo so the user can vibe-code a whole app from
+        nothing — a real starting point for Aider to build on."""
+        import os
+        import re
+        import subprocess
+        name = re.sub(r"[^a-z0-9_-]+", "-", str(payload.get("name", "")).strip().lower()).strip("-")
+        kind = str(payload.get("kind", "empty")).strip()
+        if not name:
+            return {"ok": False, "error": "Give the project a name."}
+        base = os.path.expanduser("~/mentor-projects")
+        path = os.path.join(base, name)
+        if os.path.exists(path):
+            return {"ok": False, "error": "A project with that name already exists."}
+        SCAFFOLDS = {
+            "gtk": {"app.py": (
+                "import gi\ngi.require_version('Gtk', '4.0')\nfrom gi.repository import Gtk\n\n"
+                "class App(Gtk.Application):\n    def __init__(self):\n        super().__init__(application_id='org.mentor.%s')\n"
+                "    def do_activate(self):\n        win = Gtk.ApplicationWindow(application=self, title='%s')\n"
+                "        win.set_default_size(640, 440)\n        win.set_child(Gtk.Label(label='Hello from %s — start vibe-coding!'))\n        win.present()\n\n"
+                "App().run()\n") % (name.replace("-", "_"), name, name),
+                "requirements.txt": "PyGObject\n",
+                "README.md": "# %s\n\nA GTK4 Linux desktop app. Run: `python app.py`\n" % name},
+            "qt": {"app.py": (
+                "from PySide6.QtWidgets import QApplication, QMainWindow, QLabel\n\n"
+                "app = QApplication([])\nwin = QMainWindow()\nwin.setWindowTitle('%s')\nwin.resize(640, 440)\n"
+                "win.setCentralWidget(QLabel('Hello from %s — start vibe-coding!'))\nwin.show()\napp.exec()\n") % (name, name),
+                "requirements.txt": "PySide6\n",
+                "README.md": "# %s\n\nA Qt (PySide6) Linux desktop app. Run: `python app.py`\n" % name},
+            "flask": {"app.py": (
+                "from flask import Flask\napp = Flask(__name__)\n\n@app.route('/')\ndef home():\n    return '<h1>%s</h1><p>Start vibe-coding!</p>'\n\n"
+                "if __name__ == '__main__':\n    app.run(debug=True, port=5000)\n") % name,
+                "requirements.txt": "flask\n",
+                "README.md": "# %s\n\nA Flask web app. Run: `python app.py` then open http://localhost:5000\n" % name},
+            "cli": {"main.py": (
+                "import argparse\n\ndef main():\n    p = argparse.ArgumentParser(description='%s')\n    p.add_argument('--name', default='world')\n"
+                "    a = p.parse_args()\n    print(f'Hello, {a.name}!')\n\nif __name__ == '__main__':\n    main()\n") % name,
+                "README.md": "# %s\n\nA command-line tool. Run: `python main.py --help`\n" % name},
+            "empty": {"README.md": "# %s\n\nDescribe what you want in the Code page and let Mentor build it.\n" % name},
+        }
+        files = SCAFFOLDS.get(kind, SCAFFOLDS["empty"])
+        try:
+            os.makedirs(path, exist_ok=False)
+            for fn, content in files.items():
+                with open(os.path.join(path, fn), "w", encoding="utf-8") as f:
+                    f.write(content)
+            with open(os.path.join(path, ".gitignore"), "w", encoding="utf-8") as f:
+                f.write("__pycache__/\n*.pyc\n.venv/\nvenv/\n")
+            subprocess.run(["git", "-C", path, "init", "-q"], timeout=10, check=False)
+            subprocess.run(["git", "-C", path, "add", "-A"], timeout=10, check=False)
+            subprocess.run(["git", "-C", path, "-c", "user.email=mentor@local",
+                            "-c", "user.name=Mentor", "commit", "-q", "-m", "scaffold: " + name],
+                           timeout=15, check=False)
+        except Exception as e:
+            return {"ok": False, "error": f"Could not create project: {e}"}
+        _set("aider_code_project", path)
+        return {"ok": True, "path": path}
+
     async def _run_job(job_id, instruction, files, project, model):
         job = _jobs[job_id]
         job["status"] = "running"
