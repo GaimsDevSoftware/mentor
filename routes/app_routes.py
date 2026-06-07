@@ -781,8 +781,9 @@ const PRESETS=[
 let selTools=new Set();
 
 // capacity banner
-j('/api/agents/capacity').then(c=>{const el=$('#cap');el.textContent=(c.concurrent?'Concurrent team':'Private — agents take turns');el.className='pill '+(c.concurrent?'ok':'warn');
-  $('#room-hint').textContent=c.note+' '+c.privacy+' · team msg = a few calls (capped), DM = 1.';}).catch(()=>{});
+j('/api/agents/capacity').then(c=>{const el=$('#cap');const cap=c.budget||3;
+  el.textContent=(c.concurrent?'Concurrent team':'Private — agents take turns')+' · up to '+cap+'/msg';el.className='pill '+(c.concurrent?'ok':'warn');
+  $('#room-hint').textContent=c.note+' '+c.privacy+' · DM one agent = 1 call · a team message wakes up to '+cap+' agents (capped, to protect your usage).';}).catch(()=>{});
 
 // presets
 $('#presets').innerHTML=PRESETS.map((p,i)=>`<span class="chip preset" data-i="${i}">${esc(p.role)}</span>`).join('');
