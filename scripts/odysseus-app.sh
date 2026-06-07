@@ -22,7 +22,7 @@ if [ -f "$REPO_DIR/.env" ]; then
 fi
 URL="http://127.0.0.1:${PORT}/app"
 PROFILE="$HOME/.local/share/odysseus-app"
-WMCLASS="Odysseus"
+WMCLASS="Mentor"
 
 # Pick a browser that supports a real app window.
 pick_browser() {

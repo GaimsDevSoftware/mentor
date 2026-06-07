@@ -735,7 +735,7 @@ def setup_manage_routes() -> APIRouter:
 
 _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Odysseus — Plugins & Diagnostics</title>
+<title>Mentor — Plugins & Diagnostics</title>
 <style>
  :root, [data-theme="dark"]{
    --bg:#000; --bg-2:#0a0a0c;

@@ -29,7 +29,7 @@ def setup_app_routes() -> APIRouter:
 
 _HOME = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Odysseus</title>
+<title>Mentor</title>
 <style>
  :root, [data-theme="dark"]{
    --bg:#000; --bg-2:#0a0a0c;
@@ -144,7 +144,7 @@ _HOME = r"""<!doctype html><html><head><meta charset="utf-8">
     <button data-theme-set="atlas">Atlas</button>
   </div>
 </nav>
-<div class="top"><div class="mark">Odysseus</div><a id="health" class="pill" href="/manage#diag" title="Open diagnostics — see and fix each issue">checking…</a></div>
+<div class="top"><div class="mark">Mentor</div><a id="health" class="pill" href="/manage#diag" title="Open diagnostics — see and fix each issue">checking…</a></div>
 <div class="tag">Your private AI · Local-first · By the stars, toward home</div>
 
 <div class="sky" id="sky"><svg width="100%" height="100%" id="lines"></svg></div>
@@ -216,7 +216,7 @@ j('/api/cookbook/sources').then(d=>{const el=document.getElementById('models');e
 
 _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Odysseus — Cookbook</title>
+<title>Mentor — Cookbook</title>
 <style>
  :root, [data-theme="dark"]{
    --bg:#000; --bg-2:#0a0a0c;

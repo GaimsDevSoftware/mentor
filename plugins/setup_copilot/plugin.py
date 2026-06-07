@@ -199,8 +199,10 @@ def register(api):
     api.register_settings([
         {"key": "plugin_builder_backend", "label": "Plugin builder backend", "type": "select",
          "options": ["auto", "aider", "teacher"], "default": "auto"},
-        {"key": "aider_model", "label": "Aider model (free coder)", "type": "text",
-         "default": "", },
+        {"key": "aider_model", "label": "Aider model (free coder)", "type": "select",
+         "suggest_url": "/api/manage/aider/models", "default": "",
+         "desc": "The local/free coder model Aider uses to edit code. Pick a discovered model "
+                 "from the list — a local Ollama coder (e.g. qwen3-coder) is free and private."},
         {"key": "recommend_scope", "label": "Recommend scope", "type": "select",
          "options": ["both", "local", "sources"], "default": "both"},
     ])
