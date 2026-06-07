@@ -36,6 +36,12 @@ def setup_app_routes() -> APIRouter:
         nonce = getattr(request.state, "csp_nonce", "")
         return HTMLResponse(_SETUP.replace("{{CSP_NONCE}}", nonce))
 
+    @router.get("/app/code")
+    async def app_code(request: Request, _user: str = Depends(require_user)) -> HTMLResponse:
+        """The Code workspace — vibe-code a real repo (the Code pillar)."""
+        nonce = getattr(request.state, "csp_nonce", "")
+        return HTMLResponse(_CODE.replace("{{CSP_NONCE}}", nonce))
+
     return router
 
 
@@ -170,6 +176,7 @@ _HOME = r"""<!doctype html><html><head><meta charset="utf-8">
  <a class="card act" href="/#memory"><span class="ic" style="color:var(--brass)">✶</span><div><h3>Memory</h3><div class="d">What it remembers.</div></div></a>
  <a class="card act" href="/app/cookbook"><span class="ic" style="color:var(--cyan)">▦</span><div><h3>Cookbook</h3><div class="d">Scan &amp; serve models.</div></div></a>
  <a class="card act" href="/app/office"><span class="ic" style="color:var(--brass)">👥</span><div><h3>Office</h3><div class="d">Your team of agents.</div></div></a>
+ <a class="card act" href="/app/code"><span class="ic" style="color:var(--cyan)">⌨</span><div><h3>Code</h3><div class="d">Vibe-code a repo.</div></div></a>
  <a class="card act" href="/manage"><span class="ic" style="color:var(--brass)">⚙</span><div><h3>Settings</h3><div class="d">Tune the system.</div></div></a>
 </div>
 
@@ -1109,4 +1116,107 @@ $('#s4-back').onclick=()=>showStep(3);
 $('#s4-next').onclick=()=>showStep(5);
 
 showStep(1);
+</script></body></html>"""
+
+
+_CODE = r"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mentor — Code</title>
+<style>
+ :root,[data-theme="dark"]{--bg:#000;--bg-2:#0a0a0c;--surface:rgba(28,28,30,0.78);--surface-2:rgba(44,44,46,0.85);--sep:rgba(255,255,255,0.08);--sep-2:rgba(255,255,255,0.14);--txt:rgba(255,255,255,0.96);--dim:rgba(255,255,255,0.58);--faint:rgba(255,255,255,0.36);--brass:#e0a95e;--cyan:#64d2ff;--accent:#0a84ff;--ok:#30d158;--warn:#ffd60a;--err:#ff453a;--tint:rgba(255,255,255,0.04);--tint-2:rgba(255,255,255,0.06);--shadow:0 1px 0 rgba(255,255,255,0.04) inset,0 10px 30px rgba(0,0,0,0.5);}
+ [data-theme="light"]{--bg:#fbfbfd;--bg-2:#f2f2f7;--surface:rgba(255,255,255,0.78);--surface-2:rgba(248,248,250,0.92);--sep:rgba(0,0,0,0.08);--sep-2:rgba(0,0,0,0.14);--txt:#1d1d1f;--dim:rgba(60,60,67,0.6);--faint:rgba(60,60,67,0.36);--brass:#b8843a;--cyan:#0a83af;--accent:#0071e3;--ok:#248a3d;--warn:#a04400;--err:#c41e3a;--tint:rgba(0,0,0,0.04);--tint-2:rgba(0,0,0,0.06);--shadow:0 1px 2px rgba(0,0,0,0.04),0 10px 30px rgba(0,0,0,0.06);}
+ [data-theme="atlas"]{--bg:#f4ede0;--bg-2:#ebe2cf;--surface:rgba(252,247,236,0.84);--surface-2:rgba(245,238,222,0.94);--sep:rgba(43,58,74,0.12);--sep-2:rgba(43,58,74,0.2);--txt:#1f2d3d;--dim:rgba(31,45,61,0.64);--faint:rgba(31,45,61,0.4);--brass:#9b6826;--cyan:#1f5471;--accent:#9b6826;--ok:#3a7f2b;--warn:#a36a00;--err:#a32d2d;--tint:rgba(43,58,74,0.04);--tint-2:rgba(43,58,74,0.07);--shadow:0 1px 0 rgba(255,255,255,0.5) inset,0 8px 22px rgba(43,58,74,0.08);}
+ *{box-sizing:border-box} html,body{margin:0;height:100%}
+ body{background:radial-gradient(120% 80% at 50% -10%,var(--bg-2),var(--bg)) fixed;color:var(--txt);font:15px/1.6 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:56px 32px 80px;max-width:1000px;margin:0 auto;letter-spacing:-0.005em}
+ a{color:inherit;text-decoration:none}
+ .top{display:flex;align-items:baseline;gap:16px;margin-bottom:4px}
+ .mark{font:300 38px/1.05 -apple-system,"SF Pro Display",Inter,system-ui,sans-serif;letter-spacing:-0.04em}
+ .tag{color:var(--faint);font-size:13px;margin-bottom:24px}
+ .pill{font:500 11px/1.2 inherit;padding:4px 10px;border-radius:99px;background:var(--tint-2);border:1px solid var(--sep);color:var(--dim);display:inline-flex;align-items:center;gap:5px}
+ .pill.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+ .pill.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+ .sec-title{color:var(--faint);font-size:11px;letter-spacing:1.5px;margin:26px 0 10px;text-transform:uppercase;font-weight:600}
+ .card{background:var(--surface);border:1px solid var(--sep);border-radius:14px;padding:18px 20px;backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%);box-shadow:var(--shadow);margin-bottom:14px}
+ .row{display:flex;align-items:center;gap:10px} .grow{flex:1;min-width:0} .muted{color:var(--dim)} .faint{color:var(--faint)}
+ .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;cursor:pointer;background:var(--surface-2);border:1px solid var(--sep-2);color:var(--txt);font:500 13px/1 inherit;transition:background .15s,border-color .15s,transform .12s}
+ .btn:hover{background:var(--tint-2);border-color:var(--brass);transform:translateY(-1px)} .btn:disabled{opacity:.5;cursor:default;transform:none}
+ input.fld,textarea.fld{width:100%;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:9px;padding:9px 11px;font:13px/1.4 inherit;outline:none}
+ input.fld:focus,textarea.fld:focus{border-color:var(--brass)}
+ textarea.fld{font-family:inherit;resize:vertical}
+ label.lab{display:block;color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:10px 0 4px}
+ pre.diff{white-space:pre-wrap;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;background:var(--tint);border:1px solid var(--sep);border-radius:10px;padding:12px 14px;max-height:420px;overflow:auto;margin-top:8px}
+ .topbar{position:fixed;top:14px;right:18px;display:flex;gap:8px;align-items:center;z-index:50}
+ .jump{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;color:var(--txt);font:500 12px/1 inherit;box-shadow:var(--shadow)}
+ .jump:hover{background:var(--tint-2)} .theme-switch{display:flex;gap:2px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;padding:3px;box-shadow:var(--shadow)}
+ .theme-switch button{background:transparent;border:none;color:var(--dim);padding:5px 11px;border-radius:99px;cursor:pointer;font:500 11px/1 inherit}
+ .theme-switch button[aria-current="true"]{background:var(--txt);color:var(--bg)}
+ ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--sep-2);border-radius:5px}
+</style></head><body>
+<nav class="topbar"><a class="jump" href="/app">← Home</a><a class="jump" href="/manage">Admin →</a>
+ <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
+
+<div class="top"><div class="mark">Code</div><span id="aider-pill" class="pill">checking…</span></div>
+<div class="tag">Vibe-code a real repository — describe a change, the AI edits files on a branch and shows you the diff. Nothing is committed; you review first. Free &amp; private with a local coder model.</div>
+
+<div id="setup"></div>
+
+<div class="sec-title">Make a change</div>
+<div class="card">
+  <label class="lab">What should change?</label>
+  <textarea id="instr" class="fld" rows="3" placeholder="e.g. add a /api/health endpoint that returns {ok:true, version:...}"></textarea>
+  <label class="lab">Files to focus on (optional — leave blank and the AI picks)</label>
+  <input id="files" class="fld" placeholder="src/app.py routes/health.py">
+  <div class="row" style="margin-top:10px"><button class="btn" id="run-btn">Vibe-code it</button><span id="run-msg" class="muted" style="font-size:12px"></span></div>
+  <div id="result"></div>
+</div>
+
+<script nonce="{{CSP_NONCE}}">
+(function(){const s=localStorage.getItem('ody-theme')||'dark';document.documentElement.setAttribute('data-theme',s);
+ document.querySelectorAll('[data-theme-set]').forEach(b=>{if(b.dataset.themeSet===s)b.setAttribute('aria-current','true');
+  b.addEventListener('click',()=>{const t=b.dataset.themeSet;document.documentElement.setAttribute('data-theme',t);localStorage.setItem('ody-theme',t);document.querySelectorAll('[data-theme-set]').forEach(x=>x.removeAttribute('aria-current'));b.setAttribute('aria-current','true');});});})();
+const $=s=>document.querySelector(s);
+const j=(u,o)=>fetch(u,Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},o)).then(r=>{if(!r.ok)throw r.status;return r.json();});
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let aiderReady=false;
+async function loadSetup(){
+  const el=$('#setup'); let st={};
+  try{ st=await j('/api/manage/install-aider/status'); }catch(e){ el.innerHTML='<div class="card">'+(e===401?'Admin only.':'Could not check Aider.')+'</div>'; return; }
+  aiderReady=!!st.installed;
+  $('#aider-pill').textContent=aiderReady?'Aider ready':'Aider not installed'; $('#aider-pill').className='pill '+(aiderReady?'ok':'warn');
+  // project path (from plugin settings, if present)
+  let project='';
+  try{ const ps=await j('/api/manage/plugin-settings'); const rows=(ps.settings||{}).aider_code||[]; const p=rows.find(r=>r.key==='aider_code_project'); project=p&&p.current||''; }catch(e){}
+  el.innerHTML='<div class="sec-title">Project &amp; engine</div><div class="card">'
+    +(aiderReady?'':'<div class="row" style="margin-bottom:10px"><span class="pill warn">setup</span><span class="grow">Aider (the code editor engine) isn\'t installed yet. It installs isolated — it never touches Mentor\'s own environment.</span><button class="btn" id="inst-btn">Install Aider</button></div><div id="inst-msg" class="muted" style="font-size:12px;margin-bottom:8px"></div>')
+    +'<label class="lab">Repository path (the repo Aider may edit)</label>'
+    +'<div class="row"><input id="proj" class="fld" style="flex:1" placeholder="/home/you/myrepo" value="'+esc(project)+'"><button class="btn" id="proj-save">Save</button></div>'
+    +'<div class="faint" style="font-size:11px;margin-top:6px">Edits happen on a feature branch (never main). If "Vibe-code it" says the plugin is off, enable <b>aider_code</b> in Admin → Plugins, then restart.</div></div>';
+  const ib=$('#inst-btn'); if(ib) ib.onclick=installAider;
+  $('#proj-save').onclick=async()=>{ const v=$('#proj').value.trim(); const m=$('#proj-save'); m.textContent='…'; try{ await j('/api/manage/setting',{method:'POST',body:JSON.stringify({key:'aider_code_project',value:v})}); m.textContent='Saved'; }catch(e){ m.textContent='failed'; } setTimeout(()=>m.textContent='Save',1500); };
+}
+async function installAider(){
+  const msg=$('#inst-msg'); const b=$('#inst-btn'); if(b)b.disabled=true; msg.textContent='Installing (isolated — can take a few minutes)…';
+  try{ await j('/api/manage/install-aider',{method:'POST'}); }catch(e){ msg.textContent='could not start install: '+e; return; }
+  const poll=setInterval(async()=>{ try{ const s=await j('/api/manage/install-aider/status'); if(s.installed){ clearInterval(poll); msg.textContent='Installed ✓'; loadSetup(); } else if(s.status==='failed'){ clearInterval(poll); msg.textContent='Install failed — see Admin → Vibe-code for the log.'; if(b)b.disabled=false; } else { msg.textContent='Installing… ('+(s.status||'working')+')'; } }catch(e){} }, 3000);
+}
+loadSetup();
+
+$('#run-btn').onclick=async()=>{
+  const instr=$('#instr').value.trim(); const files=$('#files').value.trim().split(/\s+/).filter(Boolean);
+  const msg=$('#run-msg'), out=$('#result');
+  if(!instr){ msg.textContent='Describe the change first.'; return; }
+  if(!aiderReady){ msg.textContent='Install Aider first (above).'; return; }
+  msg.textContent='Editing… with a local 30B coder this takes 2–5 min.'; out.innerHTML='';
+  let r; try{ r=await j('/api/plugins/aider_code/edit',{method:'POST',body:JSON.stringify({instruction:instr,files:files})}); }
+  catch(e){ msg.textContent = e===404 ? 'The aider_code plugin is off — enable it in Admin → Plugins, then restart.' : ('failed: '+e); return; }
+  if(!r.ok && r.error){ msg.textContent=r.error; return; }
+  const id=r.job_id||r.id; if(!id){ msg.textContent='no job id'; return; }
+  const poll=setInterval(async()=>{
+    let job; try{ job=await j('/api/plugins/aider_code/jobs/'+id); }catch(e){ return; }
+    if(job.stage) msg.textContent=job.stage;
+    if(job.done||job.result){ clearInterval(poll); const res=job.result||job; msg.textContent=res.msg||'Done — review the diff (nothing committed).';
+      out.innerHTML='<div class="sec-title">Git diff (not committed)</div><pre class="diff">'+esc(res.diff||'(no diff)')+'</pre>'; }
+  }, 2500);
+};
 </script></body></html>"""
