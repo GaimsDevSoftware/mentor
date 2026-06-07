@@ -32,6 +32,8 @@ MANAGE_SETTING_KEYS = {
     "telegram_bot_token", "telegram_allowed_user_ids", "telegram_owner", "telegram_mode",
     "ollama_flash_attention", "ollama_kv_cache_type",
     "teacher_model", "improve_teacher_model",
+    # Model-role pickers — exposed as discovered-model dropdowns (no free-text).
+    "default_model", "utility_model", "research_model", "task_model", "vision_model",
 }
 
 # Core (non-plugin) settings shown on the manage "Settings" tab. Each carries
@@ -579,6 +581,29 @@ def setup_manage_routes() -> APIRouter:
                     "'model@endpoint'. A local coder or a free model works and costs nothing.",
             "current": get_setting("teacher_model", "") or "",
         })
+        # Every model-role setting as a discovered-model dropdown (no free-text
+        # typing of model names). "— choose —" / blank means auto-pick.
+        _MODEL_ROLES = [
+            ("default_model", "Default model",
+             "The main model for chat and most agent work. Leave blank to auto-pick a running model."),
+            ("utility_model", "Utility model",
+             "A small, cheap/fast model for quick internal jobs (chat titles, tags, summaries). Blank = reuse the default."),
+            ("research_model", "Research model",
+             "Model used for Deep Research runs. Blank = reuse the default. A strong model gives better reports."),
+            ("task_model", "Task model",
+             "Model for scheduled / background tasks that run without you watching. Blank = reuse the default."),
+            ("vision_model", "Vision model",
+             "Model used to read images you send. Must be a vision-capable model. Blank = auto if the default can see."),
+            ("improve_teacher_model", "Improve-loop teacher",
+             "The capable model the self-improvement loop escalates to when it gets stuck. Blank = reuse Teacher model."),
+        ]
+        for _k, _label, _desc in _MODEL_ROLES:
+            out.append({
+                "key": _k, "label": _label, "type": "select",
+                "suggest_url": "/api/manage/teacher-model-options",
+                "desc": _desc + " Format is 'model@endpoint' — pick from the list, no typing.",
+                "current": get_setting(_k, "") or "",
+            })
         return {"settings": out}
 
     @router.post("/api/manage/plugin-forge/interview")
