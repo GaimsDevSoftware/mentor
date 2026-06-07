@@ -1,0 +1,13 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "org.mentor.widget",
+        "Name": "Mentor",
+        "Description": "Quick access to your private AI — open, Office, and ask",
+        "Icon": "__ICON__",
+        "Category": "Utilities",
+        "Authors": [{ "Name": "Mentor" }],
+        "Version": "0.1",
+        "EnabledByDefault": true
+    }
+}

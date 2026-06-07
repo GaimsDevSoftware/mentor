@@ -29,6 +29,10 @@ if [ "${1:-}" = "--ask" ] && [ -n "${2:-}" ]; then
   _enc="$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$2" 2>/dev/null || printf '%s' "$2")"
   URL="http://127.0.0.1:${PORT}/?ask=${_enc}"
 fi
+# --path "/app/office": open a specific path (used by the tray / Plasma widget).
+if [ "${1:-}" = "--path" ] && [ -n "${2:-}" ]; then
+  URL="http://127.0.0.1:${PORT}${2}"
+fi
 
 # Pick a browser that supports a real app window.
 pick_browser() {
