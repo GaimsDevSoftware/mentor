@@ -21,7 +21,7 @@ from gi.repository import Gtk, GLib
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LAUNCHER = os.path.join(_REPO, "scripts", "odysseus-app.sh")
-_ICON = os.path.join(_REPO, "static", "odysseus-icon.svg")
+_ICON = os.path.join(_REPO, "static", "mentor-icon.png")
 _PORT = os.environ.get("APP_PORT", "7000")
 _SERVICE = "odysseus-ui"
 
@@ -54,6 +54,9 @@ class Tray:
         self.ind = AppIndicator.Indicator.new(
             "mentor", _ICON, AppIndicator.IndicatorCategory.APPLICATION_STATUS)
         self.ind.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+        # Feed the PNG as an explicit absolute path so the SNI host (KDE) renders
+        # our logo rather than trying to resolve it as a themed icon name.
+        self.ind.set_icon_full(_ICON, "Mentor")
         self.ind.set_title("Mentor")
         self.status_item = Gtk.MenuItem(label="Checking…")
         self.status_item.set_sensitive(False)

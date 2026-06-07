@@ -20,7 +20,7 @@ KEYWORD = "mentor"
 
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _LAUNCHER = os.path.join(_REPO, "scripts", "odysseus-app.sh")
-_ICON = os.path.join(_REPO, "static", "odysseus-icon.svg")
+_ICON = os.path.join(_REPO, "static", "mentor-icon.png")
 
 
 class MentorRunner(dbus.service.Object):
