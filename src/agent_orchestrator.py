@@ -94,6 +94,11 @@ async def _run_agent(agent: Dict[str, Any], task: str, owner: Optional[str]) -> 
         return {"agent": name, "ok": False, "output": f"(failed: {e})"}
 
 
+async def run_one(agent: Dict[str, Any], text: str, owner: Optional[str] = None) -> Dict[str, Any]:
+    """One agent, one bounded call — used for DMs in the office room (frugal)."""
+    return await _run_agent(agent, text, owner)
+
+
 async def run_task(task: str, agents: List[Dict[str, Any]], owner: Optional[str] = None) -> Dict[str, Any]:
     """Delegate `task` to each agent, respecting the concurrency budget, then
     synthesize a short combined answer. Returns a transcript for the office UI."""

@@ -657,11 +657,15 @@ _OFFICE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div class="sec-title">The team</div>
 <div id="team" class="muted">loading…</div>
 
-<div class="sec-title">Give the team a task</div>
+<div class="sec-title">The room</div>
 <div class="card">
-  <textarea id="task" class="fld" rows="2" placeholder="e.g. research the best local coding model for 24GB VRAM and summarize the tradeoffs"></textarea>
-  <div class="row" style="margin-top:8px"><span class="grow faint" style="font-size:12px" id="task-hint">Runs across your agents (capacity-aware).</span><button class="btn" id="run-btn">Run</button></div>
-  <div id="run-out"></div>
+  <div id="room" style="max-height:400px;overflow:auto;display:flex;flex-direction:column;gap:8px"></div>
+  <div class="row" style="margin-top:12px">
+    <select id="target" class="fld" style="flex:0 0 170px"><option value="team">Whole team</option></select>
+    <input id="say" class="fld" style="flex:1" placeholder="message the team or one agent…">
+    <button class="btn" id="say-btn">Send</button>
+  </div>
+  <div class="row" style="margin-top:6px"><span class="grow faint" style="font-size:11px" id="room-hint">A team message uses a few model calls (capped). DM one agent = 1 call.</span><button class="btn mini" id="room-clear">Clear room</button></div>
 </div>
 
 <div class="sec-title">Hire an agent</div>
@@ -704,7 +708,7 @@ let selTools=new Set();
 
 // capacity banner
 j('/api/agents/capacity').then(c=>{const el=$('#cap');el.textContent=(c.concurrent?'Concurrent team':'Private — agents take turns');el.className='pill '+(c.concurrent?'ok':'warn');
-  $('#task-hint').textContent=c.note+' '+c.privacy;}).catch(()=>{});
+  $('#room-hint').textContent=c.note+' '+c.privacy+' · team msg = a few calls (capped), DM = 1.';}).catch(()=>{});
 
 // presets
 $('#presets').innerHTML=PRESETS.map((p,i)=>`<span class="chip preset" data-i="${i}">${esc(p.role)}</span>`).join('');
@@ -730,8 +734,40 @@ function loadTeam(){ j('/api/agents').then(d=>{const el=$('#team');const a=d.age
     <div class="meta">${esc((x.model||'app default'))} · ${(x.tools||[]).length} tools · ${esc(x.autonomy==='auto'?'auto':'asks first')}</div>
     <div class="row" style="margin-top:8px"><button class="btn mini danger" data-del="${esc(x.id)}">Fire</button></div></div></div>`).join('');
   el.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{if(!confirm('Remove this agent?'))return;await j('/api/agents/'+b.dataset.del,{method:'DELETE'});loadTeam();});
+  const tgt=$('#target'); if(tgt) tgt.innerHTML='<option value="team">Whole team</option>'+a.map(x=>`<option value="${esc(x.id)}">@ ${esc(x.name)}</option>`).join('');
  }).catch(e=>{$('#team').innerHTML='<span class="muted">'+(e===401?'Admin only.':'Could not load team.')+'</span>';});}
 loadTeam();
+
+// ── The room ──────────────────────────────────────────────────────────────
+function roomMsg(m){
+  if(m.role==='user') return `<div style="align-self:flex-end;max-width:80%;background:color-mix(in srgb,var(--accent) 18%,transparent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);border-radius:12px 12px 4px 12px;padding:9px 12px">${esc(m.text)}</div>`;
+  const team=m.role==='team';
+  const av=team?'★':esc((m.agent_name||'?').slice(0,1).toUpperCase());
+  const col=team?'var(--brass)':(m.color||'var(--cyan)');
+  return `<div style="align-self:flex-start;max-width:88%;display:flex;gap:8px"><div class="ava" style="width:28px;height:28px;border-radius:8px;font-size:13px;background:${col}">${av}</div>`
+    +`<div style="background:var(--tint);border:1px solid var(--sep);border-radius:12px 12px 12px 4px;padding:9px 12px"><div class="faint" style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">${esc(m.agent_name||'agent')}</div><div style="white-space:pre-wrap">${esc(m.text)}</div></div></div>`;
+}
+function renderRoom(msgs){const el=$('#room'); if(!msgs||!msgs.length){el.innerHTML='<span class="muted" style="font-size:13px">No messages yet. Say hi to your team below.</span>';return;}
+  el.innerHTML=msgs.map(roomMsg).join(''); el.scrollTop=el.scrollHeight;}
+let roomMsgs=[];
+function loadRoom(){ j('/api/agents/room').then(d=>{roomMsgs=d.messages||[];renderRoom(roomMsgs);}).catch(()=>{}); }
+loadRoom();
+async function sayNow(){
+  const inp=$('#say'); const text=(inp.value||'').trim(); if(!text)return;
+  const target=$('#target').value||'team'; inp.value='';
+  roomMsgs.push({role:'user',text:text}); renderRoom(roomMsgs);
+  roomMsgs.push({role:team(target)?'team':'agent',agent_name:target==='team'?'Team':'…',text:'thinking…'}); renderRoom(roomMsgs);
+  function team(t){return t==='team';}
+  try{ const r=await j('/api/agents/say',{method:'POST',body:JSON.stringify({text:text,target:target})});
+    roomMsgs.pop(); // drop the thinking placeholder
+    if(r.ok){ (r.messages||[]).forEach(m=>{ if(m.role!=='user') roomMsgs.push(m); }); }
+    else roomMsgs.push({role:'agent',agent_name:'note',text:r.detail||'failed'});
+    renderRoom(roomMsgs);
+  }catch(e){ roomMsgs.pop(); roomMsgs.push({role:'agent',agent_name:'note',text:'failed: '+e}); renderRoom(roomMsgs); }
+}
+$('#say-btn').onclick=sayNow;
+$('#say').addEventListener('keydown',e=>{if(e.key==='Enter')sayNow();});
+$('#room-clear').onclick=async()=>{ if(!confirm('Clear the room transcript?'))return; await j('/api/agents/room',{method:'DELETE'}); roomMsgs=[]; renderRoom(roomMsgs); };
 
 // draft system prompt
 $('#draft-btn').onclick=async()=>{const m=$('#draft-msg');m.textContent='Drafting…';
@@ -749,14 +785,4 @@ $('#hire-btn').onclick=async()=>{const m=$('#hire-msg');const name=$('#f-name').
   }catch(e){m.textContent='failed: '+e;}};
 
 // run the team
-$('#run-btn').onclick=async()=>{const task=$('#task').value.trim();const out=$('#run-out');
-  if(!task){out.innerHTML='<div class="out muted">Type a task first.</div>';return;}
-  out.innerHTML='<div class="out muted">The team is working… (private/solo mode runs them one at a time)</div>';
-  try{const r=await j('/api/agents/run',{method:'POST',body:JSON.stringify({task:task})});
-    if(!r.ok){out.innerHTML='<div class="out">'+esc(r.detail||'failed')+'</div>';return;}
-    let html='';
-    if(r.synthesis)html+='<div class="card"><div class="sec-title" style="margin-top:0">Team answer</div><div class="out" style="margin-top:0">'+esc(r.synthesis)+'</div></div>';
-    html+=(r.contributions||[]).map(c=>`<div class="card"><div class="row"><b class="grow">${esc(c.agent)}</b><span class="badge ${c.ok?'done':'idle'}">${c.ok?'done':'failed'}</span></div><div class="rl muted" style="font-size:12px">${esc(c.role||'')}</div><div class="out">${esc(c.output)}</div></div>`).join('');
-    out.innerHTML=html;
-  }catch(e){out.innerHTML='<div class="out">failed: '+esc(e)+'</div>';}};
 </script></body></html>"""

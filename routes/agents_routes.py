@@ -92,16 +92,61 @@ def setup_agents_routes() -> APIRouter:
         except Exception as e:
             return {"ok": False, "detail": f"AI call failed: {e}"}
 
-    @router.post("/api/agents/run")
-    async def run(request: Request, payload: Dict[str, Any] = Body(...),
+    @router.get("/api/agents/room")
+    async def room(request: Request, _u: str = Depends(require_user)) -> Dict[str, Any]:
+        from src import office_room
+        return {"messages": office_room.get(get_current_user(request) or "")}
+
+    @router.delete("/api/agents/room")
+    async def clear_room(request: Request, _u: str = Depends(require_user)) -> Dict[str, Any]:
+        from src import office_room
+        office_room.clear(get_current_user(request) or "")
+        return {"ok": True}
+
+    @router.post("/api/agents/say")
+    async def say(request: Request, payload: Dict[str, Any] = Body(...),
                   _u: str = Depends(require_user)) -> Dict[str, Any]:
-        """Give the team (selected agents, or all) a task; capacity-aware."""
-        from src import agents_store, agent_orchestrator
+        """Send a message to one agent (DM) or the whole team. Frugal by design:
+        a DM = 1 model call; a team message is capped (orchestrator caps to the
+        capacity budget AND office_max_agents) and mediated by a synthesis — no
+        free agent-to-agent chatter."""
+        from src import agents_store, agent_orchestrator, office_room
+        from src.settings import get_setting
         owner = get_current_user(request) or ""
-        task = str(payload.get("task", "")).strip()
-        ids = payload.get("agent_ids") or []
-        alla = agents_store.list_agents(owner)
-        agents = [a for a in alla if a.get("id") in ids] if ids else alla
-        return await agent_orchestrator.run_task(task, agents, owner)
+        text = str(payload.get("text", "")).strip()
+        target = str(payload.get("target", "team")).strip() or "team"
+        if not text:
+            return {"ok": False, "detail": "empty message"}
+        out: List[Dict[str, Any]] = []
+        out.append(office_room.append(owner, {"role": "user", "text": text}))
+
+        if target != "team":
+            agent = agents_store.get_agent(target, owner)
+            if not agent:
+                return {"ok": False, "detail": "no such agent"}
+            r = await agent_orchestrator.run_one(agent, text, owner)
+            out.append(office_room.append(owner, {
+                "role": "agent", "agent_id": agent["id"], "agent_name": agent.get("name", ""),
+                "color": agent.get("color", ""), "text": r.get("output", "")}))
+            return {"ok": True, "messages": out}
+
+        # Team: cap how many agents actually get called (token frugality).
+        try:
+            cap = int(get_setting("office_max_agents", 3) or 3)
+        except Exception:
+            cap = 3
+        agents = agents_store.list_agents(owner)[:max(1, cap)]
+        if not agents:
+            return {"ok": False, "detail": "hire an agent first"}
+        result = await agent_orchestrator.run_task(text, agents, owner)
+        for c in result.get("contributions", []):
+            if c.get("ok"):
+                out.append(office_room.append(owner, {
+                    "role": "agent", "agent_name": c.get("agent", ""),
+                    "text": c.get("output", "")}))
+        if result.get("synthesis"):
+            out.append(office_room.append(owner, {
+                "role": "team", "agent_name": "Team", "text": result["synthesis"]}))
+        return {"ok": True, "messages": out, "capacity": result.get("capacity")}
 
     return router
