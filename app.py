@@ -659,6 +659,8 @@ app.include_router(setup_manage_routes())
 # Our own front-end foundation — the "Celestial Terminal" dashboard at /app.
 from routes.app_routes import setup_app_routes
 app.include_router(setup_app_routes())
+from routes.agents_routes import setup_agents_routes
+app.include_router(setup_agents_routes())
 
 # Model A/B Comparison
 from routes.compare_routes import setup_compare_routes

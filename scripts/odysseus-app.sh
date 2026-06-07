@@ -24,6 +24,12 @@ URL="http://127.0.0.1:${PORT}/app"
 PROFILE="$HOME/.local/share/odysseus-app"
 WMCLASS="Mentor"
 
+# --ask "<text>": open the chat seeded with a prompt (used by the KRunner plugin).
+if [ "${1:-}" = "--ask" ] && [ -n "${2:-}" ]; then
+  _enc="$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$2" 2>/dev/null || printf '%s' "$2")"
+  URL="http://127.0.0.1:${PORT}/?ask=${_enc}"
+fi
+
 # Pick a browser that supports a real app window.
 pick_browser() {
   for b in google-chrome google-chrome-stable chromium chromium-browser brave brave-browser microsoft-edge vivaldi-stable; do

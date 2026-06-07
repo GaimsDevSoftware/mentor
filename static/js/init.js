@@ -416,6 +416,28 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
   window.addEventListener('hashchange', routePanelHash);
 }
 
+/* ── ?ask=… deep-link — start a chat from outside the app (e.g. KRunner) ──────
+   Mentor's KRunner plugin opens /?ask=<text>; we drop the text into the composer
+   and submit it, so typing "mentor <prompt>" in KRunner lands as a chat message. */
+(function () {
+  let ask;
+  try { ask = new URLSearchParams(window.location.search).get('ask'); } catch (_) { ask = null; }
+  if (!ask) return;
+  function fire() {
+    const ta = document.getElementById('message');
+    const form = document.getElementById('chat-form');
+    if (!ta || !form) { setTimeout(fire, 400); return; }
+    ta.value = ask;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    // strip ?ask so a refresh doesn't resend
+    try { history.replaceState(null, '', window.location.pathname + window.location.hash); } catch (_) {}
+    if (form.requestSubmit) form.requestSubmit();
+    else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  }
+  if (document.readyState === 'complete') setTimeout(fire, 700);
+  else window.addEventListener('load', () => setTimeout(fire, 700));
+})();
+
 /* ── Release welcome-screen entrance animations once the page is settled ──
    The splash's entrance animations (#welcome-screen / .welcome-name) are held
    by CSS (`body:not(.welcome-ready)`) until this runs, so they no longer play

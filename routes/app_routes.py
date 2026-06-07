@@ -24,6 +24,12 @@ def setup_app_routes() -> APIRouter:
         nonce = getattr(request.state, "csp_nonce", "")
         return HTMLResponse(_COOKBOOK.replace("{{CSP_NONCE}}", nonce))
 
+    @router.get("/app/office")
+    async def app_office(request: Request, _user: str = Depends(require_user)) -> HTMLResponse:
+        """The Office — your team of AI agents (employees) — in the Mentor design."""
+        nonce = getattr(request.state, "csp_nonce", "")
+        return HTMLResponse(_OFFICE.replace("{{CSP_NONCE}}", nonce))
+
     return router
 
 
@@ -156,6 +162,7 @@ _HOME = r"""<!doctype html><html><head><meta charset="utf-8">
  <a class="card act" href="/#research"><span class="ic" style="color:var(--cyan)">◎</span><div><h3>Deep Research</h3><div class="d">Gather &amp; synthesize.</div></div></a>
  <a class="card act" href="/#memory"><span class="ic" style="color:var(--brass)">✶</span><div><h3>Memory</h3><div class="d">What it remembers.</div></div></a>
  <a class="card act" href="/app/cookbook"><span class="ic" style="color:var(--cyan)">▦</span><div><h3>Cookbook</h3><div class="d">Scan &amp; serve models.</div></div></a>
+ <a class="card act" href="/app/office"><span class="ic" style="color:var(--brass)">👥</span><div><h3>Office</h3><div class="d">Your team of agents.</div></div></a>
  <a class="card act" href="/manage"><span class="ic" style="color:var(--brass)">⚙</span><div><h3>Settings</h3><div class="d">Tune the system.</div></div></a>
 </div>
 
@@ -593,4 +600,163 @@ document.addEventListener('click', async (e)=>{
     else pop.innerHTML=`<span class="muted" style="font-size:13px">${esc(r.detail||'No explanation available.')}</span>`;
   }catch(err){ pop.innerHTML=`<span class="muted" style="font-size:13px">${err===401?'Admin only.':'Explanation failed.'}</span>`; }
 });
+</script></body></html>"""
+
+
+_OFFICE = r"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mentor — Office</title>
+<style>
+ :root,[data-theme="dark"]{--bg:#000;--bg-2:#0a0a0c;--surface:rgba(28,28,30,0.78);--surface-2:rgba(44,44,46,0.85);--sep:rgba(255,255,255,0.08);--sep-2:rgba(255,255,255,0.14);--txt:rgba(255,255,255,0.96);--dim:rgba(255,255,255,0.58);--faint:rgba(255,255,255,0.36);--brass:#e0a95e;--cyan:#64d2ff;--accent:#0a84ff;--ok:#30d158;--warn:#ffd60a;--err:#ff453a;--tint:rgba(255,255,255,0.04);--tint-2:rgba(255,255,255,0.06);--shadow:0 1px 0 rgba(255,255,255,0.04) inset,0 10px 30px rgba(0,0,0,0.5);}
+ [data-theme="light"]{--bg:#fbfbfd;--bg-2:#f2f2f7;--surface:rgba(255,255,255,0.78);--surface-2:rgba(248,248,250,0.92);--sep:rgba(0,0,0,0.08);--sep-2:rgba(0,0,0,0.14);--txt:#1d1d1f;--dim:rgba(60,60,67,0.6);--faint:rgba(60,60,67,0.36);--brass:#b8843a;--cyan:#0a83af;--accent:#0071e3;--ok:#248a3d;--warn:#a04400;--err:#c41e3a;--tint:rgba(0,0,0,0.04);--tint-2:rgba(0,0,0,0.06);--shadow:0 1px 2px rgba(0,0,0,0.04),0 10px 30px rgba(0,0,0,0.06);}
+ [data-theme="atlas"]{--bg:#f4ede0;--bg-2:#ebe2cf;--surface:rgba(252,247,236,0.84);--surface-2:rgba(245,238,222,0.94);--sep:rgba(43,58,74,0.12);--sep-2:rgba(43,58,74,0.2);--txt:#1f2d3d;--dim:rgba(31,45,61,0.64);--faint:rgba(31,45,61,0.4);--brass:#9b6826;--cyan:#1f5471;--accent:#9b6826;--ok:#3a7f2b;--warn:#a36a00;--err:#a32d2d;--tint:rgba(43,58,74,0.04);--tint-2:rgba(43,58,74,0.07);--shadow:0 1px 0 rgba(255,255,255,0.5) inset,0 8px 22px rgba(43,58,74,0.08);}
+ *{box-sizing:border-box} html,body{margin:0;height:100%}
+ body{background:radial-gradient(120% 80% at 50% -10%,var(--bg-2),var(--bg)) fixed;color:var(--txt);font:15px/1.6 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:56px 32px 80px;max-width:1100px;margin:0 auto;letter-spacing:-0.005em}
+ a{color:inherit;text-decoration:none}
+ .top{display:flex;align-items:baseline;gap:16px;margin-bottom:4px}
+ .mark{font:300 38px/1.05 -apple-system,"SF Pro Display",Inter,system-ui,sans-serif;letter-spacing:-0.04em}
+ .tag{color:var(--faint);font-size:13px;margin-bottom:24px}
+ .pill{font:500 11px/1.2 inherit;padding:4px 10px;border-radius:99px;background:var(--tint-2);border:1px solid var(--sep);color:var(--dim);display:inline-flex;align-items:center;gap:5px}
+ .pill.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+ .pill.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+ .sec-title{color:var(--faint);font-size:11px;letter-spacing:1.5px;margin:28px 0 12px;text-transform:uppercase;font-weight:600}
+ .card{background:var(--surface);border:1px solid var(--sep);border-radius:14px;padding:18px 20px;backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%);box-shadow:var(--shadow);margin-bottom:14px}
+ .row{display:flex;align-items:center;gap:10px} .grow{flex:1;min-width:0} .muted{color:var(--dim)} .faint{color:var(--faint)}
+ .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px}
+ .grid{display:grid;gap:14px;grid-template-columns:repeat(2,1fr)} @media(max-width:760px){.grid{grid-template-columns:1fr}}
+ .emp{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--sep);border-radius:14px;padding:16px;box-shadow:var(--shadow)}
+ .ava{width:42px;height:42px;border-radius:11px;flex-shrink:0;display:grid;place-items:center;font-weight:700;font-size:17px;color:#0b0b0d}
+ .emp .nm{font-weight:600;letter-spacing:-0.01em} .emp .rl{color:var(--dim);font-size:12px}
+ .emp .meta{color:var(--faint);font-size:11px;margin-top:6px;font-family:ui-monospace,Menlo,monospace}
+ .badge{font:600 9px/1 -apple-system,system-ui,sans-serif;letter-spacing:.05em;text-transform:uppercase;padding:3px 7px;border-radius:5px;background:var(--tint-2);color:var(--dim);border:1px solid var(--sep)}
+ .badge.idle{color:var(--dim)} .badge.thinking{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 35%,transparent)} .badge.done{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 35%,transparent)}
+ .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;cursor:pointer;background:var(--surface-2);border:1px solid var(--sep-2);color:var(--txt);font:500 13px/1 inherit;transition:background .15s,border-color .15s,transform .12s}
+ .btn:hover{background:var(--tint-2);border-color:var(--brass);transform:translateY(-1px)} .btn:disabled{opacity:.5;cursor:default;transform:none}
+ .btn.mini{padding:5px 9px;font-size:12px;border-radius:8px} .btn.danger:hover{border-color:var(--err);color:var(--err)}
+ input.fld,textarea.fld,select.fld{width:100%;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:9px;padding:9px 11px;font:13px/1.4 inherit;outline:none}
+ input.fld:focus,textarea.fld:focus,select.fld:focus{border-color:var(--brass)}
+ textarea.fld{font-family:inherit;resize:vertical}
+ label.lab{display:block;color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:10px 0 4px}
+ .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);border:1px solid var(--sep-2);border-radius:99px;padding:5px 11px;margin:0 6px 6px 0;cursor:pointer;user-select:none}
+ .chip.on{color:var(--brass);border-color:var(--brass);background:color-mix(in srgb,var(--brass) 10%,transparent)}
+ .preset{cursor:pointer}
+ .topbar{position:fixed;top:14px;right:18px;display:flex;gap:8px;align-items:center;z-index:50}
+ .jump{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;color:var(--txt);font:500 12px/1 inherit;box-shadow:var(--shadow)}
+ .jump:hover{background:var(--tint-2)} .theme-switch{display:flex;gap:2px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;padding:3px;box-shadow:var(--shadow)}
+ .theme-switch button{background:transparent;border:none;color:var(--dim);padding:5px 11px;border-radius:99px;cursor:pointer;font:500 11px/1 inherit}
+ .theme-switch button[aria-current="true"]{background:var(--txt);color:var(--bg)}
+ .out{white-space:pre-wrap;font-size:13px;line-height:1.5;color:var(--txt);background:var(--tint);border:1px solid var(--sep);border-radius:10px;padding:12px 14px;margin-top:8px}
+ ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--sep-2);border-radius:5px}
+</style></head><body>
+<nav class="topbar"><a class="jump" href="/app">← Home</a><a class="jump" href="/manage">Admin →</a>
+ <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
+
+<div class="top"><div class="mark">Office</div><span id="cap" class="pill">checking capacity…</span></div>
+<div class="tag">Your team of AI agents — hire employees with a role &amp; personality, then put them to work.</div>
+
+<div class="sec-title">The team</div>
+<div id="team" class="muted">loading…</div>
+
+<div class="sec-title">Give the team a task</div>
+<div class="card">
+  <textarea id="task" class="fld" rows="2" placeholder="e.g. research the best local coding model for 24GB VRAM and summarize the tradeoffs"></textarea>
+  <div class="row" style="margin-top:8px"><span class="grow faint" style="font-size:12px" id="task-hint">Runs across your agents (capacity-aware).</span><button class="btn" id="run-btn">Run</button></div>
+  <div id="run-out"></div>
+</div>
+
+<div class="sec-title">Hire an agent</div>
+<div class="card">
+  <div class="faint" style="font-size:12px;margin-bottom:6px">Pick a role to start (it pre-fills a sensible goal, tools &amp; tone), then tweak.</div>
+  <div id="presets"></div>
+  <label class="lab">Name</label><input id="f-name" class="fld" placeholder="e.g. Iris">
+  <label class="lab">Role / title (be specific)</label><input id="f-role" class="fld" placeholder="e.g. Local-model Research Specialist">
+  <label class="lab">Goal (one sentence — the outcome)</label><input id="f-goal" class="fld" placeholder="e.g. Find the best option with sources, fast">
+  <label class="lab">Personality</label>
+  <select id="f-pers" class="fld"><option value="concise professional">Concise professional</option><option value="warm collaborator">Warm collaborator</option><option value="blunt honest critic">Blunt honest critic</option><option value="playful but sharp">Playful but sharp</option><option value="meticulous and careful">Meticulous &amp; careful</option></select>
+  <label class="lab">Backstory / working style (optional)</label><textarea id="f-back" class="fld" rows="2" placeholder="optional — how they approach the work, standards they hold"></textarea>
+  <label class="lab">Model</label><select id="f-model" class="fld"><option value="">— app default —</option></select>
+  <label class="lab">Tools they can use</label><div id="f-tools"></div>
+  <label class="lab">Autonomy</label>
+  <select id="f-auto" class="fld"><option value="approve">Ask me before risky actions</option><option value="auto">Act on its own</option></select>
+  <div class="row" style="margin-top:10px"><button class="btn" id="draft-btn">Draft system prompt with AI</button><span id="draft-msg" class="muted" style="font-size:12px"></span></div>
+  <div id="sp-wrap" style="display:none"><label class="lab">System prompt (AI-drafted, editable)</label><textarea id="f-sp" class="fld" rows="4"></textarea></div>
+  <div class="row" style="margin-top:12px"><button class="btn" id="hire-btn">Hire</button><span id="hire-msg" class="muted" style="font-size:12px"></span></div>
+</div>
+
+<script nonce="{{CSP_NONCE}}">
+(function(){const s=localStorage.getItem('ody-theme')||'dark';document.documentElement.setAttribute('data-theme',s);
+ document.querySelectorAll('[data-theme-set]').forEach(b=>{if(b.dataset.themeSet===s)b.setAttribute('aria-current','true');
+  b.addEventListener('click',()=>{const t=b.dataset.themeSet;document.documentElement.setAttribute('data-theme',t);localStorage.setItem('ody-theme',t);document.querySelectorAll('[data-theme-set]').forEach(x=>x.removeAttribute('aria-current'));b.setAttribute('aria-current','true');});});})();
+const $=s=>document.querySelector(s);
+const j=(u,o)=>fetch(u,Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},o)).then(r=>{if(!r.ok)throw r.status;return r.json();});
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const TOOLS=["web_search","web_fetch","bash","python","read_file","manage_notes","manage_calendar","manage_research","manage_memory","create_document","edit_image","trigger_research"];
+const PRESETS=[
+ {role:"Researcher",goal:"Find and synthesize accurate, current info with sources",tools:["web_search","web_fetch","trigger_research","manage_research"],pers:"meticulous and careful"},
+ {role:"Coder",goal:"Write and edit correct, idiomatic code",tools:["bash","python","read_file"],pers:"concise professional"},
+ {role:"Planner / PM",goal:"Break goals into clear tasks and keep them on track",tools:["manage_notes","manage_calendar"],pers:"concise professional"},
+ {role:"Editor",goal:"Polish writing for clarity, tone and correctness",tools:["create_document","read_file"],pers:"meticulous and careful"},
+ {role:"Analyst",goal:"Find patterns in data and explain them simply",tools:["python","read_file"],pers:"concise professional"},
+ {role:"Secretary",goal:"Handle scheduling, reminders and routing",tools:["manage_calendar","manage_notes"],pers:"warm collaborator"},
+ {role:"Critic / Red-team",goal:"Find flaws and stress-test ideas honestly",tools:["web_search","read_file"],pers:"blunt honest critic"},
+ {role:"Archivist",goal:"Keep and recall the team's memory",tools:["manage_memory","manage_research"],pers:"meticulous and careful"}];
+let selTools=new Set();
+
+// capacity banner
+j('/api/agents/capacity').then(c=>{const el=$('#cap');el.textContent=(c.concurrent?'Concurrent team':'Private — agents take turns');el.className='pill '+(c.concurrent?'ok':'warn');
+  $('#task-hint').textContent=c.note+' '+c.privacy;}).catch(()=>{});
+
+// presets
+$('#presets').innerHTML=PRESETS.map((p,i)=>`<span class="chip preset" data-i="${i}">${esc(p.role)}</span>`).join('');
+$('#presets').querySelectorAll('.preset').forEach(c=>c.onclick=()=>{const p=PRESETS[+c.dataset.i];
+  $('#f-role').value=p.role;$('#f-goal').value=p.goal;$('#f-pers').value=p.pers;
+  selTools=new Set(p.tools);renderTools();if(!$('#f-name').value)$('#f-name').focus();});
+
+// tools
+function renderTools(){$('#f-tools').innerHTML=TOOLS.map(t=>`<span class="chip tool ${selTools.has(t)?'on':''}" data-t="${t}">${t}</span>`).join('');
+  $('#f-tools').querySelectorAll('.tool').forEach(c=>c.onclick=()=>{const t=c.dataset.t;selTools.has(t)?selTools.delete(t):selTools.add(t);renderTools();});}
+renderTools();
+
+// model dropdown (discovered)
+j('/api/manage/teacher-model-options').then(d=>{const sel=$('#f-model');(d.models||[]).forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o);});}).catch(()=>{});
+
+// team list
+function statusCls(s){return s==='thinking'?'thinking':s==='done'?'done':'idle';}
+function loadTeam(){ j('/api/agents').then(d=>{const el=$('#team');const a=d.agents||[];
+  if(!a.length){el.innerHTML='<span class="muted" style="font-size:13px">No agents yet — hire your first employee below.</span>';return;}
+  el.className='grid'; el.innerHTML=a.map(x=>`<div class="emp"><div class="ava" style="background:${esc(x.color||'#e0a95e')}">${esc((x.name||'?').slice(0,1).toUpperCase())}</div>
+    <div class="grow"><div class="row"><span class="nm grow">${esc(x.name)}</span><span class="badge ${statusCls(x.status)}">${esc(x.status||'idle')}</span></div>
+    <div class="rl">${esc(x.role||'')}</div>
+    <div class="meta">${esc((x.model||'app default'))} · ${(x.tools||[]).length} tools · ${esc(x.autonomy==='auto'?'auto':'asks first')}</div>
+    <div class="row" style="margin-top:8px"><button class="btn mini danger" data-del="${esc(x.id)}">Fire</button></div></div></div>`).join('');
+  el.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{if(!confirm('Remove this agent?'))return;await j('/api/agents/'+b.dataset.del,{method:'DELETE'});loadTeam();});
+ }).catch(e=>{$('#team').innerHTML='<span class="muted">'+(e===401?'Admin only.':'Could not load team.')+'</span>';});}
+loadTeam();
+
+// draft system prompt
+$('#draft-btn').onclick=async()=>{const m=$('#draft-msg');m.textContent='Drafting…';
+  try{const r=await j('/api/agents/draft',{method:'POST',body:JSON.stringify({name:$('#f-name').value,role:$('#f-role').value,goal:$('#f-goal').value,personality:$('#f-pers').value,backstory:$('#f-back').value})});
+    if(r.ok){$('#sp-wrap').style.display='';$('#f-sp').value=r.system_prompt;m.textContent='';}else m.textContent=r.detail||'failed';
+  }catch(e){m.textContent='failed: '+e;}};
+
+// hire
+$('#hire-btn').onclick=async()=>{const m=$('#hire-msg');const name=$('#f-name').value.trim();
+  if(!name){m.textContent='give them a name';return;}
+  m.textContent='Hiring…';
+  try{const r=await j('/api/agents',{method:'POST',body:JSON.stringify({name:name,role:$('#f-role').value,goal:$('#f-goal').value,personality:$('#f-pers').value,backstory:$('#f-back').value,model:$('#f-model').value,tools:[...selTools],autonomy:$('#f-auto').value,system_prompt:$('#f-sp').value})});
+    if(r.ok){m.textContent='Hired '+r.agent.name+' ✓';$('#f-name').value='';$('#f-role').value='';$('#f-goal').value='';$('#f-back').value='';$('#f-sp').value='';$('#sp-wrap').style.display='none';selTools=new Set();renderTools();loadTeam();}
+    else m.textContent=r.detail||'failed';
+  }catch(e){m.textContent='failed: '+e;}};
+
+// run the team
+$('#run-btn').onclick=async()=>{const task=$('#task').value.trim();const out=$('#run-out');
+  if(!task){out.innerHTML='<div class="out muted">Type a task first.</div>';return;}
+  out.innerHTML='<div class="out muted">The team is working… (private/solo mode runs them one at a time)</div>';
+  try{const r=await j('/api/agents/run',{method:'POST',body:JSON.stringify({task:task})});
+    if(!r.ok){out.innerHTML='<div class="out">'+esc(r.detail||'failed')+'</div>';return;}
+    let html='';
+    if(r.synthesis)html+='<div class="card"><div class="sec-title" style="margin-top:0">Team answer</div><div class="out" style="margin-top:0">'+esc(r.synthesis)+'</div></div>';
+    html+=(r.contributions||[]).map(c=>`<div class="card"><div class="row"><b class="grow">${esc(c.agent)}</b><span class="badge ${c.ok?'done':'idle'}">${c.ok?'done':'failed'}</span></div><div class="rl muted" style="font-size:12px">${esc(c.role||'')}</div><div class="out">${esc(c.output)}</div></div>`).join('');
+    out.innerHTML=html;
+  }catch(e){out.innerHTML='<div class="out">failed: '+esc(e)+'</div>';}};
 </script></body></html>"""
