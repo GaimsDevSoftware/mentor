@@ -1227,7 +1227,10 @@ async function asstTurn(steps){
   if(!r || !r.ok){ asstBubble('assistant', (r&&r.detail)||'Something went wrong — let\'s try that again.'); return; }
   if(r.reply){ ASST.push({role:'assistant',content:r.reply}); asstBubble('assistant', r.reply); asstSave(); }
   if(r.action && r.action.type){
-    if(r.action.type==='done'){ asstNote('✓ Setup complete'); asstBubble('assistant','You\'re all set 🎉 — click “Next →” at the bottom, or jump straight into Chat. I\'m here if you want to add or change anything.'); return; }
+    if(r.action.type==='done'){ asstNote('✓ Setup complete'); asstBubble('assistant','You\'re all set 🎉 — open Mentor below, or keep chatting if you want to change anything.');
+      const log=$('#asst-log'); if(log){ const w=document.createElement('div'); w.style.cssText='align-self:flex-start;display:flex;gap:8px;flex-wrap:wrap;margin-top:2px';
+        w.innerHTML='<a class="btn primary" href="/" style="text-decoration:none">Open Mentor →</a><a class="btn" href="/app/office" style="text-decoration:none">Meet your agents</a>';
+        log.appendChild(w); log.scrollTop=log.scrollHeight; } return; }
     asstNote('doing: '+r.action.type+(r.action.args&&r.action.args.model?(' ('+r.action.args.model+')'):''));
     const result=await asstAct(r.action);
     asstNote('result: '+String(result).slice(0,140));

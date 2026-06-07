@@ -747,7 +747,8 @@ def setup_manage_routes() -> APIRouter:
             "- Agents hired: %d\n"
             "DEFINITION OF DONE: at least one work-model endpoint connected AND a default work model set "
             "(a hired agent is a nice bonus). When everything's done, emit the `done` action and tell the "
-            "user to click 'Next →' or open Chat." % (
+            "user they can open Mentor from the button you'll show them in the chat (or keep chatting to "
+            "change anything) — do NOT tell them to hunt for a button elsewhere on the page." % (
                 spec, len(eps), (": " + "; ".join(eps) if eps else " (none yet)"),
                 (default_model or "NOT set yet"), (aider_model or "not set"), ollama, nagents)
         )

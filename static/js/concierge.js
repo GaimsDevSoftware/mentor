@@ -138,7 +138,10 @@
     if (!r || !r.ok) { bubble('assistant', (r && r.detail) || 'Something went wrong — let\'s try again.'); return; }
     if (r.reply) { ASST.push({ role: 'assistant', content: r.reply }); bubble('assistant', r.reply); save(); }
     if (r.action && r.action.type) {
-      if (r.action.type === 'done') { note('✓ Setup complete'); bubble('assistant', 'You\'re all set 🎉 — open Chat whenever you like. I\'m here if you want to change anything.'); save(); return; }
+      if (r.action.type === 'done') { note('✓ Setup complete'); bubble('assistant', 'You\'re all set 🎉 — open Mentor below, or keep chatting if you want to change anything.');
+        var w = document.createElement('div'); w.className = 'mc-b mc-a'; w.style.padding = '8px';
+        w.innerHTML = '<a href="/" style="display:inline-block;background:var(--accent,#0a84ff);color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none;font-weight:600">Open Mentor →</a>';
+        log.appendChild(w); log.scrollTop = log.scrollHeight; save(); return; }
       note('doing: ' + r.action.type + (r.action.args && r.action.args.model ? (' (' + r.action.args.model + ')') : ''));
       var result = await act(r.action); waiting = false;
       note('result: ' + String(result).slice(0, 120));
