@@ -58,8 +58,13 @@ def setup_agents_routes() -> APIRouter:
         teacher-model-options)."""
         from core.database import SessionLocal, ModelEndpoint
         from src.auth_helpers import owner_filter
+        try:
+            from src.endpoint_resolver import normalize_base, _is_local_base
+        except Exception:
+            normalize_base = None
+            _is_local_base = None
         owner = get_current_user(request) or ""
-        specs: List[str] = []
+        out: List[Dict[str, Any]] = []
         seen = set()
         db = SessionLocal()
         try:
@@ -71,17 +76,27 @@ def setup_agents_routes() -> APIRouter:
                     ms = json.loads(ep.cached_models) if ep.cached_models else []
                 except Exception:
                     ms = []
+                # local = private + free + on your hardware; cloud = capable but
+                # costs money and sends data out. This is the signal that lets a
+                # user pick a helper's model by cost / privacy.
+                kind = "cloud"
+                try:
+                    if normalize_base and _is_local_base and _is_local_base(normalize_base(ep.base_url)):
+                        kind = "local"
+                except Exception:
+                    pass
                 for m in ms:
                     if not m:
                         continue
                     spec = f"{m}@{ep.name}"
                     if spec not in seen:
                         seen.add(spec)
-                        specs.append(spec)
+                        out.append({"spec": spec, "model": m, "endpoint": ep.name, "kind": kind})
         finally:
             db.close()
-        specs.sort(key=str.lower)
-        return {"models": specs}
+        # Local first (private/free), then alphabetical — the safe default.
+        out.sort(key=lambda x: (x["kind"] != "local", x["spec"].lower()))
+        return {"models": [o["spec"] for o in out], "details": out}
 
     @router.post("/api/agents/draft")
     async def draft(request: Request, payload: Dict[str, Any] = Body(...),

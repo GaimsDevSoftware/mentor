@@ -468,7 +468,9 @@
         sessionStorage.setItem('ody-prefetch-sessions', JSON.stringify(sess));
         sessionStorage.setItem('ody-prefetch-features', JSON.stringify(feat));
         sessionStorage.setItem('ody-prefetch-settings', JSON.stringify(sett));
-      }).catch(() => {}).finally(() => { window.location.replace('/'); });
+      // First admin creation → land on the guided setup wizard, not an empty
+      // chat. Normal logins go to chat as before.
+      }).catch(() => {}).finally(() => { window.location.replace(mode === 'setup' ? '/app/setup' : '/'); });
     }
     async function doLogin(totpCode) {
       const loginBody = { username, password, remember };

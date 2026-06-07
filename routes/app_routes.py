@@ -166,6 +166,17 @@ _HOME = r"""<!doctype html><html><head><meta charset="utf-8">
 <div class="top"><div class="mark">Mentor</div><a id="health" class="pill" href="/manage#diag" title="Open diagnostics — see and fix each issue">checking…</a></div>
 <div class="tag">Your private AI · Local-first · By the stars, toward home</div>
 
+<!-- First-run nudge — shown only when no model endpoint is connected yet. -->
+<div id="setup-banner" style="display:none;margin:6px 0 18px;padding:16px 18px;border:1px solid color-mix(in srgb,var(--brass) 45%,transparent);border-radius:14px;background:color-mix(in srgb,var(--brass) 9%,transparent)">
+  <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+    <div style="flex:1;min-width:220px">
+      <div style="font-weight:600;font-size:15px;margin-bottom:3px">Welcome — let's give Mentor a brain ✦</div>
+      <div style="color:var(--dim);font-size:13px;line-height:1.5">No AI model is connected yet. The guided setup walks you from nothing to a working assistant in a couple of minutes — local (private &amp; free) or a cloud API.</div>
+    </div>
+    <a href="/app/setup" style="white-space:nowrap;padding:10px 18px;border-radius:10px;background:color-mix(in srgb,var(--accent,#0a84ff) 16%,transparent);border:1px solid color-mix(in srgb,var(--accent,#0a84ff) 45%,transparent);color:var(--accent,#0a84ff);font-weight:600;font-size:13px">Start setup →</a>
+  </div>
+</div>
+
 <div class="sky" id="sky"><svg width="100%" height="100%" id="lines"></svg></div>
 
 <div class="sec-title">Quick actions</div>
@@ -233,6 +244,9 @@ j('/api/cookbook/sources').then(d=>{const el=document.getElementById('models');e
     el.innerHTML+=`<div style="margin-bottom:10px"><b style="font-size:13px">${s.name}</b> <span style="color:var(--faint);font-size:12px">${s.remote?'· cloud':'· local'}</span><br>${items}</div>`;});
   if(!el.innerHTML)el.textContent='No models yet — open the Cookbook to serve one, or log in to a source in Plugins.';
 }).catch(()=>{document.getElementById('models').textContent='Sign in to view models.';});
+// First-run nudge: no model endpoint connected → surface the setup banner.
+j('/api/model-endpoints').then(d=>{const n=Array.isArray(d)?d.length:((d&&d.endpoints||[]).length);
+  if(!n){const b=document.getElementById('setup-banner');if(b)b.style.display='';}}).catch(()=>{});
 </script></body></html>"""
 
 
@@ -415,7 +429,16 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
   <div id="rec" style="margin-top:10px"></div>
 </div>
 
-<div class="sec-title">Fits this machine <button class="help-btn" data-topic="The 'Fits this machine' list — catalog models ranked against your VRAM/RAM, showing which ones can actually run locally and a fit score">?</button></div>
+<div class="sec-title" style="display:flex;align-items:center;gap:8px">Fits this machine <button class="help-btn" data-topic="The 'Fits this machine' list — catalog models ranked against your VRAM/RAM, showing which ones can actually run locally and a fit score">?</button>
+  <span style="flex:1"></span>
+  <select id="fits-sort" style="font:inherit;font-size:11px;text-transform:none;letter-spacing:0;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:7px;padding:4px 8px;cursor:pointer">
+    <option value="score">Sort: best fit</option>
+    <option value="vram">VRAM: low → high</option>
+    <option value="size">Size: small → large</option>
+    <option value="ctx">Context: long → short</option>
+    <option value="speed">Speed: fast → slow</option>
+  </select>
+</div>
 <div class="card"><div id="fits" class="muted">ranking models against your hardware…</div></div>
 
 <div class="sec-title">Downloaded &amp; ready <button class="help-btn" data-topic="The 'Downloaded & ready' list — models already in the local cache (Hugging Face / GGUF) that are ready to serve without downloading">?</button></div>
@@ -520,28 +543,48 @@ $('#rec-btn').addEventListener('click',async()=>{
 // alongside the model and use real VRAM/RAM), so we never recommend a model
 // that would starve the desktop.
 const VRAM_RESERVE=3, RAM_RESERVE=4;  // GB kept free for KDE Plasma + browser
-function loadFits(){
+let FITS=[];
+// Robust stat readers — the ranker's field names vary, so fall back across the
+// likely keys instead of trusting one.
+const _vramOf=m=>+(m.vram_q4_gb||m.vram_gb||m.required_gb||0);
+const _sizeOf=m=>+(m.size_gb||m.required_gb||m.params_b||0);
+const _ctxOf=m=>+(m.context_length||m.context||0);
+const _spdOf=m=>+(m.speed_tps||m.tps||0);
+const _scoreOf=m=>+(m.score||0);
+function renderFits(){
   const el=$('#fits');
+  const by=($('#fits-sort')&&$('#fits-sort').value)||'score';
+  let ms=FITS.slice();
+  if(by==='vram') ms.sort((a,b)=>_vramOf(a)-_vramOf(b));
+  else if(by==='size') ms.sort((a,b)=>_sizeOf(a)-_sizeOf(b));
+  else if(by==='ctx') ms.sort((a,b)=>_ctxOf(b)-_ctxOf(a));
+  else if(by==='speed') ms.sort((a,b)=>_spdOf(b)-_spdOf(a));
+  else ms.sort((a,b)=>_scoreOf(b)-_scoreOf(a));
+  ms=ms.slice(0,24);
+  const effV = HW_VRAM>0 ? Math.max(0, +(HW_VRAM-VRAM_RESERVE).toFixed(1)) : 0;
+  const banner = HW_VRAM>0
+    ? `<div class="muted" style="font-size:12px;margin-bottom:8px">Reserving <b>~${VRAM_RESERVE} GB VRAM</b> + <b>~${RAM_RESERVE} GB RAM</b> for your desktop + browser → recommending models up to <b>~${effV} GB</b> (of ${HW_VRAM} GB).</div>`
+    : '';
+  if(!ms.length){ el.innerHTML=banner+'<span class="muted" style="font-size:13px">Nothing fits once desktop+browser headroom is reserved — try a smaller/quantized model, or free VRAM.</span>'; return; }
+  el.innerHTML=banner+ms.map(m=>{
+    const name=m.model||m.name||'?'; const v=_vramOf(m); const spd=_spdOf(m);
+    return `<div class="item"><span class="badge fit">fits</span>`
+      +`<span class="grow"><div class="name">${esc(name)}</div>`
+      +`<div class="meta">${v?`~${esc(v)} GB VRAM`:''}${_ctxOf(m)?` · ${esc(_ctxOf(m))} ctx`:''}${m.size_gb?` · ${esc(m.size_gb)} GB`:''}${spd?` · ~${esc(Math.round(spd))} tok/s`:''}</div></span>`
+      +`${m.score!=null?`<span class="badge" title="Fit score">${Math.round(_scoreOf(m))}</span>`:''}`
+      +`${m.name?`<button class="btn mini" data-dl="${esc(m.name)}">Download</button>`:''}</div>`;
+  }).join('');
+}
+function loadFits(){
   const effV = HW_VRAM>0 ? Math.max(0, +(HW_VRAM-VRAM_RESERVE).toFixed(1)) : 0;
   j('/api/hwfit/models?limit=80').then(d=>{
     let ms=(d&&d.models)||[];
-    if(HW_VRAM>0) ms=ms.filter(m=>{const v=+(m.vram_q4_gb||m.vram_gb||0);return v>0&&v<=effV;});
+    if(HW_VRAM>0) ms=ms.filter(m=>{const v=_vramOf(m);return v>0&&v<=effV;});
     else ms=ms.filter(m=>m.fit);
-    ms=ms.slice(0,24);
-    const banner = HW_VRAM>0
-      ? `<div class="muted" style="font-size:12px;margin-bottom:8px">Reserving <b>~${VRAM_RESERVE} GB VRAM</b> + <b>~${RAM_RESERVE} GB RAM</b> for your desktop + browser → recommending models up to <b>~${effV} GB</b> (of ${HW_VRAM} GB).</div>`
-      : '';
-    if(!ms.length){ el.innerHTML=banner+'<span class="muted" style="font-size:13px">Nothing fits once desktop+browser headroom is reserved — try a smaller/quantized model, or free VRAM.</span>'; return; }
-    el.innerHTML=banner+ms.map(m=>{
-      const name=m.model||m.name||'?'; const v=m.vram_q4_gb||m.vram_gb;
-      return `<div class="item"><span class="badge fit">fits</span>`
-        +`<span class="grow"><div class="name">${esc(name)}</div>`
-        +`<div class="meta">${v?`~${esc(v)} GB VRAM`:''}${m.context_length?` · ${esc(m.context_length)} ctx`:''}${m.size_gb?` · ${esc(m.size_gb)} GB`:''}</div></span>`
-        +`${m.score!=null?`<span class="badge">${Math.round((m.score||0)*100)}</span>`:''}`
-        +`${m.name?`<button class="btn mini" data-dl="${esc(m.name)}">Download</button>`:''}</div>`;
-    }).join('');
-  }).catch(e=>{ el.innerHTML = e===401?adminNote:'<span class="muted">Could not rank models.</span>'; });
+    FITS=ms; renderFits();
+  }).catch(e=>{ $('#fits').innerHTML = e===401?adminNote:'<span class="muted">Could not rank models.</span>'; });
 }
+(function(){const s=$('#fits-sort'); if(s) s.addEventListener('change', renderFits);})();
 
 // 5) Downloaded & ready
 j('/api/model/cached').then(d=>{
@@ -753,7 +796,11 @@ function renderTools(){$('#f-tools').innerHTML=TOOLS.map(t=>`<span class="chip t
 renderTools();
 
 // model dropdown (discovered)
-j('/api/agents/models').then(d=>{const sel=$('#f-model');(d.models||[]).forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o);});}).catch(()=>{});
+j('/api/agents/models').then(d=>{const sel=$('#f-model');
+  const det=(d.details&&d.details.length)?d.details:(d.models||[]).map(s=>({spec:s,kind:''}));
+  det.forEach(m=>{const o=document.createElement('option');o.value=m.spec;
+    const tag=m.kind==='local'?'  ·  🖥 local · private, free':(m.kind==='cloud'?'  ·  ☁ cloud':'');
+    o.textContent=m.spec+tag;sel.appendChild(o);});}).catch(()=>{});
 
 // team list
 function statusCls(s){return s==='thinking'?'thinking':s==='done'?'done':'idle';}
