@@ -1013,6 +1013,7 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div class="tab" data-t="connect">Connect</div>
  <div class="tab" data-t="sources">Models</div>
  <div class="tab" data-t="users">Users</div>
+ <div class="tab" data-t="toolsdata">Tools &amp; Data</div>
  <div class="tab" data-t="telegram">Telegram</div>
  <div class="tab" data-t="code">Vibe-code</div>
  <div class="tab" data-t="selfcoder">Self-coder</div>
@@ -1029,6 +1030,7 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="connect" class="panel"></div>
 <div id="sources" class="panel"></div>
 <div id="users" class="panel"></div>
+<div id="toolsdata" class="panel"></div>
 <div id="telegram" class="panel"></div>
 <div id="selfcoder" class="panel"><div class="card">
   <b>Autonomous self-improvement (code)</b> <span id="sc-st" class="muted">…</span>
@@ -1101,6 +1103,7 @@ function activateTab(name){
   t.classList.add('on'); $('#'+t.dataset.t).classList.add('on');
   if(t.dataset.t==='plugins')loadPlugins(); if(t.dataset.t==='settings')renderSettings();
   if(t.dataset.t==='connect')loadConnect(); if(t.dataset.t==='users')loadUsers();
+  if(t.dataset.t==='toolsdata')loadToolsData();
   if(t.dataset.t==='diag')runDiag();
   if(t.dataset.t==='trace')runTrace();
   if(t.dataset.t==='usage')runUsage();
@@ -1213,6 +1216,31 @@ async function loadUserList(){
     return `<div class="row" style="padding:6px 0;border-top:1px solid var(--sep)"><span class="grow"><b>${esc(name)}</b>${isAdmin?' <span class="pill">admin</span>':''}</span>${isAdmin?'<span class="muted" style="font-size:11px">protected</span>':`<button class="fix" data-u-del="${esc(name)}">Remove</button>`}</div>`;
   }).join('');
   el.querySelectorAll('[data-u-del]').forEach(b=>b.onclick=async()=>{ if(!confirm('Remove user '+b.dataset.uDel+'?'))return; await fetch('/api/auth/users',{method:'DELETE',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:b.dataset.uDel})}); loadUserList(); });
+}
+
+// ── Tools & Data tab: built-in tool toggles + backup/restore (old SPA cards, new design).
+async function loadToolsData(){
+  const host=$('#toolsdata');
+  host.innerHTML=
+   '<div class="card"><b>Built-in tools</b><div class="sub">Turn the AI\'s built-in abilities on or off. Most people can leave these as they are.</div><div id="bt-list" class="muted" style="margin-top:8px">loading…</div></div>'
+   +'<div class="card"><b>Backup &amp; restore</b><div class="sub">Export everything — memories, presets, settings, skills, preferences — as one JSON file, or restore from one.</div>'
+     +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><button class="go" id="bt-export">Export data</button><button class="go" id="bt-import">Import data</button><input type="file" id="bt-file" accept="application/json,.json" style="display:none"><span id="bt-msg" class="muted" style="font-size:12px"></span></div></div>';
+  let d={}; try{ d=await j('/api/tools'); }catch(e){ $('#bt-list').textContent='Could not load tools.'; }
+  const tools=(d&&d.tools)||[];
+  const human=s=>String(s).replace(/_/g,' ').replace(/^\w/,c=>c.toUpperCase());
+  $('#bt-list').innerHTML=tools.length? tools.map(t=>
+    `<label class="row" style="padding:6px 0;border-top:1px solid var(--sep);cursor:pointer"><span class="grow">${esc(human(t.id))} <span class="muted mono" style="font-size:11px">${esc(t.id)}</span></span><input type="checkbox" data-tool="${esc(t.id)}" ${t.enabled?'checked':''}></label>`
+  ).join('') : '<span style="font-size:13px">No tools found.</span>';
+  async function saveTools(){ const dis=[]; $('#bt-list').querySelectorAll('input[data-tool]').forEach(c=>{ if(!c.checked) dis.push(c.dataset.tool); });
+    await fetch('/api/tools',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({disabled:dis})}); }
+  $('#bt-list').querySelectorAll('input[data-tool]').forEach(c=>c.onchange=saveTools);
+  $('#bt-export').onclick=async()=>{ const m=$('#bt-msg'); m.textContent='Exporting…'; m.style.color='var(--dim)';
+    try{ const res=await fetch('/api/export',{credentials:'same-origin'}); if(!res.ok)throw 0; const blob=await res.blob(); const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download='mentor-backup.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u); m.textContent='Downloaded ✓'; m.style.color='var(--ok)'; }
+    catch(e){ m.textContent='Export failed.'; m.style.color='var(--err)'; } };
+  $('#bt-import').onclick=()=>{ $('#bt-file').value=''; $('#bt-file').click(); };
+  $('#bt-file').onchange=async()=>{ const f=$('#bt-file').files[0]; if(!f)return; const m=$('#bt-msg'); m.textContent='Importing…'; m.style.color='var(--dim)';
+    try{ const data=JSON.parse(await f.text()); const res=await fetch('/api/import',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}); const r=await res.json().catch(()=>({})); if(res.ok&&r.ok){ m.textContent=r.message||'Imported ✓'; m.style.color='var(--ok)'; } else { m.textContent=r.message||r.detail||'Import failed.'; m.style.color='var(--err)'; } }
+    catch(e){ m.textContent='Import failed: '+e.message; m.style.color='var(--err)'; } };
 }
 let scPollTimer=null;
 const SC_STEP_LABEL={branch_created:'created branch',aider_starting:'asking Aider to edit',
