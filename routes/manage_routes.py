@@ -472,6 +472,26 @@ def setup_manage_routes() -> APIRouter:
             sc = {}
         return {"aegis": aegis, "stats": sc}
 
+    @router.get("/api/manage/usage")
+    async def usage(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Per-endpoint token usage, tier-aware — so you can watch cloud spend.
+        Local = free + private; cloud counts against your usage limits."""
+        from core.database import SessionLocal, ModelEndpoint
+        from src.endpoint_resolver import _is_local_base, normalize_base
+        from src import usage_ledger
+        rows = []
+        db = SessionLocal()
+        try:
+            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+                local = _is_local_base(normalize_base(ep.base_url))
+                s = usage_ledger.summary(ep.name)
+                rows.append({"name": ep.name, "local": local,
+                             "today": s.get("today", {}), "month": s.get("month", {})})
+        finally:
+            db.close()
+        rows.sort(key=lambda r: (r["local"], -((r["month"].get("in", 0)) + (r["month"].get("out", 0)))))
+        return {"endpoints": rows}
+
     @router.post("/api/manage/explain-topic")
     async def explain_topic(payload: Dict[str, Any], _admin: str = Depends(require_admin)) -> Dict[str, Any]:
         """AI-guide for any concept/section in the UI (Cookbook, etc.): plain-language
@@ -960,6 +980,7 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div class="tab on" data-t="plugins">Plugins</div>
  <div class="tab" data-t="diag">Diagnostics</div>
  <div class="tab" data-t="trace">Trace</div>
+ <div class="tab" data-t="usage">Usage</div>
  <div class="tab" data-t="sources">Models</div>
  <div class="tab" data-t="telegram">Telegram</div>
  <div class="tab" data-t="code">Vibe-code</div>
@@ -972,6 +993,8 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div id="diag-out"></div></div>
 <div id="trace" class="panel"><div class="card"><b>Activity trace</b><div class="sub">What the agent has been doing — every tool call the Aegis firewall scored (and whether it was allowed/warned/blocked). Newest first.</div></div>
  <div id="trace-out" class="muted">loading…</div></div>
+<div id="usage" class="panel"><div class="card"><b>Usage &amp; cost</b><div class="sub">Tokens per model endpoint. <b>Local</b> = free &amp; private. <b>Cloud</b> counts against your usage limits — watch these.</div></div>
+ <div id="usage-out" class="muted">loading…</div></div>
 <div id="sources" class="panel"></div>
 <div id="telegram" class="panel"></div>
 <div id="selfcoder" class="panel"><div class="card">
@@ -1046,6 +1069,7 @@ function activateTab(name){
   if(t.dataset.t==='plugins')loadPlugins(); if(t.dataset.t==='settings')renderSettings();
   if(t.dataset.t==='diag')runDiag();
   if(t.dataset.t==='trace')runTrace();
+  if(t.dataset.t==='usage')runUsage();
   if(t.dataset.t==='code'){aiderStatus();aiderPlan();}
   if(t.dataset.t==='selfcoder')scLoad();
   if(t.dataset.t==='forge')forgeInit();
@@ -1339,6 +1363,19 @@ function settingRow(d, pluginName){
 }
 async function togglePl(n,en){const r=await j('/api/manage/plugins/toggle',{method:'POST',body:JSON.stringify({name:n,enabled:en})});alert(r.detail||JSON.stringify(r));loadPlugins();}
 async function repairPl(n){const r=await j('/api/cookbook/debug/fix',{method:'POST',body:JSON.stringify({fix:{kind:'plugin_repair',plugin:n}})});alert(r.detail||JSON.stringify(r));loadPlugins();}
+async function runUsage(){
+  const el=$('#usage-out'); el.innerHTML='<div class="muted">loading…</div>';
+  let d; try{ d=await j('/api/manage/usage'); }catch(e){ el.innerHTML='<div class="card"><span class="pill err">error</span> could not load usage</div>'; return; }
+  const eps=d.endpoints||[];
+  if(!eps.length){ el.innerHTML='<div class="muted" style="font-size:13px">No model endpoints yet.</div>'; return; }
+  const tok=o=>((o&&(o.in||0))+(o&&(o.out||0)))||0;
+  el.innerHTML='<div class="card">'+eps.map(e=>{
+    const cls=e.local?'ok':'warn', tier=e.local?'Local · free':'Cloud · counts vs limits';
+    return `<div class="row" style="padding:8px 0;border-top:1px solid var(--sep)"><span class="pill ${cls}">${tier}</span>`
+      +`<span class="grow"><b>${esc(e.name)}</b></span>`
+      +`<span class="muted" style="font-size:12px">today ${tok(e.today)} tok · month ${tok(e.month)} tok</span></div>`;
+  }).join('')+'</div>';
+}
 async function runTrace(){
   const el=$('#trace-out'); el.innerHTML='<div class="muted">loading…</div>';
   let d; try{ d=await j('/api/manage/trace'); }catch(e){ el.innerHTML='<div class="card"><span class="pill err">error</span> could not load trace</div>'; return; }
