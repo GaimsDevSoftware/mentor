@@ -16,12 +16,13 @@
  */
 
 :root {
-  /* Core palette */
-  --bg: #282c34;
-  --fg: #9cdef2;
-  --panel: #111;
-  --border: #355a66;
-  --red: #e06c75;
+  /* Core palette — Mentor default (brass + cyan on void), matches /app and the
+     'mentor' theme preset so first paint / the loader don't flash Odysseus-blue. */
+  --bg: #0a0c11;
+  --fg: #d6e2e6;
+  --panel: #11151c;
+  --border: #2b333d;
+  --red: #e0a95e;
   /* Were `var(--green)` / `var(--warn)` — self-referential, so they
      resolved to invalid and every site fell back to its own literal
      (or, for sites with no fallback, painted as transparent/inherit).

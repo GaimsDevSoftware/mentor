@@ -9,6 +9,13 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 
 export const THEMES = {
+  // Mentor — matches the /app design world (brass guide-star + cyan spark on
+  // void), so chat is visually the same product as the rest of the shell.
+  mentor:     { bg:'#0a0c11', fg:'#d6e2e6', panel:'#11151c', border:'#2b333d', red:'#e0a95e',
+                advanced: { brandColor:'#e0a95e', accentPrimary:'#e0a95e', sectionAccent:'#64d2ff',
+                            sendBtnBg:'#e0a95e', sendBtnHover:'#edbf7e', toggleActive:'#64d2ff',
+                            userBubbleBg:'#17202b', aiBubbleBg:'#0f131a', inputBg:'#11151c',
+                            inputBorder:'#2b333d', bubbleBorder:'#222b35' } },
   dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
   light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
@@ -31,7 +38,7 @@ export const THEMES = {
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
 };
 
-const DEFAULT_THEME = 'dark';
+const DEFAULT_THEME = 'mentor';
 const LS_KEY = 'odysseus-theme';
 const CUSTOM_THEMES_KEY = 'odysseus-custom-themes';
 
@@ -46,6 +53,7 @@ const MAX_CUSTOM_THEMES = 8;
 
 // Default background patterns for built-in themes
 const THEME_DEFAULT_PATTERN = {
+  mentor:     'constellations',
   dark:       'none',
   light:      'dots',
   midnight:   'rain',
@@ -62,6 +70,7 @@ const THEME_DEFAULT_PATTERN = {
 
 // Default effect colors for specific themes (overrides --fg)
 const THEME_DEFAULT_EFFECT_COLOR = {
+  mentor:     '#e0a95e',
   midnight:   '#ffffff',
   organs:     '#451616',
   cute:       '#ff8cb8',
@@ -70,6 +79,7 @@ const THEME_DEFAULT_EFFECT_COLOR = {
 
 // Default effect intensity (0..1) per theme. Any theme not listed defaults to 1.
 const THEME_DEFAULT_INTENSITY = {
+  mentor:     0.45,
   midnight:   0.5,
   terminal:   0.8,
   organs:     0.65,
@@ -446,6 +456,15 @@ export function getSaved() {
   if (obj && obj.name === 'chatgpt') obj.name = 'gpt';
   // Migration: 'sakura' preset was renamed to 'ume'
   if (obj && obj.name === 'sakura') obj.name = 'ume';
+  // Rebrand migration (once): the old default 'dark' (Odysseus blue) → 'mentor',
+  // so chat adopts the new design without users having to pick it. Only migrates
+  // an UNMODIFIED dark theme — anyone who tuned the colours keeps theirs, and the
+  // flag means a later deliberate switch back to dark sticks.
+  if (obj && obj.name === 'dark' && !Storage.getJSON('mentor-rebrand-v1', false)) {
+    const unmodified = !obj.colors || JSON.stringify(obj.colors) === JSON.stringify(THEMES.dark);
+    if (unmodified) { obj.name = 'mentor'; obj.colors = THEMES.mentor; Storage.setJSON(LS_KEY, obj); }
+    Storage.setJSON('mentor-rebrand-v1', true);
+  }
   return obj;
 }
 
@@ -630,7 +649,7 @@ export function initThemeUI() {
         <span style="background:${c.fg}"></span>
         <span style="background:${c.red}"></span>
       </div>
-      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : name)}
+      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : (name === 'mentor' ? 'Mentor' : name))}
     </div>
   `).join('');
 
@@ -2058,6 +2077,11 @@ async function _initWithSync() {
     const serverTheme = await _loadFromServer();
     if (serverTheme && serverTheme.colors) {
       if (serverTheme.name === 'sakura') serverTheme.name = 'ume';
+      // Same rebrand migration as getSaved(), for server-only themes.
+      if (serverTheme.name === 'dark' && JSON.stringify(serverTheme.colors) === JSON.stringify(THEMES.dark)) {
+        serverTheme.name = 'mentor'; serverTheme.colors = THEMES.mentor;
+        Storage.setJSON('mentor-rebrand-v1', true);
+      }
       Storage.setJSON(LS_KEY, serverTheme);
       applyColors(serverTheme.colors);
     }
