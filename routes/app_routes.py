@@ -982,6 +982,18 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
       <b>🖥 Local</b> — the AI runs on your own computer. <b>Free</b> and <b>fully private</b> (nothing leaves your machine), but needs a decent graphics card and a one-time install (Ollama), and the first model can take a while to download.<br>
       <b>☁ Cloud</b> — connect a company's AI over the internet. <b>Instant</b> and very capable. You need an <b>API key</b> (we show you exactly where to get one — several are <b>free to start</b>, like OpenRouter, Groq and Gemini; bigger models cost per use). Your prompts are sent to that company.<br>
       <span class="faint">Not sure? If you have a gaming-grade graphics card, try Local. Otherwise Cloud is the quickest path.</span></p>
+
+    <!-- Concierge / guide AI — a small free model that explains things and (next)
+         can run setup for you. Separate from the main work model below. -->
+    <div style="border:1px solid color-mix(in srgb,var(--cyan) 35%,transparent);background:color-mix(in srgb,var(--cyan) 6%,transparent);border-radius:11px;padding:14px;margin:0 0 16px">
+      <div style="font-weight:600;margin-bottom:3px">First: pick your guide AI <span class="faint" style="font-weight:400;font-size:12px">— free; it explains things &amp; can set the rest up for you</span></div>
+      <div class="why" style="margin:0 0 10px;font-size:13px">Your in-app helper (separate from the main work model below). It only guides + runs setup, so a small free one is perfect. Recommended: <b>Groq</b> — free, fast, ~1 minute.</div>
+      <div id="cg-tiers" class="provgrid" style="grid-template-columns:repeat(2,1fr)"></div>
+      <div id="cg-action" style="display:none;margin-top:10px"></div>
+      <div id="cg-msg" class="actmsg muted" style="margin-top:6px"></div>
+    </div>
+
+    <div class="faint" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Your main work model (for chat, code, research)</div>
     <div class="tabs">
       <button class="tab on" data-tab="local" type="button">🖥️ Run locally · private &amp; free</button>
       <button class="tab" data-tab="cloud" type="button">☁️ Connect a cloud API</button>
@@ -1094,6 +1106,56 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   if(which==='local') loadModels();
   if(which==='cloud') renderProviders();
 }));
+
+// ── Concierge / guide AI picker — sets teacher_model (the light helper model) ──
+const CONCIERGE=[
+  {id:'groq', name:'Groq', tag:'fast · recommended', base:'https://api.groq.com/openai/v1', get:'https://console.groq.com/keys', prefer:['llama-3.3-70b','llama-3.1-8b-instant','llama']},
+  {id:'openrouter', name:'OpenRouter', tag:'balanced · many models', base:'https://openrouter.ai/api/v1', get:'https://openrouter.ai/keys', req:true, prefer:[':free']},
+  {id:'cerebras', name:'Cerebras', tag:'strong', base:'https://api.cerebras.ai/v1', get:'https://cloud.cerebras.ai', prefer:['gpt-oss-120b','llama-3.3-70b','llama']},
+  {id:'local', name:'Local (Ollama)', tag:'private · no key', local:true},
+];
+function _cgPick(models, prefer){ for(const p of (prefer||[])){ const m=(models||[]).find(x=>String(x).toLowerCase().includes(p.toLowerCase())); if(m) return m; } return (models||[])[0]; }
+function renderConciergeTiers(){
+  const g=$('#cg-tiers'); if(!g) return;
+  g.innerHTML=CONCIERGE.map((c,i)=>`<div class="prov" data-i="${i}">${esc(c.name)}<span class="ph">${esc(c.tag)}</span></div>`).join('');
+  g.querySelectorAll('.prov').forEach(b=>b.onclick=()=>{
+    g.querySelectorAll('.prov').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    cgSelect(CONCIERGE[+b.dataset.i]);
+  });
+}
+function cgSelect(c){
+  const a=$('#cg-action'); a.style.display='';
+  if(c.local){
+    a.innerHTML='<div class="why" style="font-size:12px;margin:0 0 8px">Downloads a small model (~1.3 GB) that runs on your machine — free, private, no key.</div>'
+      +'<button class="btn primary" id="cg-local-go" type="button">Set up local guide AI</button>';
+    $('#cg-local-go').onclick=async()=>{ const m=$('#cg-msg'); $('#cg-local-go').disabled=true; m.textContent='Setting up — downloading (~1.3 GB)…'; m.style.color='var(--dim)';
+      let r; try{ r=await j('/api/setup/free-helper',{method:'POST'}); }catch(e){ m.textContent='Could not start.'; $('#cg-local-go').disabled=false; return; }
+      if(r&&r.need_ollama){ m.textContent='Install Ollama first (in the Local tab below), then retry.'; $('#cg-local-go').disabled=false; return; }
+      const poll=setInterval(async()=>{ let s; try{ s=await j('/api/setup/free-helper/status'); }catch(e){ return; }
+        if(s.log) m.textContent=String(s.log).slice(-120);
+        if(s.status==='done'){ clearInterval(poll); m.textContent='✓ Your guide AI is ready (local).'; m.style.color='var(--ok)'; }
+        else if(s.status==='failed'){ clearInterval(poll); m.textContent=String(s.log||'Failed').slice(-160); m.style.color='var(--err)'; $('#cg-local-go').disabled=false; } }, 3000); };
+    return;
+  }
+  a.innerHTML='<div class="why" style="font-size:12px;margin:0 0 6px">Get a <b>free</b> key (no card needed) → <a href="'+esc(c.get)+'" target="_blank" rel="noopener" style="color:var(--cyan)">'+esc(c.get.replace(/^https?:\/\//,''))+'</a>, then paste it:</div>'
+    +'<div class="row" style="gap:8px;flex-wrap:wrap"><input id="cg-key" class="fld" type="password" placeholder="paste your '+esc(c.name)+' key" style="flex:1;min-width:180px"><button class="btn primary" id="cg-go" type="button">Use as guide AI</button></div>';
+  $('#cg-go').onclick=async()=>{ const m=$('#cg-msg'); const key=($('#cg-key').value||'').trim();
+    if(!key){ m.textContent='Paste your '+c.name+' key first.'; m.style.color='var(--err)'; return; }
+    $('#cg-go').disabled=true; m.textContent='Connecting to '+c.name+'…'; m.style.color='var(--dim)';
+    try{
+      const fd=new FormData(); fd.append('base_url',c.base); fd.append('api_key',key); fd.append('name',c.name); fd.append('model_type','llm');
+      if(c.req) fd.append('require_models','true'); else fd.append('skip_probe','false');
+      const res=await fetch('/api/model-endpoints',{method:'POST',body:fd,credentials:'same-origin'}); const d=await res.json();
+      if(!res.ok){ m.textContent=d.detail||'Could not connect — check the key.'; m.style.color='var(--err)'; $('#cg-go').disabled=false; return; }
+      const pick=_cgPick(d.models, c.prefer);
+      if(!pick){ m.textContent='Connected, but no models came back — try another provider.'; m.style.color='var(--err)'; $('#cg-go').disabled=false; return; }
+      const spec=pick+'@'+c.name;
+      await fetch('/api/manage/setting',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'teacher_model',value:spec})});
+      m.textContent='✓ Your guide AI is ready: '+pick+' ('+c.name+').'; m.style.color='var(--ok)';
+    }catch(e){ m.textContent='Request failed.'; m.style.color='var(--err)'; $('#cg-go').disabled=false; }
+  };
+}
+renderConciergeTiers();
 
 // ── STEP 1 / LOCAL: hardware ─────────────────────────────────────────────────
 j('/api/hwfit/system').then(s=>{
