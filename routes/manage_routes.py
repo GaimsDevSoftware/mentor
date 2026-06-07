@@ -691,6 +691,64 @@ def setup_manage_routes() -> APIRouter:
             # Model configured but unreachable → still help, with the built-in text.
             return {"ok": True, "explanation": _builtin, "builtin": True}
 
+    @router.post("/api/setup/assistant")
+    async def setup_assistant(payload: Dict[str, Any], _admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """The active setup concierge: guides the user AND performs setup actions.
+        Runs on teacher_model (the guide AI). Returns {reply, action?} — the UI
+        executes the action (clicks the real buttons) and reports the result back."""
+        import json as _json
+        import re as _re
+        from src.settings import get_setting as _gs
+        spec = (_gs("teacher_model", "") or "").strip()
+        if not spec:
+            return {"ok": False, "need_model": True,
+                    "detail": "Pick your guide AI first (the card above)."}
+        msgs = payload.get("messages") or []
+        system = (
+            "You are Mentor's setup concierge — a friendly, concise guide that helps a possibly "
+            "NON-TECHNICAL user set up their local-first AI app, and DOES the setup for them. "
+            "Keep replies short (1-3 sentences). Ask ONE question at a time.\n\n"
+            "You can perform an action by ending your reply with EXACTLY ONE fenced block:\n"
+            "```action\n{\"type\":\"<name>\",\"args\":{...}}\n```\n"
+            "Actions:\n"
+            "- detect_system — read the user's GPU/VRAM/RAM.\n"
+            "- install_ollama — install the local engine (needed before local models).\n"
+            "- setup_free_helper — download a small free LOCAL model and set it as a helper.\n"
+            "- recommend_local — list local models that fit this machine, ranked.\n"
+            "- serve_local {\"model\":\"<name>\"} — start a local model so it's usable.\n"
+            "- set_role {\"role\":\"default_model|aider_model|research_model|vision_model\",\"spec\":\"model@endpoint\"} — assign a model to a job.\n"
+            "- open_concierge — scroll the user to the guide-AI / cloud-key picker.\n"
+            "Rules: say ONE sentence about what you're about to do BEFORE the action block. "
+            "Emit at most ONE action per reply, and only when you have what you need. "
+            "NEVER ask for an API key in chat — if a cloud key is needed, use open_concierge and "
+            "tell the user to use the picker. After an action result arrives, continue the plan. "
+            "Begin by asking what the user wants to use Mentor for (coding, research, chat, private/local), "
+            "then propose and run a sensible setup."
+        )
+        chat = [{"role": "system", "content": system}]
+        for m in msgs[-16:]:
+            c = str(m.get("content", "")).strip()
+            if c:
+                chat.append({"role": ("assistant" if m.get("role") == "assistant" else "user"), "content": c})
+        try:
+            from src.ai_interaction import _resolve_model
+            from src.llm_core import complete_with_continuation
+            url, model, headers = _resolve_model(spec)
+            reply = await complete_with_continuation(url, model, chat, headers=headers or {},
+                                                     max_tokens=700, timeout=90)
+        except Exception as e:
+            return {"ok": False, "detail": "Guide AI call failed: %s" % e}
+        text = (reply or "").strip()
+        action = None
+        m = _re.search(r"```action\s*(\{.*?\})\s*```", text, _re.DOTALL)
+        if m:
+            try:
+                action = _json.loads(m.group(1))
+            except Exception:
+                action = None
+            text = (text[:m.start()] + text[m.end():]).strip()
+        return {"ok": True, "reply": text or "(…)", "action": action}
+
     @router.get("/api/manage/teacher-model-options")
     async def teacher_model_options(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         """Discovered models as `model@endpoint` specs, for the teacher_model

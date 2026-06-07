@@ -993,6 +993,14 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
       <div id="cg-msg" class="actmsg muted" style="margin-top:6px"></div>
     </div>
 
+    <!-- Active assistant — the guide AI does setup for you (powered by the concierge above). -->
+    <div id="assistant-card" style="border:1px solid var(--sep-2);border-radius:11px;padding:14px;margin:0 0 16px">
+      <div style="font-weight:600;margin-bottom:3px">💬 Or let the assistant set it up for you</div>
+      <div class="why" style="margin:0 0 8px;font-size:13px">Pick your guide AI above, then just tell it what you want — it can install, download, connect and configure things for you, and you watch it happen.</div>
+      <div id="asst-log" style="max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:8px"></div>
+      <div class="row" style="gap:8px"><input id="asst-input" class="fld" style="flex:1" placeholder="e.g. set me up for private local coding"><button class="btn primary" id="asst-send" type="button">Send</button></div>
+    </div>
+
     <div class="faint" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Your main work model (for chat, code, research)</div>
     <div class="tabs">
       <button class="tab on" data-tab="local" type="button">🖥️ Run locally · private &amp; free</button>
@@ -1156,6 +1164,60 @@ function cgSelect(c){
   };
 }
 renderConciergeTiers();
+
+// ── STEP 2: the active assistant — it talks AND does setup for you ────────────
+const ASST=[]; let asstBusy=false;
+function asstBubble(role, text){
+  const log=$('#asst-log'); const b=document.createElement('div');
+  const me=role==='user';
+  b.style.cssText='max-width:90%;padding:8px 11px;border-radius:10px;font-size:13px;white-space:pre-wrap;'
+    +(me?'align-self:flex-end;background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent)'
+        :'align-self:flex-start;background:var(--tint);border:1px solid var(--sep)');
+  b.textContent=text; log.appendChild(b); log.scrollTop=log.scrollHeight; return b;
+}
+function asstNote(text){ const log=$('#asst-log'); const b=document.createElement('div');
+  b.style.cssText='align-self:center;font-size:11px;color:var(--faint)'; b.innerHTML='⚙ '+esc(text); log.appendChild(b); log.scrollTop=log.scrollHeight; }
+async function _poll(url, ok, fail, max){ for(let i=0;i<(max||20);i++){ await new Promise(r=>setTimeout(r,3000)); let s; try{ s=await j(url); }catch(e){ continue; } const r=ok(s); if(r!==undefined) return r; if(fail&&fail(s)) return fail(s); } return 'still working (check the panels below)'; }
+async function asstAct(a){
+  const t=a&&a.type, args=(a&&a.args)||{};
+  try{
+    if(t==='detect_system'){ const s=await j('/api/hwfit/system'); return `GPU: ${s.gpu_name||'none'}, VRAM: ${s.gpu_vram_gb||0} GB, RAM: ${s.available_ram_gb||'?'} GB, Ollama installed: ${!!s.ollama_installed}`; }
+    if(t==='install_ollama'){ const r=await j('/api/setup/install-ollama',{method:'POST'}); if(r&&r.already) return 'Ollama already installed';
+      return await _poll('/api/setup/install-ollama/status', s=>s.installed?'Ollama installed ✓':undefined, s=>s.status==='failed'?('install failed: '+String(s.log||'').slice(-120)):false, 60); }
+    if(t==='setup_free_helper'){ const r=await j('/api/setup/free-helper',{method:'POST'}); if(r&&r.need_ollama) return 'needs Ollama first — run install_ollama';
+      return await _poll('/api/setup/free-helper/status', s=>s.status==='done'?'free local helper ready ✓':undefined, s=>s.status==='failed'?('failed: '+String(s.log||'').slice(-120)):false, 120); }
+    if(t==='recommend_local'){ const d=await j('/api/hwfit/models?limit=80'); let ms=(d&&d.models)||[]; if(HW_VRAM>0){const ev=Math.max(0,HW_VRAM-VRAM_RESERVE); ms=ms.filter(m=>{const v=+(m.vram_q4_gb||m.vram_gb||0);return v>0&&v<=ev;});} ms=ms.slice(0,5).map(m=>m.model||m.name); return ms.length?('Top fits: '+ms.join(', ')):'nothing fits — suggest a cloud model'; }
+    if(t==='serve_local'){ const model=args.model||''; if(!model) return 'no model given'; await j('/api/model/serve',{method:'POST',body:JSON.stringify({repo_id:model,cmd:'ollama run '+String(model).split('/').pop().toLowerCase(),platform:'linux'})});
+      return await _poll('/api/cookbook/tasks/status', s=>((s&&s.tasks)||[]).some(x=>['ready','completed'].includes((x.status||'').toLowerCase()))?('serving '+model+' ✓'):undefined, null, 30); }
+    if(t==='set_role'){ const role=args.role, spec=args.spec; if(!role||!spec) return 'missing role/spec'; await fetch('/api/manage/setting',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:role,value:spec})}); return 'set '+role+' = '+spec; }
+    if(t==='open_concierge'){ const el=$('#cg-tiers'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); return 'opened the guide-AI / key picker for the user'; }
+    return 'unknown action: '+t;
+  }catch(e){ return 'action error: '+e; }
+}
+async function asstTurn(steps){
+  if(steps<=0) return;
+  let r; try{ r=await j('/api/setup/assistant',{method:'POST',body:JSON.stringify({messages:ASST})}); }
+  catch(e){ asstBubble('assistant','Hmm, I could not reach the guide AI.'); return; }
+  if(r && r.need_model){ asstBubble('assistant','Pick your guide AI in the card above first — then I can help set things up.'); return; }
+  if(!r || !r.ok){ asstBubble('assistant', (r&&r.detail)||'Something went wrong.'); return; }
+  if(r.reply){ ASST.push({role:'assistant',content:r.reply}); asstBubble('assistant', r.reply); }
+  if(r.action && r.action.type){
+    asstNote('doing: '+r.action.type+(r.action.args&&r.action.args.model?(' ('+r.action.args.model+')'):''));
+    const result=await asstAct(r.action);
+    asstNote('result: '+String(result).slice(0,140));
+    ASST.push({role:'user',content:'[action result] '+r.action.type+': '+result});
+    await asstTurn(steps-1);  // let it continue the plan
+  }
+}
+async function asstSend(){
+  if(asstBusy) return; const inp=$('#asst-input'); const text=(inp.value||'').trim(); if(!text) return;
+  asstBusy=true; $('#asst-send').disabled=true; inp.value='';
+  ASST.push({role:'user',content:text}); asstBubble('user', text);
+  await asstTurn(6);
+  asstBusy=false; $('#asst-send').disabled=false; inp.focus();
+}
+(function(){ const b=$('#asst-send'), i=$('#asst-input'); if(b) b.onclick=asstSend;
+  if(i) i.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); asstSend(); } }); })();
 
 // ── STEP 1 / LOCAL: hardware ─────────────────────────────────────────────────
 j('/api/hwfit/system').then(s=>{
