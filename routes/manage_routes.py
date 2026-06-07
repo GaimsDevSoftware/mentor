@@ -2212,4 +2212,6 @@ async function forgeEnable(e){
 // Kick off the loaders for whichever tab is active on first paint, so the user
 // doesn't have to click the already-active tab to see its content.
 loadPlugins();
-</script></body></html>"""
+</script>
+<script src="/static/js/concierge.js"></script>
+</body></html>"""

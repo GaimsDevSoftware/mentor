@@ -255,7 +255,9 @@ j('/api/cookbook/sources').then(d=>{const el=document.getElementById('models');e
 // First-run nudge: no model endpoint connected → surface the setup banner.
 j('/api/model-endpoints').then(d=>{const n=Array.isArray(d)?d.length:((d&&d.endpoints||[]).length);
   if(!n){const b=document.getElementById('setup-banner');if(b)b.style.display='';}}).catch(()=>{});
-</script></body></html>"""
+</script>
+<script src="/static/js/concierge.js"></script>
+</body></html>"""
 
 
 _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
@@ -687,7 +689,9 @@ document.addEventListener('click', async (e)=>{
     else pop.innerHTML=`<span class="muted" style="font-size:13px">${esc(r.detail||'No explanation available.')}</span>`;
   }catch(err){ pop.innerHTML=`<span class="muted" style="font-size:13px">${err===401?'Admin only.':'Explanation failed.'}</span>`; }
 });
-</script></body></html>"""
+</script>
+<script src="/static/js/concierge.js"></script>
+</body></html>"""
 
 
 _OFFICE = r"""<!doctype html><html><head><meta charset="utf-8">
@@ -879,7 +883,9 @@ $('#hire-btn').onclick=async()=>{const m=$('#hire-msg');const name=$('#f-name').
   }catch(e){m.textContent='failed: '+e;}};
 
 // run the team
-</script></body></html>"""
+</script>
+<script src="/static/js/concierge.js"></script>
+</body></html>"""
 
 
 _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
@@ -956,6 +962,8 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
  .tab{flex:1;padding:12px;border:1px solid var(--sep-2);border-radius:11px;background:var(--tint);color:var(--dim);cursor:pointer;font:500 13px/1.3 inherit;text-align:center;transition:border-color .15s,background .15s,color .15s}
  .tab:hover{border-color:var(--brass)} .tab.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--txt)}
  .tabpane{animation:fade .2s ease} @keyframes fade{from{opacity:0}to{opacity:1}}
+ @keyframes setupglow{0%,100%{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent),0 0 20px color-mix(in srgb,var(--accent) 14%,transparent)}50%{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 50%,transparent),0 0 34px color-mix(in srgb,var(--accent) 28%,transparent)}}
+ #assistant-card{animation:setupglow 3.6s ease-in-out infinite}
  .provgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
  @media(max-width:560px){.provgrid{grid-template-columns:repeat(2,1fr)}}
  .prov{padding:11px 10px;border:1px solid var(--sep-2);border-radius:10px;background:var(--tint);cursor:pointer;font:500 12.5px/1.2 inherit;color:var(--txt);text-align:center;transition:border-color .15s,background .15s}
@@ -1176,7 +1184,10 @@ function cgSelect(c){
 renderConciergeTiers();
 
 // ── STEP 2: the active assistant — it talks AND does setup for you ────────────
-const ASST=[]; let asstBusy=false;
+// Shared with the floating concierge widget so the chat follows across pages.
+const ASST=(function(){try{return JSON.parse(localStorage.getItem('mentor-asst-chat')||'[]')||[]}catch(e){return[]}})();
+function asstSave(){try{localStorage.setItem('mentor-asst-chat',JSON.stringify(ASST.slice(-40)))}catch(e){}}
+let asstBusy=false;
 function asstBubble(role, text){
   const log=$('#asst-log'); const b=document.createElement('div');
   const me=role==='user';
@@ -1212,13 +1223,13 @@ async function asstTurn(steps){
   if(r && r.need_model){ asstBubble('assistant','First pick your guide AI in the card above — Groq (free, ~1 min) is the easiest. Then I\'ll take it from here.');
     const el=$('#cg-tiers'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); return; }
   if(!r || !r.ok){ asstBubble('assistant', (r&&r.detail)||'Something went wrong — let\'s try that again.'); return; }
-  if(r.reply){ ASST.push({role:'assistant',content:r.reply}); asstBubble('assistant', r.reply); }
+  if(r.reply){ ASST.push({role:'assistant',content:r.reply}); asstBubble('assistant', r.reply); asstSave(); }
   if(r.action && r.action.type){
     if(r.action.type==='done'){ asstNote('✓ Setup complete'); asstBubble('assistant','You\'re all set 🎉 — click “Next →” at the bottom, or jump straight into Chat. I\'m here if you want to add or change anything.'); return; }
     asstNote('doing: '+r.action.type+(r.action.args&&r.action.args.model?(' ('+r.action.args.model+')'):''));
     const result=await asstAct(r.action);
     asstNote('result: '+String(result).slice(0,140));
-    ASST.push({role:'user',content:'[action result] '+r.action.type+': '+result});
+    ASST.push({role:'user',content:'[action result] '+r.action.type+': '+result}); asstSave();
     await asstTurn(steps-1);  // let it continue the plan toward "done"
   }
 }
@@ -1232,10 +1243,12 @@ function conciergeReady(){ try{ asstKickoff(true); const el=$('#assistant-card')
 async function asstSend(){
   if(asstBusy) return; const inp=$('#asst-input'); const text=(inp.value||'').trim(); if(!text) return;
   asstStarted=true; asstBusy=true; $('#asst-send').disabled=true; inp.value='';
-  ASST.push({role:'user',content:text}); asstBubble('user', text);
+  ASST.push({role:'user',content:text}); asstBubble('user', text); asstSave();
   await asstTurn(6);
   asstBusy=false; $('#asst-send').disabled=false; inp.focus();
 }
+// Render any conversation carried over from the floating widget / a previous visit.
+(function(){ const log=$('#asst-log'); if(log && ASST.length){ ASST.forEach(m=>{ if((m.role==='user'||m.role==='assistant')){ const t=String(m.content||'').replace(/^\[.*?\]\s*/,''); if(t.indexOf('[action result]')!==0) asstBubble(m.role,t); } }); asstStarted=true; } })();
 (function(){ const b=$('#asst-send'), i=$('#asst-input'); if(b) b.onclick=asstSend;
   if(i) i.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); asstSend(); } });
   // Proactive: the assistant greets first and drives — it doesn't wait for you.
@@ -1471,7 +1484,9 @@ $('#s2-back').onclick=()=>showStep(1);
 $('#s2-next').onclick=()=>showStep(3);
 
 showStep(1);
-</script></body></html>"""
+</script>
+<script src="/static/js/concierge.js"></script>
+</body></html>"""
 
 
 _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
@@ -1689,7 +1704,9 @@ $('#run-btn').onclick=async()=>{
   }, 2000);
 };
 load();
-</script></body></html>"""
+</script>
+<script src="/static/js/concierge.js"></script>
+</body></html>"""
 
 
 _WORKSPACE = r"""<!doctype html><html><head><meta charset="utf-8">
@@ -1828,4 +1845,6 @@ document.getElementById('ws-add').onclick=()=>{ // split the first leaf we find,
   let n=root; while(n.type==='split') n=n.a; splitLeaf(n,'row'); };
 document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{ root=PRESETS[b.dataset.preset](); rerender(); });
 rerender();
-</script></body></html>"""
+</script>
+<script src="/static/js/concierge.js"></script>
+</body></html>"""
