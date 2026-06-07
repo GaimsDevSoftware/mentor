@@ -27,155 +27,24 @@ def _cfg(k, d):
         return d
 
 
-def _within(path: str, root: str) -> bool:
-    rp, rr = os.path.realpath(path), os.path.realpath(root)
-    return rp == rr or rp.startswith(rr + os.sep)
-
-
-_INDEX_EXTS = (".py", ".js", ".ts", ".html", ".css", ".json", ".md",
-               ".yaml", ".yml", ".sh", ".toml")
-_INDEX_SKIP = {".git", "venv", ".venv", "__pycache__", "node_modules", "data",
-               "logs", "Real-ESRGAN", "tellykeys", "realesrgan-env",
-               "realesrgan-ncnn", "realesrgan-weights", "designs"}
-
-
-async def _guess_files(instruction: str, project: str, model: str) -> list:
-    """When the user doesn't specify files, ask the local coder model to pick
-    them from a compact index of the repo. Returns up to 5 relative paths. The
-    whole point of vibe-coding is that the user shouldn't need to know the
-    layout — this is what makes that real."""
-    import httpx
-    # 1) build a compact, deduped index of source files
-    files = []
-    for root, dirs, fs in os.walk(project):
-        rel_root = os.path.relpath(root, project)
-        if rel_root != "." and any(p in rel_root.split(os.sep) for p in _INDEX_SKIP):
-            dirs.clear()
-            continue
-        dirs[:] = [d for d in dirs if d not in _INDEX_SKIP and not d.startswith(".")]
-        for f in fs:
-            if f.endswith(_INDEX_EXTS):
-                files.append(os.path.relpath(os.path.join(root, f), project))
-        if len(files) > 1200:
-            break
-    if not files:
-        return []
-    # 2) ask the local model to pick the most relevant
-    prompt = (
-        "You're choosing which files in a project to edit for a code change.\n"
-        f"USER WANTS:\n{instruction}\n\n"
-        "FILES AVAILABLE (one per line):\n" + "\n".join(sorted(files)[:900]) +
-        "\n\nReturn ONLY a JSON array of 1-5 file paths (relative, exactly as "
-        'listed) that most likely need editing. No prose. Example: '
-        '["routes/foo.py","plugins/bar/plugin.py"]')
-    try:
-        ollama_model = model[len("ollama/"):] if model.startswith("ollama/") else model
-        async with httpx.AsyncClient(timeout=120) as client:
-            r = await client.post(
-                "http://localhost:11434/api/generate",
-                json={"model": ollama_model, "prompt": prompt, "stream": False,
-                      "options": {"temperature": 0.1}})
-            text = (r.json() or {}).get("response", "")
-        import re as _re
-        m = _re.search(r"\[\s*(?:\".*?\"\s*,?\s*)+\]", text, _re.DOTALL)
-        if not m:
-            return []
-        picked = json.loads(m.group(0))
-        # keep only entries that actually exist in our index
-        seen = set(files)
-        return [p for p in picked if isinstance(p, str) and p in seen][:5]
-    except Exception:
-        return []
-
-
 async def _code_edit(content, owner):
+    """Chat/Telegram `code_edit` tool — delegates to the shared engine so the UI
+    Code page and this tool run edits identically (one source of truth)."""
     try:
         args = json.loads(content) if content and content.strip().startswith("{") else {"instruction": content}
     except (ValueError, TypeError):
         args = {"instruction": content}
     instruction = (args.get("instruction") or "").strip()
     files = args.get("files") or []
-    if not instruction:
-        return {"error": "Need an 'instruction' describing the change.", "exit_code": 1}
-
     project = (_cfg("aider_code_project", "") or "").strip()
-    if not project or not os.path.isdir(project):
-        return {"error": "Set aider_code_project to an existing repository path.", "exit_code": 1}
     model = (_cfg("aider_model", "") or "").strip()
+    if not project:
+        return {"error": "Set up a project in the Code page first (or set aider_code_project).", "exit_code": 1}
     if not model:
-        return {"error": "Set aider_model (e.g. ollama/qwen3-coder).", "exit_code": 1}
-    from src.plugin_forge import aider_bin
-    _bin = aider_bin()
-    if not _bin:
-        return {"error": "aider is not installed. Use the 'Install Aider' button in /manage "
-                         "(or `uv tool install --python 3.12 aider-chat`).", "exit_code": 1}
-
-    # Only let Aider touch files INSIDE the configured project.
-    safe_files = [f for f in files if isinstance(f, str) and _within(os.path.join(project, f), project)]
-
-    # Vibe-coding: when the user didn't specify files, let the local model pick
-    # them for us from a compact index of the repo. That's what makes "describe
-    # what you want" actually work — the user shouldn't need to know the layout.
-    auto_picked = []
-    if not safe_files:
-        auto_picked = await _guess_files(instruction, project, model)
-        safe_files = [f for f in auto_picked if _within(os.path.join(project, f), project)]
-
-    # Safety: if on main/master and auto-branch is on, create a feature branch
-    # FIRST so a bad edit never lands on main. Aider runs --no-auto-commits, so
-    # files change on the branch but the user reviews + commits explicitly.
-    branched = None
-    if _cfg("aider_code_auto_branch", True):
-        import subprocess, time, re as _re
-        try:
-            cur = subprocess.run(["git", "-C", project, "rev-parse", "--abbrev-ref", "HEAD"],
-                                 capture_output=True, text=True, timeout=5).stdout.strip()
-            if cur in ("main", "master"):
-                slug = _re.sub(r"[^a-z0-9]+", "-", instruction.lower())[:32].strip("-") or "edit"
-                new_branch = f"aider/{int(time.time())}-{slug}"
-                r = subprocess.run(["git", "-C", project, "checkout", "-b", new_branch],
-                                   capture_output=True, text=True, timeout=10)
-                if r.returncode == 0:
-                    branched = new_branch
-        except Exception:
-            pass
-
-    # --no-show-model-warnings: skips Aider's "Continue anyway? [y/N]" prompt for
-    # unknown models (the warnings.html page) — without it, Aider HANGS waiting
-    # for input, since --yes-always doesn't cover that specific check.
-    cmd = [_bin, "--model", model, "--yes-always", "--no-auto-commits",
-           "--no-show-model-warnings",
-           "--message", instruction] + safe_files
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, cwd=project,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=420)
-        out_s = (out or b"").decode(errors="replace")
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        return {"error": "Aider timed out (420s).", "exit_code": 1}
-    except Exception as e:
-        return {"error": f"Aider run failed: {e}", "exit_code": 1}
-
-    diff = ""
-    try:
-        dp = await asyncio.create_subprocess_exec(
-            "git", "-C", project, "diff",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        d, _ = await dp.communicate()
-        diff = (d or b"").decode(errors="replace")
-    except Exception:
-        pass
-
-    branch_note = f" on branch '{branched}'" if branched else ""
-    return {"response": f"Aider applied the change in {project}{branch_note} (not committed — review the diff).",
-            "instruction": instruction, "branch_created": branched,
-            "files_used": safe_files, "auto_picked": auto_picked,
-            "log": out_s[-1500:], "diff": diff[:8000] or "(no changes)", "exit_code": 0}
+        return {"error": "Pick a coder model in the Code page first (or set aider_model).", "exit_code": 1}
+    from src.code_edit import run_edit
+    return await run_edit(instruction, files, project, model,
+                          auto_branch=bool(_cfg("aider_code_auto_branch", True)))
 
 
 def _diagnostic():

@@ -1252,7 +1252,11 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  input.fld:focus,textarea.fld:focus{border-color:var(--brass)}
  textarea.fld{font-family:inherit;resize:vertical}
  label.lab{display:block;color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:10px 0 4px}
- pre.diff{white-space:pre-wrap;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;background:var(--tint);border:1px solid var(--sep);border-radius:10px;padding:12px 14px;max-height:420px;overflow:auto;margin-top:8px}
+ pre.diff{white-space:pre-wrap;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;background:var(--tint);border:1px solid var(--sep);border-radius:10px;padding:12px 14px;max-height:460px;overflow:auto;margin-top:8px;line-height:1.45}
+ .spin{width:14px;height:14px;border:2px solid var(--sep-2);border-top-color:var(--brass);border-radius:50%;display:inline-block;animation:spin .7s linear infinite;flex-shrink:0}
+ @keyframes spin{to{transform:rotate(360deg)}}
+ select.fld{width:100%;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:9px;padding:9px 11px;font:13px/1.4 inherit;outline:none;cursor:pointer}
+ select.fld:focus{border-color:var(--brass)}
  .topbar{position:fixed;top:14px;right:18px;display:flex;gap:8px;align-items:center;z-index:50}
  .jump{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;color:var(--txt);font:500 12px/1 inherit;box-shadow:var(--shadow)}
  .jump:hover{background:var(--tint-2)} .theme-switch{display:flex;gap:2px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;padding:3px;box-shadow:var(--shadow)}
@@ -1264,9 +1268,21 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
 
 <div class="top"><div class="mark">Code</div><span id="aider-pill" class="pill">checking…</span></div>
-<div class="tag">Vibe-code a real repository — describe a change, the AI edits files on a branch and shows you the diff. Nothing is committed; you review first. Free &amp; private with a local coder model.</div>
+<div class="tag">Vibe-code a real repository — describe a change, the AI edits files on a safe branch and shows you the diff. Nothing is committed; you review first. Free &amp; private with a local coder model.</div>
 
-<div id="setup"></div>
+<div class="sec-title">Project &amp; engine</div>
+<div class="card" id="setup-card">
+  <div id="inst-row"></div>
+  <label class="lab">Repository</label>
+  <div class="row">
+    <select id="proj" class="fld" style="flex:1"><option>scanning for repos…</option></select>
+    <button class="btn" id="proj-refresh" title="Rescan for git repos">↻</button>
+  </div>
+  <div id="proj-custom" style="display:none;margin-top:8px"><input id="proj-path" class="fld" placeholder="/full/path/to/your/repo"></div>
+  <label class="lab">Coder model</label>
+  <select id="model" class="fld"><option>loading models…</option></select>
+  <div class="faint" style="font-size:11px;margin-top:8px">Edits run on a feature branch (never main) and are <b>not committed</b> — you review the diff, then commit what you like. Choices are remembered.</div>
+</div>
 
 <div class="sec-title">Make a change</div>
 <div class="card">
@@ -1275,6 +1291,7 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
   <label class="lab">Files to focus on (optional — leave blank and the AI picks)</label>
   <input id="files" class="fld" placeholder="src/app.py routes/health.py">
   <div class="row" style="margin-top:10px"><button class="btn" id="run-btn">Vibe-code it</button><span id="run-msg" class="muted" style="font-size:12px"></span></div>
+  <div id="prog" style="margin-top:10px"></div>
   <div id="result"></div>
 </div>
 
@@ -1286,45 +1303,98 @@ const $=s=>document.querySelector(s);
 const j=(u,o)=>fetch(u,Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},o)).then(r=>{if(!r.ok)throw r.status;return r.json();});
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-let aiderReady=false;
-async function loadSetup(){
-  const el=$('#setup'); let st={};
-  try{ st=await j('/api/manage/install-aider/status'); }catch(e){ el.innerHTML='<div class="card">'+(e===401?'Admin only.':'Could not check Aider.')+'</div>'; return; }
-  aiderReady=!!st.installed;
-  $('#aider-pill').textContent=aiderReady?'Aider ready':'Aider not installed'; $('#aider-pill').className='pill '+(aiderReady?'ok':'warn');
-  // project path (from plugin settings, if present)
-  let project='';
-  try{ const ps=await j('/api/manage/plugin-settings'); const rows=(ps.settings||{}).aider_code||[]; const p=rows.find(r=>r.key==='aider_code_project'); project=p&&p.current||''; }catch(e){}
-  el.innerHTML='<div class="sec-title">Project &amp; engine</div><div class="card">'
-    +(aiderReady?'':'<div class="row" style="margin-bottom:10px"><span class="pill warn">setup</span><span class="grow">Aider (the code editor engine) isn\'t installed yet. It installs isolated — it never touches Mentor\'s own environment.</span><button class="btn" id="inst-btn">Install Aider</button></div><div id="inst-msg" class="muted" style="font-size:12px;margin-bottom:8px"></div>')
-    +'<label class="lab">Repository path (the repo Aider may edit)</label>'
-    +'<div class="row"><input id="proj" class="fld" style="flex:1" placeholder="/home/you/myrepo" value="'+esc(project)+'"><button class="btn" id="proj-save">Save</button></div>'
-    +'<div class="faint" style="font-size:11px;margin-top:6px">Edits happen on a feature branch (never main). If "Vibe-code it" says the plugin is off, enable <b>aider_code</b> in Admin → Plugins, then restart.</div></div>';
+let aiderReady=false, PROJECTS=[], MODELS=[];
+
+async function load(){
+  let st={};
+  try{ st=await j('/api/code/status'); }catch(e){ $('#setup-card').innerHTML='<div class="muted">'+(e===401?'Admin only — sign in as an admin.':'Could not load the Code workspace.')+'</div>'; return; }
+  aiderReady=!!st.aider_installed;
+  $('#aider-pill').textContent=aiderReady?'Aider ready':'Aider not installed';
+  $('#aider-pill').className='pill '+(aiderReady?'ok':'warn');
+  $('#inst-row').innerHTML = aiderReady ? '' :
+    '<div class="row" style="margin-bottom:12px"><span class="pill warn">setup</span><span class="grow" style="font-size:13px">Aider (the editor engine) isn\'t installed yet. It installs isolated — it never touches Mentor\'s own environment.</span><button class="btn" id="inst-btn">Install Aider</button></div><div id="inst-msg" class="muted" style="font-size:12px;margin-bottom:10px"></div>';
   const ib=$('#inst-btn'); if(ib) ib.onclick=installAider;
-  $('#proj-save').onclick=async()=>{ const v=$('#proj').value.trim(); const m=$('#proj-save'); m.textContent='…'; try{ await j('/api/manage/setting',{method:'POST',body:JSON.stringify({key:'aider_code_project',value:v})}); m.textContent='Saved'; }catch(e){ m.textContent='failed'; } setTimeout(()=>m.textContent='Save',1500); };
+  await Promise.all([loadProjects(st.project), loadModels(st.model)]);
 }
+
+async function loadProjects(cur){
+  let d={}; try{ d=await j('/api/code/projects'); }catch(e){ return; }
+  PROJECTS=d.projects||[]; cur=cur||d.current||'';
+  const sel=$('#proj'); sel.innerHTML='';
+  if(!PROJECTS.length){ const o=document.createElement('option');o.value='';o.textContent='(no git repos found — choose Other folder…)';sel.appendChild(o); }
+  PROJECTS.forEach(p=>{const o=document.createElement('option');o.value=p;o.textContent=p;if(p===cur)o.selected=true;sel.appendChild(o);});
+  const oth=document.createElement('option');oth.value='__other__';oth.textContent='Other folder…';sel.appendChild(oth);
+  if(cur && PROJECTS.indexOf(cur)<0){ oth.selected=true; $('#proj-custom').style.display=''; $('#proj-path').value=cur; }
+  sel.onchange=()=>{ $('#proj-custom').style.display = sel.value==='__other__'?'':'none'; };
+}
+
+async function loadModels(cur){
+  let d={}; try{ d=await j('/api/code/models'); }catch(e){}
+  MODELS=(d&&d.models)||[]; cur=cur||(d&&d.current)||'';
+  const sel=$('#model'); sel.innerHTML='';
+  if(!MODELS.length){ const o=document.createElement('option');o.value='';o.textContent='(no local models running — start one in Cookbook, or pick custom)';sel.appendChild(o); }
+  MODELS.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;if(m===cur)o.selected=true;sel.appendChild(o);});
+  const oth=document.createElement('option');oth.value='__other__';oth.textContent='Other / custom…';sel.appendChild(oth);
+  if(cur && MODELS.indexOf(cur)<0){ oth.selected=true; showModelCustom(cur); }
+  sel.onchange=()=>{ if(sel.value==='__other__') showModelCustom(''); else hideModelCustom(); };
+}
+function showModelCustom(v){ let el=$('#model-custom'); if(!el){ el=document.createElement('input'); el.id='model-custom'; el.className='fld'; el.placeholder='e.g. ollama/qwen2.5-coder:7b'; el.style.marginTop='8px'; $('#model').insertAdjacentElement('afterend',el); } el.value=v||''; el.style.display=''; }
+function hideModelCustom(){ const el=$('#model-custom'); if(el) el.style.display='none'; }
+function chosenProject(){ const s=$('#proj'); return s.value==='__other__'?$('#proj-path').value.trim():s.value; }
+function chosenModel(){ const s=$('#model'); return s.value==='__other__'?(($('#model-custom')||{}).value||'').trim():s.value; }
+
 async function installAider(){
   const msg=$('#inst-msg'); const b=$('#inst-btn'); if(b)b.disabled=true; msg.textContent='Installing (isolated — can take a few minutes)…';
-  try{ await j('/api/manage/install-aider',{method:'POST'}); }catch(e){ msg.textContent='could not start install: '+e; return; }
-  const poll=setInterval(async()=>{ try{ const s=await j('/api/manage/install-aider/status'); if(s.installed){ clearInterval(poll); msg.textContent='Installed ✓'; loadSetup(); } else if(s.status==='failed'){ clearInterval(poll); msg.textContent='Install failed — see Admin → Vibe-code for the log.'; if(b)b.disabled=false; } else { msg.textContent='Installing… ('+(s.status||'working')+')'; } }catch(e){} }, 3000);
+  try{ await j('/api/manage/install-aider',{method:'POST'}); }catch(e){ msg.textContent='could not start install: '+e; if(b)b.disabled=false; return; }
+  const poll=setInterval(async()=>{ try{ const s=await j('/api/code/status'); if(s.aider_installed){ clearInterval(poll); msg.textContent='Installed ✓'; load(); } }catch(e){} }, 3000);
 }
-loadSetup();
+$('#proj-refresh').onclick=()=>loadProjects();
+
+function stageHtml(s){ return '<div class="row"><span class="spin"></span><span class="muted" style="font-size:13px">'+esc(s)+'</span></div>'; }
+function colorDiff(diff){
+  const lines=String(diff).split('\n').map(l=>{
+    let col='var(--dim)';
+    if(l.startsWith('+++')||l.startsWith('---')) col='var(--faint)';
+    else if(l.startsWith('@@')) col='var(--cyan)';
+    else if(l[0]==='+') col='var(--ok)';
+    else if(l[0]==='-') col='var(--err)';
+    return '<span style="color:'+col+'">'+esc(l)+'</span>';
+  }).join('\n');
+  return '<pre class="diff">'+lines+'</pre>';
+}
+function resultHtml(res){
+  let h='';
+  if(res.branch_created) h+='<div class="faint" style="font-size:12px;margin:8px 0 2px">On branch <b style="color:var(--brass)">'+esc(res.branch_created)+'</b> · not committed</div>';
+  if(res.files_used&&res.files_used.length) h+='<div class="faint" style="font-size:12px;margin-bottom:4px">Files edited: '+res.files_used.map(esc).join(', ')+'</div>';
+  h+='<div class="sec-title">Diff (review &amp; commit yourself)</div>'+colorDiff(res.diff||'(no changes)');
+  if(res.log) h+='<details style="margin-top:8px"><summary class="faint" style="font-size:12px;cursor:pointer">Aider log</summary><pre class="diff" style="max-height:240px">'+esc(res.log)+'</pre></details>';
+  return h;
+}
 
 $('#run-btn').onclick=async()=>{
-  const instr=$('#instr').value.trim(); const files=$('#files').value.trim().split(/\s+/).filter(Boolean);
-  const msg=$('#run-msg'), out=$('#result');
-  if(!instr){ msg.textContent='Describe the change first.'; return; }
+  const instr=$('#instr').value.trim();
+  const project=chosenProject(), model=chosenModel();
+  const files=$('#files').value.trim();
+  const msg=$('#run-msg'), prog=$('#prog'), out=$('#result');
   if(!aiderReady){ msg.textContent='Install Aider first (above).'; return; }
-  msg.textContent='Editing… with a local 30B coder this takes 2–5 min.'; out.innerHTML='';
-  let r; try{ r=await j('/api/plugins/aider_code/edit',{method:'POST',body:JSON.stringify({instruction:instr,files:files})}); }
-  catch(e){ msg.textContent = e===404 ? 'The aider_code plugin is off — enable it in Admin → Plugins, then restart.' : ('failed: '+e); return; }
-  if(!r.ok && r.error){ msg.textContent=r.error; return; }
-  const id=r.job_id||r.id; if(!id){ msg.textContent='no job id'; return; }
+  if(!instr){ msg.textContent='Describe the change first.'; return; }
+  if(!project){ msg.textContent='Pick a repository.'; return; }
+  if(!model){ msg.textContent='Pick a coder model.'; return; }
+  msg.textContent=''; out.innerHTML=''; prog.innerHTML=stageHtml('Starting…'); $('#run-btn').disabled=true;
+  let r; try{ r=await j('/api/code/edit',{method:'POST',body:JSON.stringify({instruction:instr,files:files,project:project,model:model})}); }
+  catch(e){ prog.innerHTML=''; msg.textContent='failed: '+e; $('#run-btn').disabled=false; return; }
+  if(!r.ok){ prog.innerHTML=''; msg.textContent=r.error||'failed'; $('#run-btn').disabled=false; return; }
+  const id=r.job_id;
   const poll=setInterval(async()=>{
-    let job; try{ job=await j('/api/plugins/aider_code/jobs/'+id); }catch(e){ return; }
-    if(job.stage) msg.textContent=job.stage;
-    if(job.done||job.result){ clearInterval(poll); const res=job.result||job; msg.textContent=res.msg||'Done — review the diff (nothing committed).';
-      out.innerHTML='<div class="sec-title">Git diff (not committed)</div><pre class="diff">'+esc(res.diff||'(no diff)')+'</pre>'; }
-  }, 2500);
+    let job; try{ job=await j('/api/code/jobs/'+id); }catch(e){ return; }
+    if(job.stage) prog.innerHTML=stageHtml(job.stage);
+    if(job.status==='done'||job.status==='failed'){ clearInterval(poll); $('#run-btn').disabled=false; prog.innerHTML='';
+      const res=job.result||{};
+      if(job.status==='failed'||res.error){ msg.textContent=res.error||'Edit failed.'; if(res.log) out.innerHTML='<pre class="diff" style="max-height:240px">'+esc(res.log)+'</pre>'; return; }
+      msg.textContent=res.response||'Done — review the diff (nothing committed).';
+      out.innerHTML=resultHtml(res);
+    }
+  }, 2000);
 };
+load();
 </script></body></html>"""

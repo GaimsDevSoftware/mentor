@@ -545,6 +545,8 @@ from routes.improve_routes import setup_improve_routes
 app.include_router(setup_improve_routes())
 from routes.approval_routes import setup_approval_routes
 app.include_router(setup_approval_routes())
+from routes.code_routes import setup_code_routes
+app.include_router(setup_code_routes())
 
 # Chat
 from routes.chat_routes import setup_chat_routes
