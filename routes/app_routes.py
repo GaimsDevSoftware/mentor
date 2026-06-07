@@ -999,6 +999,12 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
     <div class="tabpane" data-pane="local">
       <div id="hw" class="hw-grid" style="margin-bottom:14px"><div class="muted">reading your hardware…</div></div>
       <div id="ollama-note"></div>
+      <div class="card" id="free-helper-card" style="border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:color-mix(in srgb,var(--ok) 6%,transparent);margin:0 0 14px">
+        <div style="font-weight:600;margin-bottom:3px">✨ Easiest: a free local AI — no key, no cost</div>
+        <div class="why" style="margin:0 0 10px">One click downloads a small model (~1.3 GB) that runs on your own machine — free, private, no API key. It powers chat and the in-app guides right away. You can add a bigger/cloud model anytime.</div>
+        <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn primary" id="free-helper-btn" type="button">Set up free local AI</button><span id="free-helper-msg" class="faint" style="font-size:12px"></span></div>
+      </div>
+      <div class="faint" style="font-size:12px;margin:0 0 8px">…or pick a specific model below:</div>
       <div id="fit-banner" class="muted" style="font-size:12px;margin-bottom:10px"></div>
       <div id="models" class="muted">finding models that fit…</div>
       <div id="serve-wrap" hidden style="margin-top:14px;border-top:1px solid var(--sep);padding-top:14px">
@@ -1214,6 +1220,21 @@ $('#serve-btn').onclick=async()=>{
   }catch(e){ setMsg('serve-msg', e===401?'Admin only.':'Could not start the model.','err'); $('#serve-btn').disabled=false; }
 };
 $('#serve-skip').onclick=()=>{ markConnected('Skipped — assuming a model is already running.'); };
+
+// ✨ One-click free local helper: pull a small model (no key) + set it as the
+// helper/teacher model, so chat + the "?" guides work for free, instantly.
+(function(){ const fhb=$('#free-helper-btn'); if(!fhb) return;
+  fhb.onclick=async()=>{ const m=$('#free-helper-msg'); fhb.disabled=true;
+    m.textContent='Setting up — downloading the model (~1.3 GB, a few minutes)…';
+    let r; try{ r=await j('/api/setup/free-helper',{method:'POST'}); }catch(e){ m.textContent='Could not start.'; fhb.disabled=false; return; }
+    if(r && r.need_ollama){ m.textContent='Install Ollama first (button above), then try again.'; fhb.disabled=false; renderOllamaNote(false); return; }
+    const poll=setInterval(async()=>{ let s; try{ s=await j('/api/setup/free-helper/status'); }catch(e){ return; }
+      if(s.log) m.textContent=String(s.log).slice(-130);
+      if(s.status==='done'){ clearInterval(poll); m.textContent='Free local AI ready ✓ — chat & guides now work, no key.'; markConnected(); }
+      else if(s.status==='failed'){ clearInterval(poll); m.textContent=String(s.log||'Setup failed.').slice(-180); fhb.disabled=false; }
+    }, 3000);
+  };
+})();
 
 // ── STEP 1 / CLOUD: connect a provider API (in the same place) ───────────────
 const PROVIDERS=[

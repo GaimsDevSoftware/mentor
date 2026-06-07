@@ -102,6 +102,73 @@ async def _run_ollama_install():
         _ollama_state.update(status="failed", code=-1, log=str(e))
 
 
+# Free local helper model — a small, keyless Ollama model that powers the wizard,
+# the "?" explainers and basic chat at zero cost. ~1.3 GB.
+_helper_state: Dict[str, Any] = {"status": "idle", "log": "", "model": ""}
+HELPER_MODEL = "llama3.2:1b"
+
+
+async def _run_helper_setup():
+    import asyncio
+    import json as _json
+    import shutil
+    import uuid as _uuid
+    _helper_state.update(status="pulling", log="downloading " + HELPER_MODEL + " …", model=HELPER_MODEL)
+    if not shutil.which("ollama"):
+        _helper_state.update(status="failed", log="Ollama isn't installed yet — install it first.")
+        return
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ollama", "pull", HELPER_MODEL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=1800)
+        log = (out or b"").decode(errors="replace")[-4000:]
+        if proc.returncode != 0:
+            _helper_state.update(status="failed", log=log or "ollama pull failed")
+            return
+    except Exception as e:
+        _helper_state.update(status="failed", log=str(e))
+        return
+    # Register a local Ollama endpoint (or update it) so the model is usable.
+    try:
+        from core.database import SessionLocal, ModelEndpoint
+        db = SessionLocal()
+        try:
+            ep = db.query(ModelEndpoint).filter(ModelEndpoint.base_url.like("%11434%")).first()
+            if not ep:
+                ep = ModelEndpoint(id=_uuid.uuid4().hex, name="Local (Ollama)",
+                                   base_url="http://localhost:11434/v1", is_enabled=True,
+                                   cached_models=_json.dumps([HELPER_MODEL]), model_type="llm")
+                db.add(ep)
+            else:
+                try:
+                    cm = set(_json.loads(ep.cached_models) if ep.cached_models else [])
+                except Exception:
+                    cm = set()
+                cm.add(HELPER_MODEL)
+                ep.cached_models = _json.dumps(sorted(cm))
+                ep.is_enabled = True
+            name = ep.name
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        _helper_state.update(status="failed", log="Model downloaded, but registering it failed: " + str(e))
+        return
+    # Set it as the teacher/helper model (and the default if none chosen yet).
+    try:
+        from src.settings import load_settings, save_settings
+        s = load_settings()
+        spec = HELPER_MODEL + "@" + name
+        s["teacher_model"] = spec
+        if not str(s.get("default_model", "") or "").strip():
+            s["default_model"] = spec
+        save_settings(s)
+        _helper_state.update(status="done", log="Ready — free local helper: " + spec)
+    except Exception as e:
+        _helper_state.update(status="failed", log="Saved model but couldn't set it as helper: " + str(e))
+
+
 def _detect_python_env() -> Dict[str, Any]:
     """Inspect the host: running Python, any compatible (3.9–3.12) interpreter, uv/pipx."""
     import subprocess
@@ -808,6 +875,23 @@ def setup_manage_routes() -> APIRouter:
     async def install_ollama_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         import shutil
         return {**_ollama_state, "installed": bool(shutil.which("ollama"))}
+
+    @router.post("/api/setup/free-helper")
+    async def free_helper(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """One-click: download a small free local model (no key) and set it as the
+        helper/teacher model — so the wizard, the '?' guides and chat all work for free."""
+        import asyncio
+        import shutil
+        if not shutil.which("ollama"):
+            return {"ok": False, "need_ollama": True}
+        if _helper_state.get("status") == "pulling":
+            return {"ok": True, "status": "pulling"}
+        asyncio.create_task(_run_helper_setup())
+        return {"ok": True, "status": "pulling"}
+
+    @router.get("/api/setup/free-helper/status")
+    async def free_helper_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        return _helper_state
 
     @router.get("/api/manage/install-aider/plan")
     async def install_aider_plan(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
