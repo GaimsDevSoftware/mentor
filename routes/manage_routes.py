@@ -102,6 +102,71 @@ async def _run_ollama_install():
         _ollama_state.update(status="failed", code=-1, log=str(e))
 
 
+# Codex/ChatGPT OAuth login (device-code flow) so a user can sign in to their
+# ChatGPT subscription from inside the app — no terminal needed.
+_codex_login_state: Dict[str, Any] = {"status": "idle", "url": "", "code": "", "log": ""}
+
+
+def _codex_bin():
+    import os
+    import shutil
+    return shutil.which("codex") or os.path.expanduser("~/.local/bin/codex")
+
+
+def _codex_logged_in() -> bool:
+    import os
+    import subprocess
+    b = _codex_bin()
+    if not (b and os.path.exists(b)):
+        return False
+    try:
+        r = subprocess.run([b, "login", "status"], capture_output=True, text=True, timeout=8,
+                           env={**os.environ, "HOME": os.path.expanduser("~")})
+        return "logged in" in ((r.stdout or "") + (r.stderr or "")).lower()
+    except Exception:
+        return False
+
+
+async def _run_codex_login():
+    import asyncio
+    import os
+    import re
+    _codex_login_state.update(status="starting", url="", code="", log="")
+    b = _codex_bin()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            b, "login", "--device-auth",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            env={**os.environ, "HOME": os.path.expanduser("~")})
+    except Exception as e:
+        _codex_login_state.update(status="failed", log=str(e))
+        return
+    _codex_login_state.update(status="awaiting")
+    url_re = re.compile(r"https?://[^\s'\"]+")
+    code_re = re.compile(r"\b([A-Z0-9]{4,}-[A-Z0-9]{4,})\b")
+    buf = ""
+    try:
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            t = line.decode(errors="replace")
+            buf += t
+            _codex_login_state["log"] = buf[-2000:]
+            if not _codex_login_state["url"]:
+                m = url_re.search(t)
+                if m:
+                    _codex_login_state["url"] = m.group(0)
+            if not _codex_login_state["code"]:
+                m = code_re.search(t)
+                if m:
+                    _codex_login_state["code"] = m.group(1)
+        rc = await proc.wait()
+        _codex_login_state.update(status=("done" if rc == 0 else "failed"))
+    except Exception as e:
+        _codex_login_state.update(status="failed", log=str(e))
+
+
 # Free local helper model — a small, keyless Ollama model that powers the wizard,
 # the "?" explainers and basic chat at zero cost. ~1.3 GB.
 _helper_state: Dict[str, Any] = {"status": "idle", "log": "", "model": ""}
@@ -893,6 +958,32 @@ def setup_manage_routes() -> APIRouter:
     async def free_helper_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         return _helper_state
 
+    @router.post("/api/setup/codex-login")
+    async def codex_login(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Start (or report) ChatGPT OAuth login via the codex device-code flow, so
+        the user can sign in from the app — open the URL, enter the code."""
+        import asyncio
+        import os
+        b = _codex_bin()
+        if not (b and os.path.exists(b)):
+            return {"ok": False, "error": "Codex CLI not found. Install it first."}
+        if _codex_logged_in():
+            return {"ok": True, "already": True}
+        if _codex_login_state.get("status") not in ("starting", "awaiting"):
+            asyncio.create_task(_run_codex_login())
+        for _ in range(10):
+            await asyncio.sleep(1)
+            if _codex_login_state.get("url") or _codex_logged_in():
+                break
+        return {"ok": True, "already": _codex_logged_in(),
+                "url": _codex_login_state.get("url", ""), "code": _codex_login_state.get("code", ""),
+                "status": _codex_login_state.get("status", "")}
+
+    @router.get("/api/setup/codex-login/status")
+    async def codex_login_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        return {"logged_in": _codex_logged_in(), "url": _codex_login_state.get("url", ""),
+                "code": _codex_login_state.get("code", ""), "state": _codex_login_state.get("status", "")}
+
     @router.post("/api/setup/connect-codex")
     async def connect_codex(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         """Import your ChatGPT (Codex subscription) models — ban-safe via the official
@@ -1365,8 +1456,9 @@ function loadConnect(){
    +'<div id="cp-cloud" style="display:none"><div class="sub">Pick a provider — the URL is filled for you.</div><div class="row" style="flex-wrap:wrap;gap:6px;margin:8px 0">'+provBtns+'</div>'
      +'<div class="row" style="flex-wrap:wrap"><input id="cc-key" type="password" placeholder="API key" style="flex:1;min-width:200px"><button class="go" id="cc-add">Connect</button></div><div id="cc-msg" class="muted" style="font-size:12px;margin-top:6px"></div></div>'
    +'</div>'
-   +'<div class="card"><b>Use a subscription you already have</b><div class="sub">If you have the <b>Codex</b> CLI installed and logged in with ChatGPT, import its models — safely, through the official CLI (no API key, no token-scraping).</div>'
-     +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><button class="go" id="codex-connect">Connect ChatGPT (Codex)</button><span id="codex-msg" class="muted" style="font-size:12px"></span></div></div>'
+   +'<div class="card"><b>Use a subscription you already have</b><div class="sub">Have a <b>ChatGPT</b> subscription? Import its models via the official Codex CLI. You sign in with <b>OAuth</b> right here — no API key, no token-scraping.</div>'
+     +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><button class="go" id="codex-connect">Connect ChatGPT (Codex)</button><span id="codex-msg" class="muted" style="font-size:12px"></span></div>'
+     +'<div id="codex-login-box" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--sep-2);border-radius:8px;background:var(--tint)"></div></div>'
    +'<div class="card"><b>Connected models</b><div id="ep-list" class="muted" style="margin-top:8px">loading…</div></div>';
   $('#ct-local').onclick=()=>{$('#cp-local').style.display='';$('#cp-cloud').style.display='none';};
   $('#ct-cloud').onclick=()=>{$('#cp-local').style.display='none';$('#cp-cloud').style.display='';};
@@ -1374,12 +1466,26 @@ function loadConnect(){
   host.querySelectorAll('.prov2').forEach(b=>b.onclick=()=>{host.querySelectorAll('.prov2').forEach(x=>x.style.borderColor='');b.style.borderColor='var(--brass)';_cloudSel=CONNECT_PROVIDERS[+b.dataset.i];});
   $('#cl-add').onclick=()=>_addEndpoint($('#cl-url').value.trim(),$('#cl-key').value.trim(),'',false,$('#cl-msg'),$('#cl-add'));
   $('#cc-add').onclick=()=>{ if(!_cloudSel){const m=$('#cc-msg');m.textContent='Pick a provider first.';m.style.color='var(--err)';return;} const k=$('#cc-key').value.trim(); if(!k){const m=$('#cc-msg');m.textContent='Paste the API key.';m.style.color='var(--err)';return;} _addEndpoint(_cloudSel.url,k,_cloudSel.name,!!_cloudSel.req,$('#cc-msg'),$('#cc-add')); };
-  const cxb=$('#codex-connect'); if(cxb) cxb.onclick=async()=>{ const m=$('#codex-msg'); cxb.disabled=true; m.textContent='Connecting via the Codex CLI…'; m.style.color='var(--dim)';
+  const cxb=$('#codex-connect');
+  async function _codexDoConnect(){ const m=$('#codex-msg'); m.textContent='Connecting via the Codex CLI…'; m.style.color='var(--dim)';
     try{ const r=await fetch('/api/setup/connect-codex',{method:'POST',credentials:'same-origin'}).then(x=>x.json());
-      if(r.ok){ m.textContent='Connected ✓ — ChatGPT (Codex) added.'; m.style.color='var(--ok)'; loadEndpointList(); }
-      else { m.textContent=r.error||'Could not connect.'; m.style.color='var(--err)'; } }
-    catch(e){ m.textContent='Request failed.'; m.style.color='var(--err)'; }
-    cxb.disabled=false; };
+      if(r.ok){ m.textContent='Connected ✓ — ChatGPT (Codex) added.'; m.style.color='var(--ok)'; $('#codex-login-box').style.display='none'; loadEndpointList(); }
+      else { m.textContent=r.error||'Could not connect.'; m.style.color='var(--err)'; cxb.disabled=false; } }
+    catch(e){ m.textContent='Request failed.'; m.style.color='var(--err)'; cxb.disabled=false; } }
+  function _codexShowLogin(url,code){ const box=$('#codex-login-box'); box.style.display='';
+    box.innerHTML='<b>Sign in to ChatGPT (OAuth)</b><div class="sub" style="margin-top:4px">Open the link'+(code?(' and enter code <span class="mono">'+esc(code)+'</span>'):'')+', then approve — this page finishes automatically.</div>'
+      +(url?'<div style="margin-top:6px"><a href="'+esc(url)+'" target="_blank" rel="noopener" style="color:var(--cyan);word-break:break-all">'+esc(url)+'</a></div>':'<div class="muted" style="font-size:12px;margin-top:6px">Preparing sign-in link…</div>')
+      +'<div class="muted" style="font-size:12px;margin-top:6px">Waiting for approval…</div>'; }
+  if(cxb) cxb.onclick=async()=>{ const m=$('#codex-msg'); cxb.disabled=true; m.textContent='Checking sign-in…'; m.style.color='var(--dim)';
+    let st={}; try{ st=await fetch('/api/setup/codex-login/status',{credentials:'same-origin'}).then(x=>x.json()); }catch(e){}
+    if(st.logged_in) return _codexDoConnect();
+    let r={}; try{ r=await fetch('/api/setup/codex-login',{method:'POST',credentials:'same-origin'}).then(x=>x.json()); }catch(e){ m.textContent='Could not start sign-in.'; cxb.disabled=false; return; }
+    if(r.already) return _codexDoConnect();
+    if(!r.ok){ m.textContent=r.error||'Sign-in unavailable.'; cxb.disabled=false; return; }
+    m.textContent=''; _codexShowLogin(r.url,r.code);
+    const poll=setInterval(async()=>{ let s={}; try{ s=await fetch('/api/setup/codex-login/status',{credentials:'same-origin'}).then(x=>x.json()); }catch(e){ return; }
+      if(s.url && !$('#codex-login-box a')) _codexShowLogin(s.url,s.code);
+      if(s.logged_in){ clearInterval(poll); _codexDoConnect(); } }, 3000); };
   loadEndpointList();
 }
 
