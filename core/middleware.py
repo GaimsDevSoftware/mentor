@@ -80,7 +80,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # Don't overwrite the route's own restrictive CSP either.
             pass
         else:
-            response.headers["X-Frame-Options"] = "DENY"
+            # SAMEORIGIN (not DENY) so the in-app Workspace can tile our own
+            # pages in iframes. External sites still can't frame us.
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
             # NOTE: `style-src 'unsafe-inline'` is intentionally retained.
             # `static/index.html` and `static/login.html` ship inline <style>
             # blocks, and several JS modules build runtime `style=""` attrs.
@@ -96,6 +98,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "
                 "frame-src 'self'; "
-                "frame-ancestors 'none'"
+                "frame-ancestors 'self'"
             )
         return response

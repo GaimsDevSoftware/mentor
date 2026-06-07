@@ -42,6 +42,13 @@ def setup_app_routes() -> APIRouter:
         nonce = getattr(request.state, "csp_nonce", "")
         return HTMLResponse(_CODE.replace("{{CSP_NONCE}}", nonce))
 
+    @router.get("/app/workspace")
+    async def app_workspace(request: Request, _user: str = Depends(require_user)) -> HTMLResponse:
+        """The Workspace — tile multiple Mentor surfaces (chat, admin, office…) as
+        resizable sub-windows in one screen. The app window as a desk."""
+        nonce = getattr(request.state, "csp_nonce", "")
+        return HTMLResponse(_WORKSPACE.replace("{{CSP_NONCE}}", nonce))
+
     return router
 
 
@@ -182,6 +189,7 @@ _HOME = r"""<!doctype html><html><head><meta charset="utf-8">
 <div class="sec-title">Quick actions</div>
 <div class="grid g3">
  <a class="card act" href="/app/setup"><span class="ic" style="color:var(--cyan)">🧭</span><div><h3>Set up</h3><div class="d">Guided AI setup.</div></div></a>
+ <a class="card act" href="/app/workspace"><span class="ic" style="color:var(--brass)">▦</span><div><h3>Workspace</h3><div class="d">Many screens at once.</div></div></a>
  <a class="card act" href="/"><span class="ic" style="color:var(--cyan)">✦</span><div><h3>Chat &amp; Agents</h3><div class="d">Talk, and let it act.</div></div></a>
  <a class="card act" href="/manage"><span class="ic" style="color:var(--brass)">⌘</span><div><h3>Plugins &amp; Diagnostics</h3><div class="d">Manage, fix, configure.</div></div></a>
  <a class="card act" href="/#research"><span class="ic" style="color:var(--cyan)">◎</span><div><h3>Deep Research</h3><div class="d">Gather &amp; synthesize.</div></div></a>
@@ -1462,4 +1470,143 @@ $('#run-btn').onclick=async()=>{
   }, 2000);
 };
 load();
+</script></body></html>"""
+
+
+_WORKSPACE = r"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/png" href="/static/mentor-icon.png">
+<title>Mentor — Workspace</title>
+<style>
+ :root,[data-theme="dark"]{--bg:#000;--bg-2:#0a0a0c;--surface:rgba(28,28,30,0.92);--surface-2:rgba(44,44,46,0.9);--sep:rgba(255,255,255,0.10);--sep-2:rgba(255,255,255,0.16);--txt:rgba(255,255,255,0.96);--dim:rgba(255,255,255,0.58);--faint:rgba(255,255,255,0.36);--brass:#e0a95e;--cyan:#64d2ff;--accent:#0a84ff;--tint:rgba(255,255,255,0.05);--tint-2:rgba(255,255,255,0.08);}
+ [data-theme="light"]{--bg:#fbfbfd;--bg-2:#eef0f4;--surface:rgba(255,255,255,0.95);--surface-2:rgba(245,245,248,0.95);--sep:rgba(0,0,0,0.10);--sep-2:rgba(0,0,0,0.16);--txt:#1d1d1f;--dim:rgba(60,60,67,0.6);--faint:rgba(60,60,67,0.4);--brass:#b8843a;--cyan:#0a83af;--accent:#0071e3;--tint:rgba(0,0,0,0.04);--tint-2:rgba(0,0,0,0.07);}
+ [data-theme="atlas"]{--bg:#f4ede0;--bg-2:#e7dcc6;--surface:rgba(252,247,236,0.96);--surface-2:rgba(245,238,222,0.96);--sep:rgba(43,58,74,0.14);--sep-2:rgba(43,58,74,0.22);--txt:#1f2d3d;--dim:rgba(31,45,61,0.64);--faint:rgba(31,45,61,0.4);--brass:#9b6826;--cyan:#1f5471;--accent:#9b6826;--tint:rgba(43,58,74,0.05);--tint-2:rgba(43,58,74,0.08);}
+ *{box-sizing:border-box} html,body{margin:0;height:100%;overflow:hidden}
+ body{background:var(--bg);color:var(--txt);font:13px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
+ a{color:inherit;text-decoration:none}
+ .ws-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border-bottom:1px solid var(--sep);flex-wrap:wrap}
+ .ws-bar .mark{font:500 14px/1 -apple-system,system-ui,sans-serif;letter-spacing:-0.02em;margin-right:4px}
+ .ws-bar .grow{flex:1}
+ .wb{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;border-radius:8px;cursor:pointer;background:var(--surface-2);border:1px solid var(--sep-2);color:var(--txt);font:500 12px/1 inherit;transition:background .12s,border-color .12s}
+ .wb:hover{border-color:var(--brass);background:var(--tint-2)}
+ .wb.ghost{background:transparent}
+ .ws-area{flex:1 1 auto;min-height:0;display:flex}
+ .ws-split{display:flex;flex:1 1 0;min-width:0;min-height:0}
+ .ws-row{flex-direction:row} .ws-col{flex-direction:column}
+ .ws-pane{display:flex;flex-direction:column;flex:1 1 0;min-width:0;min-height:0;background:var(--bg-2);border:1px solid var(--sep);border-radius:10px;margin:5px;overflow:hidden}
+ .ws-head{flex:0 0 auto;display:flex;align-items:center;gap:4px;padding:5px 6px;background:var(--surface);border-bottom:1px solid var(--sep)}
+ .ws-surface{background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:6px;padding:3px 6px;font:600 12px/1 inherit;cursor:pointer;outline:none;max-width:160px}
+ .ws-grow{flex:1}
+ .ws-btn{background:transparent;border:1px solid transparent;color:var(--dim);border-radius:6px;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;line-height:1}
+ .ws-btn:hover{background:var(--tint-2);color:var(--txt);border-color:var(--sep-2)}
+ .ws-frame{flex:1 1 auto;width:100%;border:0;background:var(--bg);min-height:0}
+ .ws-divider{flex:0 0 auto;position:relative;z-index:2}
+ .ws-divider-v{width:6px;cursor:col-resize} .ws-divider-h{height:6px;cursor:row-resize}
+ .ws-divider::after{content:"";position:absolute;inset:0;margin:auto;background:var(--sep-2);border-radius:99px;transition:background .12s}
+ .ws-divider-v::after{width:2px;height:30px} .ws-divider-h::after{height:2px;width:30px}
+ .ws-divider:hover::after{background:var(--brass)}
+ .ws-dragging .ws-frame{pointer-events:none}
+ .ws-dragging{cursor:grabbing}
+ .theme-switch{display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--sep-2);border-radius:99px;padding:2px}
+ .theme-switch button{background:transparent;border:none;color:var(--dim);padding:4px 9px;border-radius:99px;cursor:pointer;font:500 11px/1 inherit}
+ .theme-switch button[aria-current="true"]{background:var(--txt);color:var(--bg)}
+</style></head><body>
+<div class="ws-bar">
+  <span class="mark">✦ Workspace</span>
+  <a class="wb ghost" href="/app">← Exit</a>
+  <span style="width:1px;height:18px;background:var(--sep-2);margin:0 2px"></span>
+  <button class="wb" id="ws-add">＋ Pane</button>
+  <button class="wb ghost" data-preset="single" title="One pane">▢</button>
+  <button class="wb ghost" data-preset="cols2" title="Two columns">▥</button>
+  <button class="wb ghost" data-preset="grid" title="Four panes (2×2)">⊞</button>
+  <span class="faint" style="font-size:11px;margin-left:4px">Drag dividers to resize · each pane is a live Mentor screen</span>
+  <span class="grow"></span>
+  <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div>
+</div>
+<div class="ws-area" id="ws"></div>
+<script nonce="{{CSP_NONCE}}">
+(function(){const s=localStorage.getItem('ody-theme')||'dark';document.documentElement.setAttribute('data-theme',s);
+ document.querySelectorAll('[data-theme-set]').forEach(b=>{if(b.dataset.themeSet===s)b.setAttribute('aria-current','true');
+  b.addEventListener('click',()=>{const t=b.dataset.themeSet;document.documentElement.setAttribute('data-theme',t);localStorage.setItem('ody-theme',t);document.querySelectorAll('[data-theme-set]').forEach(x=>x.removeAttribute('aria-current'));b.setAttribute('aria-current','true');});});})();
+
+const SURFACES=[
+  {name:'Chat', url:'/'},
+  {name:'Dashboard', url:'/app'},
+  {name:'Office', url:'/app/office'},
+  {name:'Code', url:'/app/code'},
+  {name:'Cookbook', url:'/app/cookbook'},
+  {name:'Set up', url:'/app/setup'},
+  {name:'Admin', url:'/manage'},
+];
+const WS=document.getElementById('ws');
+let uid=0; const nid=()=>'p'+(++uid)+'-'+(Date.now()%9999);
+function mk(tag,cls){const e=document.createElement(tag);if(cls)e.className=cls;return e;}
+
+// ── layout tree: leaf {type:'leaf',id,url} | split {type:'split',dir,ratio,a,b} ──
+const PRESETS={
+  single:()=>({type:'leaf',id:nid(),url:'/'}),
+  cols2:()=>({type:'split',dir:'row',ratio:0.58,a:{type:'leaf',id:nid(),url:'/'},b:{type:'leaf',id:nid(),url:'/manage'}}),
+  grid:()=>({type:'split',dir:'row',ratio:0.5,
+    a:{type:'split',dir:'col',ratio:0.5,a:{type:'leaf',id:nid(),url:'/'},b:{type:'leaf',id:nid(),url:'/app/office'}},
+    b:{type:'split',dir:'col',ratio:0.5,a:{type:'leaf',id:nid(),url:'/manage'},b:{type:'leaf',id:nid(),url:'/app/code'}}}),
+};
+let root=load()||PRESETS.cols2();
+
+function save(){ try{ localStorage.setItem('ws-layout', JSON.stringify(root)); }catch(e){} }
+function load(){ try{ const v=JSON.parse(localStorage.getItem('ws-layout')); return (v&&v.type)?v:null; }catch(e){ return null; } }
+
+function findParent(node,target){ if(node.type!=='split')return null;
+  if(node.a===target||node.b===target)return node;
+  return findParent(node.a,target)||findParent(node.b,target); }
+function replaceNode(target,repl){ if(root===target){root=repl;return;} const p=findParent(root,target); if(!p)return; if(p.a===target)p.a=repl; else p.b=repl; }
+
+function splitLeaf(leaf,dir){ const nl={type:'leaf',id:nid(),url:leaf.url};
+  replaceNode(leaf,{type:'split',dir,ratio:0.5,a:leaf,b:nl}); rerender(); }
+function closeLeaf(leaf){ if(root===leaf)return; const p=findParent(root,leaf); if(!p)return;
+  replaceNode(p, p.a===leaf?p.b:p.a); rerender(); }
+
+function renderLeaf(node){
+  const pane=mk('div','ws-pane'); pane.dataset.id=node.id;
+  const head=mk('div','ws-head');
+  const sel=mk('select','ws-surface');
+  sel.innerHTML=SURFACES.map(s=>'<option value="'+s.url+'"'+(s.url===node.url?' selected':'')+'>'+s.name+'</option>').join('');
+  sel.onchange=()=>{ node.url=sel.value; const f=pane.querySelector('iframe'); if(f)f.src=node.url; save(); };
+  head.appendChild(sel);
+  head.appendChild(mk('span','ws-grow'));
+  const mkbtn=(t,title,fn)=>{const b=mk('button','ws-btn');b.textContent=t;b.title=title;b.onclick=fn;head.appendChild(b);return b;};
+  mkbtn('▥','Split left / right',()=>splitLeaf(node,'row'));
+  mkbtn('▤','Split top / bottom',()=>splitLeaf(node,'col'));
+  mkbtn('↻','Reload',()=>{const f=pane.querySelector('iframe'); if(f)f.src=f.src;});
+  mkbtn('⤢','Open full',()=>{ window.location.href=node.url; });
+  mkbtn('✕','Close pane',()=>closeLeaf(node));
+  const frame=mk('iframe','ws-frame'); frame.src=node.url; frame.setAttribute('title',node.url);
+  pane.appendChild(head); pane.appendChild(frame);
+  return pane;
+}
+function renderNode(node){
+  if(node.type==='leaf') return renderLeaf(node);
+  const wrap=mk('div','ws-split '+(node.dir==='row'?'ws-row':'ws-col'));
+  const a=renderNode(node.a), b=renderNode(node.b);
+  a.style.flex='0 0 '+(node.ratio*100)+'%'; b.style.flex='1 1 0';
+  const div=mk('div','ws-divider '+(node.dir==='row'?'ws-divider-v':'ws-divider-h'));
+  attachDrag(div,node,wrap,a);
+  wrap.appendChild(a); wrap.appendChild(div); wrap.appendChild(b);
+  return wrap;
+}
+function attachDrag(div,node,wrap,aEl){
+  div.addEventListener('mousedown',e=>{ e.preventDefault(); WS.classList.add('ws-dragging');
+    const move=ev=>{ const r=wrap.getBoundingClientRect();
+      let ratio = node.dir==='row' ? (ev.clientX-r.left)/r.width : (ev.clientY-r.top)/r.height;
+      ratio=Math.max(0.12,Math.min(0.88,ratio)); node.ratio=ratio; aEl.style.flex='0 0 '+(ratio*100)+'%'; };
+    const up=()=>{ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); WS.classList.remove('ws-dragging'); save(); };
+    document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
+  });
+}
+function rerender(){ WS.innerHTML=''; WS.appendChild(renderNode(root)); save(); }
+
+// toolbar
+document.getElementById('ws-add').onclick=()=>{ // split the first leaf we find, rightward
+  let n=root; while(n.type==='split') n=n.a; splitLeaf(n,'row'); };
+document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{ root=PRESETS[b.dataset.preset](); rerender(); });
+rerender();
 </script></body></html>"""
