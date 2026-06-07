@@ -30,6 +30,12 @@ def setup_app_routes() -> APIRouter:
         nonce = getattr(request.state, "csp_nonce", "")
         return HTMLResponse(_OFFICE.replace("{{CSP_NONCE}}", nonce))
 
+    @router.get("/app/setup")
+    async def app_setup(request: Request, _user: str = Depends(require_user)) -> HTMLResponse:
+        """Guided 'Set up your AI system' wizard — hardware → model → agent → done."""
+        nonce = getattr(request.state, "csp_nonce", "")
+        return HTMLResponse(_SETUP.replace("{{CSP_NONCE}}", nonce))
+
     return router
 
 
@@ -157,6 +163,7 @@ _HOME = r"""<!doctype html><html><head><meta charset="utf-8">
 
 <div class="sec-title">Quick actions</div>
 <div class="grid g3">
+ <a class="card act" href="/app/setup"><span class="ic" style="color:var(--cyan)">🧭</span><div><h3>Set up</h3><div class="d">Guided AI setup.</div></div></a>
  <a class="card act" href="/"><span class="ic" style="color:var(--cyan)">✦</span><div><h3>Chat &amp; Agents</h3><div class="d">Talk, and let it act.</div></div></a>
  <a class="card act" href="/manage"><span class="ic" style="color:var(--brass)">⌘</span><div><h3>Plugins &amp; Diagnostics</h3><div class="d">Manage, fix, configure.</div></div></a>
  <a class="card act" href="/#research"><span class="ic" style="color:var(--cyan)">◎</span><div><h3>Deep Research</h3><div class="d">Gather &amp; synthesize.</div></div></a>
@@ -799,4 +806,306 @@ $('#hire-btn').onclick=async()=>{const m=$('#hire-msg');const name=$('#f-name').
   }catch(e){m.textContent='failed: '+e;}};
 
 // run the team
+</script></body></html>"""
+
+
+_SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mentor — Set up your AI</title>
+<style>
+ :root,[data-theme="dark"]{--bg:#000;--bg-2:#0a0a0c;--surface:rgba(28,28,30,0.78);--surface-2:rgba(44,44,46,0.85);--sep:rgba(255,255,255,0.08);--sep-2:rgba(255,255,255,0.14);--txt:rgba(255,255,255,0.96);--dim:rgba(255,255,255,0.58);--faint:rgba(255,255,255,0.36);--brass:#e0a95e;--cyan:#64d2ff;--accent:#0a84ff;--ok:#30d158;--warn:#ffd60a;--err:#ff453a;--tint:rgba(255,255,255,0.04);--tint-2:rgba(255,255,255,0.06);--shadow:0 1px 0 rgba(255,255,255,0.04) inset,0 10px 30px rgba(0,0,0,0.5);}
+ [data-theme="light"]{--bg:#fbfbfd;--bg-2:#f2f2f7;--surface:rgba(255,255,255,0.78);--surface-2:rgba(248,248,250,0.92);--sep:rgba(0,0,0,0.08);--sep-2:rgba(0,0,0,0.14);--txt:#1d1d1f;--dim:rgba(60,60,67,0.6);--faint:rgba(60,60,67,0.36);--brass:#b8843a;--cyan:#0a83af;--accent:#0071e3;--ok:#248a3d;--warn:#a04400;--err:#c41e3a;--tint:rgba(0,0,0,0.04);--tint-2:rgba(0,0,0,0.06);--shadow:0 1px 2px rgba(0,0,0,0.04),0 10px 30px rgba(0,0,0,0.06);}
+ [data-theme="atlas"]{--bg:#f4ede0;--bg-2:#ebe2cf;--surface:rgba(252,247,236,0.84);--surface-2:rgba(245,238,222,0.94);--sep:rgba(43,58,74,0.12);--sep-2:rgba(43,58,74,0.2);--txt:#1f2d3d;--dim:rgba(31,45,61,0.64);--faint:rgba(31,45,61,0.4);--brass:#9b6826;--cyan:#1f5471;--accent:#9b6826;--ok:#3a7f2b;--warn:#a36a00;--err:#a32d2d;--tint:rgba(43,58,74,0.04);--tint-2:rgba(43,58,74,0.07);--shadow:0 1px 0 rgba(255,255,255,0.5) inset,0 8px 22px rgba(43,58,74,0.08);}
+ *{box-sizing:border-box} html,body{margin:0;height:100%}
+ body{background:radial-gradient(120% 80% at 50% -10%,var(--bg-2),var(--bg)) fixed;color:var(--txt);font:15px/1.6 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:56px 32px 80px;max-width:760px;margin:0 auto;letter-spacing:-0.005em}
+ a{color:inherit;text-decoration:none}
+ .top{display:flex;align-items:baseline;gap:16px;margin-bottom:4px}
+ .mark{font:300 38px/1.05 -apple-system,"SF Pro Display",Inter,system-ui,sans-serif;letter-spacing:-0.04em}
+ .tag{color:var(--faint);font-size:13px;margin-bottom:24px}
+ .pill{font:500 11px/1.2 inherit;padding:4px 10px;border-radius:99px;background:var(--tint-2);border:1px solid var(--sep);color:var(--dim);display:inline-flex;align-items:center;gap:5px}
+ .pill.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+ .pill.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+ .card{background:var(--surface);border:1px solid var(--sep);border-radius:14px;padding:20px;backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%);box-shadow:var(--shadow);margin-bottom:14px}
+ .row{display:flex;align-items:center;gap:10px} .grow{flex:1;min-width:0} .muted{color:var(--dim)} .faint{color:var(--faint)}
+ .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px}
+ .btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;cursor:pointer;background:var(--surface-2);border:1px solid var(--sep-2);color:var(--txt);font:500 13px/1 inherit;transition:background .15s,border-color .15s,transform .12s}
+ .btn:hover{background:var(--tint-2);border-color:var(--brass);transform:translateY(-1px)} .btn:disabled{opacity:.5;cursor:default;transform:none}
+ .btn.primary{background:color-mix(in srgb,var(--accent) 16%,transparent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);color:var(--accent)}
+ .btn.primary:hover{border-color:var(--accent)}
+ .btn.mini{padding:6px 11px;font-size:12px;border-radius:8px}
+ input.fld,textarea.fld,select.fld{width:100%;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:9px;padding:9px 11px;font:13px/1.4 inherit;outline:none}
+ input.fld:focus,textarea.fld:focus,select.fld:focus{border-color:var(--brass)}
+ textarea.fld{font-family:ui-monospace,"SF Mono",Menlo,monospace;resize:vertical}
+ label.lab{display:block;color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:10px 0 4px}
+ .badge{font:600 9px/1 -apple-system,system-ui,sans-serif;letter-spacing:.05em;text-transform:uppercase;padding:3px 7px;border-radius:5px;background:var(--tint-2);color:var(--dim);border:1px solid var(--sep)}
+ .badge.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 30%,transparent);background:color-mix(in srgb,var(--ok) 10%,transparent)}
+ .badge.fit{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 30%,transparent);background:color-mix(in srgb,var(--cyan) 10%,transparent)}
+ .badge.run{color:var(--brass);border-color:color-mix(in srgb,var(--brass) 35%,transparent);background:color-mix(in srgb,var(--brass) 10%,transparent)}
+ .badge.err{color:var(--err);border-color:color-mix(in srgb,var(--err) 35%,transparent);background:color-mix(in srgb,var(--err) 12%,transparent)}
+ .hw-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+ @media(max-width:560px){.hw-grid{grid-template-columns:repeat(1,1fr)}}
+ .hw{padding:14px;border:1px solid var(--sep);border-radius:12px;background:var(--tint)}
+ .hw .k{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+ .hw .v{font-weight:600;font-size:18px;margin-top:4px;letter-spacing:-0.01em}
+ .hw .s{color:var(--dim);font-size:12px}
+ .bar{height:6px;border-radius:99px;background:var(--tint-2);overflow:hidden;margin-top:6px}
+ .bar > i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--brass));transition:width .4s ease}
+ /* step progress */
+ .steps{display:flex;align-items:center;gap:6px;margin:0 0 18px;flex-wrap:wrap}
+ .dot{display:flex;align-items:center;gap:8px}
+ .dot .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font:600 12px/1 inherit;border:1px solid var(--sep-2);background:var(--tint);color:var(--dim);flex-shrink:0}
+ .dot.on .n{background:var(--accent);border-color:var(--accent);color:#fff}
+ .dot.done .n{background:color-mix(in srgb,var(--ok) 22%,transparent);border-color:color-mix(in srgb,var(--ok) 45%,transparent);color:var(--ok)}
+ .dot .lbl{font-size:11px;color:var(--faint);white-space:nowrap}
+ .dot.on .lbl{color:var(--txt)} .dot.done .lbl{color:var(--dim)}
+ .dot .ln{width:18px;height:1px;background:var(--sep-2);margin:0 2px}
+ @media(max-width:560px){.dot .lbl{display:none}.dot .ln{width:10px}}
+ .step{display:none} .step.active{display:block}
+ .why{color:var(--dim);font-size:13px;margin:0 0 14px;line-height:1.55}
+ .nav{display:flex;align-items:center;gap:10px;margin-top:18px}
+ .nav .grow{flex:1}
+ .opt{display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--sep-2);border-radius:11px;background:var(--tint);cursor:pointer;margin-bottom:8px;transition:border-color .15s,background .15s}
+ .opt:hover{border-color:var(--brass)}
+ .opt.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+ .opt .rd{width:18px;height:18px;border-radius:50%;border:2px solid var(--sep-2);flex-shrink:0;display:grid;place-items:center}
+ .opt.on .rd{border-color:var(--accent)} .opt.on .rd::after{content:"";width:9px;height:9px;border-radius:50%;background:var(--accent)}
+ .opt .name{font-weight:500;letter-spacing:-0.003em} .opt .meta{color:var(--dim);font-size:12px}
+ .actmsg{font-size:12px;margin-top:10px;min-height:16px}
+ .done-hero{text-align:center;padding:18px 0}
+ .done-hero .big{font-size:40px;margin-bottom:6px}
+ .topbar{position:fixed;top:14px;right:18px;display:flex;gap:8px;align-items:center;z-index:50}
+ .jump{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;color:var(--txt);font:500 12px/1 inherit;box-shadow:var(--shadow)}
+ .jump:hover{background:var(--tint-2)} .theme-switch{display:flex;gap:2px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;padding:3px;box-shadow:var(--shadow)}
+ .theme-switch button{background:transparent;border:none;color:var(--dim);padding:5px 11px;border-radius:99px;cursor:pointer;font:500 11px/1 inherit}
+ .theme-switch button[aria-current="true"]{background:var(--txt);color:var(--bg)}
+ ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--sep-2);border-radius:5px}
+</style></head><body>
+<nav class="topbar"><a class="jump" href="/app">← Home</a><a class="jump" href="/manage">Admin →</a>
+ <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
+
+<div class="top"><div class="mark">Set up your AI</div><span id="stepcap" class="pill">Step 1 of 5</span></div>
+<div class="tag">A calm, guided walk from nothing to a working local AI agent — we'll check your machine, pick a model that fits, serve it, and hire your first helper.</div>
+
+<div class="steps" id="steps">
+  <div class="dot" data-s="1"><span class="n">1</span><span class="lbl">Machine</span></div><span class="ln"></span>
+  <div class="dot" data-s="2"><span class="n">2</span><span class="lbl">Pick model</span></div><span class="ln"></span>
+  <div class="dot" data-s="3"><span class="n">3</span><span class="lbl">Serve</span></div><span class="ln"></span>
+  <div class="dot" data-s="4"><span class="n">4</span><span class="lbl">Hire</span></div><span class="ln"></span>
+  <div class="dot" data-s="5"><span class="n">5</span><span class="lbl">Done</span></div>
+</div>
+
+<!-- STEP 1 — This machine -->
+<div class="step" data-step="1">
+  <div class="card">
+    <p class="why">First, let's look at what your computer can do. The two numbers that matter for running AI locally are <b>VRAM</b> (memory on your graphics card — this decides how big a model can be) and <b>RAM</b> (your computer's main memory).</p>
+    <div id="hw" class="hw-grid"><div class="muted">reading your hardware…</div></div>
+  </div>
+  <div class="nav"><span class="grow"></span><button class="btn primary" id="s1-next" disabled>Next →</button></div>
+</div>
+
+<!-- STEP 2 — Pick a model that fits -->
+<div class="step" data-step="2">
+  <div class="card">
+    <p class="why">Now pick the AI model to run. We only show models that will fit <b>with room to spare</b>, so your desktop and browser keep running smoothly. A bigger model is usually smarter but needs more memory.</p>
+    <div id="fit-banner" class="muted" style="font-size:12px;margin-bottom:10px"></div>
+    <div id="models" class="muted">finding models that fit…</div>
+  </div>
+  <div class="nav"><button class="btn" id="s2-back">← Back</button><span class="grow"></span><button class="btn primary" id="s2-next" disabled>Next →</button></div>
+</div>
+
+<!-- STEP 3 — Serve it -->
+<div class="step" data-step="3">
+  <div class="card">
+    <p class="why">Let's start your model so the app can talk to it. This loads it into your graphics card and keeps it running in the background. It can take a minute the first time.</p>
+    <div id="serve-pick" class="muted" style="font-size:13px;margin-bottom:10px"></div>
+    <label class="lab">Command we'll run (you can leave this as-is)</label>
+    <textarea id="serve-cmd" class="fld" rows="2"></textarea>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="serve-btn">Serve this model</button><button class="btn mini" id="serve-skip">Skip — already running</button></div>
+    <div id="serve-msg" class="actmsg muted"></div>
+    <div id="serve-tasks" style="margin-top:12px"></div>
+  </div>
+  <div class="nav"><button class="btn" id="s3-back">← Back</button><span class="grow"></span><button class="btn primary" id="s3-next" disabled>Next →</button></div>
+</div>
+
+<!-- STEP 4 — Hire a starter agent -->
+<div class="step" data-step="4">
+  <div class="card">
+    <p class="why">Last step: hire your first helper. We've filled in a friendly, general-purpose assistant named <b>Iris</b> — she can search the web and read pages, and she'll ask before doing anything risky. Adjust if you like, then hire.</p>
+    <label class="lab">Name</label><input id="a-name" class="fld" value="Iris">
+    <label class="lab">Role / title</label><input id="a-role" class="fld" value="Generalist Assistant">
+    <label class="lab">Goal (one sentence)</label><input id="a-goal" class="fld" value="Help with everyday questions and tasks, with sources, fast">
+    <label class="lab">Personality</label>
+    <select id="a-pers" class="fld"><option value="concise professional">Concise professional</option><option value="warm collaborator">Warm collaborator</option><option value="meticulous and careful">Meticulous &amp; careful</option></select>
+    <label class="lab">Autonomy</label>
+    <select id="a-auto" class="fld"><option value="approve">Ask me before risky actions</option><option value="auto">Act on its own</option></select>
+    <div class="faint" style="font-size:12px;margin-top:10px">Tools: <span class="mono">web_search</span> · <span class="mono">web_fetch</span></div>
+    <div class="row" style="margin-top:14px"><button class="btn primary" id="hire-btn">Hire Iris</button><span id="hire-msg" class="muted" style="font-size:12px"></span></div>
+  </div>
+  <div class="nav"><button class="btn" id="s4-back">← Back</button><span class="grow"></span><button class="btn primary" id="s4-next" disabled>Next →</button></div>
+</div>
+
+<!-- STEP 5 — Done -->
+<div class="step" data-step="5">
+  <div class="card">
+    <div class="done-hero">
+      <div class="big">🎉</div>
+      <h2 style="margin:0 0 6px;font-weight:600;letter-spacing:-0.01em">You're set up</h2>
+      <p class="why" id="done-summary" style="margin:0 auto;max-width:460px">Your machine is ready, a model is serving, and your first helper has been hired. Meet your team in the Office, or head back to the dashboard.</p>
+      <div class="row" style="justify-content:center;gap:10px;margin-top:18px">
+        <a class="btn primary" href="/app/office">Meet your team →</a>
+        <a class="btn" href="/app">Back to dashboard</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script nonce="{{CSP_NONCE}}">
+(function(){const s=localStorage.getItem('ody-theme')||'dark';document.documentElement.setAttribute('data-theme',s);
+ document.querySelectorAll('[data-theme-set]').forEach(b=>{if(b.dataset.themeSet===s)b.setAttribute('aria-current','true');
+  b.addEventListener('click',()=>{const t=b.dataset.themeSet;document.documentElement.setAttribute('data-theme',t);localStorage.setItem('ody-theme',t);document.querySelectorAll('[data-theme-set]').forEach(x=>x.removeAttribute('aria-current'));b.setAttribute('aria-current','true');});});})();
+const $=s=>document.querySelector(s);
+const j=(u,o)=>fetch(u,Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},o)).then(r=>{if(!r.ok)throw r.status;return r.json();});
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const adminNote='<span class="muted" style="font-size:13px">Admin only — sign in as an admin to use this.</span>';
+
+// ── wizard state ────────────────────────────────────────────────────────────
+let STEP=1; const LAST=5;
+let HW_VRAM=0, HW_RAM=0, HAS_GPU=false;
+let CHOSEN=null;          // {name, repo, vram}
+let SERVED=false, HIRED=false;
+const VRAM_RESERVE=3, RAM_RESERVE=4;  // GB kept free for desktop + browser
+
+function showStep(n){
+  STEP=Math.max(1,Math.min(LAST,n));
+  document.querySelectorAll('.step').forEach(el=>el.classList.toggle('active',+el.dataset.step===STEP));
+  $('#stepcap').textContent='Step '+STEP+' of '+LAST;
+  document.querySelectorAll('#steps .dot').forEach(d=>{const s=+d.dataset.s;
+    d.classList.toggle('on',s===STEP); d.classList.toggle('done',s<STEP);});
+  if(STEP===3) ensureServeCmd();
+}
+
+// ── STEP 1: hardware ────────────────────────────────────────────────────────
+j('/api/hwfit/system').then(s=>{
+  HAS_GPU=!!s.has_gpu; HW_VRAM=+(s.gpu_vram_gb||0); HW_RAM=+(s.available_ram_gb||0);
+  const cell=(k,v,sub)=>`<div class="hw"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>${sub?`<div class="s">${esc(sub)}</div>`:''}</div>`;
+  $('#hw').innerHTML=
+    cell('GPU', s.has_gpu?(s.gpu_name||'—'):'None', s.has_gpu?`${s.gpu_count||1}× · ${s.backend||''}`:'CPU inference')+
+    cell('VRAM', s.gpu_vram_gb?`${s.gpu_vram_gb} GB`:'—', s.unified_memory?'unified memory':'')+
+    cell('RAM', `${s.available_ram_gb||'?'} GB free`, `of ${s.total_ram_gb||'?'} GB`);
+  $('#s1-next').disabled=false;
+}).catch(e=>{ $('#hw').innerHTML = e===401?adminNote:'<span class="muted">Could not read your hardware. You can still continue.</span>'; $('#s1-next').disabled=false; });
+
+// ── STEP 2: pick a model that fits (headroom rule) ──────────────────────────
+let modelsLoaded=false;
+function loadModels(){
+  if(modelsLoaded) return; modelsLoaded=true;
+  const effV = HW_VRAM>0 ? Math.max(0, +(HW_VRAM-VRAM_RESERVE).toFixed(1)) : 0;
+  $('#fit-banner').innerHTML = HW_VRAM>0
+    ? `Reserving <b>~${VRAM_RESERVE} GB VRAM</b> + <b>~${RAM_RESERVE} GB RAM</b> for your desktop + browser → showing models up to <b>~${effV} GB</b> (of ${HW_VRAM} GB).`
+    : 'No GPU detected — showing the smallest models that can run on CPU.';
+  j('/api/hwfit/models?limit=80').then(d=>{
+    let ms=(d&&d.models)||[];
+    if(HW_VRAM>0) ms=ms.filter(m=>{const v=+(m.vram_q4_gb||m.vram_gb||0);return v>0&&v<=effV;});
+    else ms=ms.filter(m=>m.fit);
+    ms=ms.slice(0,12);
+    const el=$('#models');
+    if(!ms.length){ el.innerHTML='<span class="muted" style="font-size:13px">Nothing fits once desktop + browser headroom is reserved. Open the Cookbook to try a smaller or more-quantized model.</span>'; return; }
+    el.innerHTML=ms.map((m,i)=>{
+      const name=m.model||m.name||'?'; const v=m.vram_q4_gb||m.vram_gb;
+      return `<div class="opt" data-i="${i}"><span class="rd"></span>`
+        +`<span class="grow"><div class="name">${esc(name)}</div>`
+        +`<div class="meta">${v?`~${esc(v)} GB VRAM`:''}${m.context_length?` · ${esc(m.context_length)} ctx`:''}${m.size_gb?` · ${esc(m.size_gb)} GB`:''}</div></span>`
+        +`<span class="badge fit">fits</span></div>`;
+    }).join('');
+    el.querySelectorAll('.opt').forEach(o=>o.onclick=()=>{
+      const m=ms[+o.dataset.i];
+      el.querySelectorAll('.opt').forEach(x=>x.classList.remove('on'));
+      o.classList.add('on');
+      CHOSEN={ name:(m.model||m.name||''), repo:(m.name||m.model||''), vram:(m.vram_q4_gb||m.vram_gb||0) };
+      $('#s2-next').disabled=false;
+      modelCmdDirty=false;  // a fresh pick re-derives the serve command
+    });
+  }).catch(e=>{ $('#models').innerHTML = e===401?adminNote:'<span class="muted">Could not rank models. You can still continue and serve one in the Cookbook.</span>'; });
+}
+
+// ── STEP 3: serve it ────────────────────────────────────────────────────────
+let modelCmdDirty=false;
+$('#serve-cmd').addEventListener('input',()=>{ modelCmdDirty=true; });
+function baseName(s){ return String(s||'').split('/').pop().toLowerCase(); }
+function ensureServeCmd(){
+  if(!CHOSEN){ $('#serve-pick').textContent='No model chosen — go back a step, or skip if one is already running.'; return; }
+  $('#serve-pick').innerHTML='Chosen model: <b>'+esc(CHOSEN.name)+'</b>'+(CHOSEN.vram?` · ~${esc(CHOSEN.vram)} GB VRAM`:'');
+  if(!modelCmdDirty) $('#serve-cmd').value='ollama run '+baseName(CHOSEN.name);
+}
+function setMsg(id,text,kind){ const el=$('#'+id); if(!el)return; el.textContent=text||'';
+  el.style.color = kind==='err'?'var(--err)':kind==='ok'?'var(--ok)':'var(--dim)'; }
+function renderServeTasks(d){
+  const el=$('#serve-tasks'); const tasks=(d&&d.tasks)||[];
+  if(!tasks.length){ el.innerHTML=''; return; }
+  el.innerHTML=tasks.map(t=>{
+    const st=(t.status||'').toLowerCase();
+    const bcls=st==='ready'||st==='completed'?'ok':st==='error'?'err':'run';
+    const pct=Math.max(0,Math.min(100,parseInt(t.progress||'0',10)||0));
+    const phase=t.phase||t.status||'';
+    const showBar=st==='running'||st==='downloading';
+    return `<div class="row" style="align-items:flex-start;gap:8px;margin-bottom:8px"><span class="badge ${bcls}">${esc(t.type||'task')}</span>`
+      +`<span class="grow"><div class="name" style="font-weight:500">${esc(t.model||t.session_id||'job')}</div>`
+      +`<div class="meta muted" style="font-size:12px">${esc(phase)}${t.tps?` · ${esc(t.tps)} tok/s`:''}</div>`
+      +(showBar?`<div class="bar"><i style="width:${pct}%"></i></div>`:'')
+      +(st==='error'&&t.error?`<div class="meta" style="color:var(--err);font-size:12px">${esc(t.error)}</div>`:'')
+      +`</span><span class="badge ${bcls}">${esc(t.status||'')}</span></div>`;
+  }).join('');
+}
+let pollTimer=null;
+function pollTasks(){ j('/api/cookbook/tasks/status').then(d=>{
+    renderServeTasks(d);
+    const tasks=(d&&d.tasks)||[];
+    const ready=tasks.some(t=>['ready','completed'].includes((t.status||'').toLowerCase()));
+    if(ready){ SERVED=true; $('#s3-next').disabled=false;
+      setMsg('serve-msg','Your model is up and running.','ok'); }
+  }).catch(()=>{}); }
+$('#serve-btn').onclick=async()=>{
+  const cmd=($('#serve-cmd').value||'').trim();
+  if(!cmd){ setMsg('serve-msg','Nothing to run — go back and pick a model, or skip.','err'); return; }
+  const repo = CHOSEN ? (CHOSEN.repo||CHOSEN.name) : cmd;
+  setMsg('serve-msg','Starting your model…');
+  $('#serve-btn').disabled=true;
+  try{
+    const r=await j('/api/model/serve',{method:'POST',body:JSON.stringify({repo_id:repo, cmd:cmd, platform:'linux'})});
+    if(r.ok){ setMsg('serve-msg','Starting up — watch the progress below.','ok');
+      if(!pollTimer){ pollTasks(); pollTimer=setInterval(pollTasks,3000); }
+      // allow continuing once launched (it keeps running in the background)
+      $('#s3-next').disabled=false;
+    } else { setMsg('serve-msg', r.error||r.detail||'Could not start the model.','err'); $('#serve-btn').disabled=false; }
+  }catch(e){ setMsg('serve-msg', e===401?'Admin only.':'Could not start the model.','err'); $('#serve-btn').disabled=false; }
+};
+$('#serve-skip').onclick=()=>{ SERVED=true; $('#s3-next').disabled=false; setMsg('serve-msg','Skipped — assuming a model is already running.','ok'); };
+
+// ── STEP 4: hire a starter agent ────────────────────────────────────────────
+$('#hire-btn').onclick=async()=>{
+  const name=($('#a-name').value||'').trim();
+  if(!name){ $('#hire-msg').textContent='Give your helper a name first.'; return; }
+  $('#hire-btn').disabled=true; $('#hire-msg').textContent='Hiring…'; $('#hire-msg').style.color='var(--dim)';
+  try{
+    const r=await j('/api/agents',{method:'POST',body:JSON.stringify({
+      name:name, role:$('#a-role').value, goal:$('#a-goal').value,
+      personality:$('#a-pers').value, tools:['web_search','web_fetch'],
+      autonomy:$('#a-auto').value })});
+    if(r.ok){ HIRED=true; $('#hire-msg').textContent='Hired '+esc((r.agent&&r.agent.name)||name)+' ✓'; $('#hire-msg').style.color='var(--ok)';
+      $('#hire-btn').textContent='Hired'; $('#s4-next').disabled=false;
+      $('#done-summary').textContent='Your machine is ready, a model is serving, and '+name+' has been hired. Meet your team in the Office, or head back to the dashboard.';
+    } else { $('#hire-msg').textContent=r.detail||'Could not hire.'; $('#hire-msg').style.color='var(--err)'; $('#hire-btn').disabled=false; }
+  }catch(e){ $('#hire-msg').textContent = e===401?'Admin only.':'Could not hire.'; $('#hire-msg').style.color='var(--err)'; $('#hire-btn').disabled=false; }
+};
+
+// ── navigation ──────────────────────────────────────────────────────────────
+$('#s1-next').onclick=()=>{ loadModels(); showStep(2); };
+$('#s2-back').onclick=()=>showStep(1);
+$('#s2-next').onclick=()=>showStep(3);
+$('#s3-back').onclick=()=>showStep(2);
+$('#s3-next').onclick=()=>showStep(4);
+$('#s4-back').onclick=()=>showStep(3);
+$('#s4-next').onclick=()=>showStep(5);
+
+showStep(1);
 </script></body></html>"""
