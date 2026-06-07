@@ -1,0 +1,12 @@
+{
+  "name": "health_watch",
+  "version": "0.1.0",
+  "description": "Makes the assistant aware of active app errors/warnings from the diagnostics engine, so it notices problems (like the red health badge) and can report or fix them.",
+  "permissions": ["hooks", "tools", "services"],
+  "entry": "plugin",
+  "enabled": true,
+  "settings": [
+    {"key": "health_watch_inject", "label": "Tell the assistant about active issues", "type": "bool", "default": true},
+    {"key": "health_watch_ttl", "label": "Health refresh seconds", "type": "int", "default": 180}
+  ]
+}

@@ -43,6 +43,7 @@ class ModelSource:
                  resolve: Optional[Callable[[Optional[str]], Tuple[Optional[str], str]]] = None,
                  auth_header: Optional[Callable[[str], dict]] = None,
                  model_filter: Optional[Callable[[str], bool]] = None,
+                 tier_fn: Optional[Callable[[str], str]] = None,
                  models: Optional[List[str]] = None):
         self.name = name
         self.slug = slug or "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-")
@@ -54,6 +55,7 @@ class ModelSource:
         self._resolve = resolve
         self._auth_header = auth_header or (lambda c: {"Authorization": f"Bearer {c}"})
         self.model_filter = model_filter  # (model_id)->bool; None = keep all
+        self.tier_fn = tier_fn  # (model_id)->"free"|"subscription"|"paid"; None = unknown
         self.static_models = models or []
         self._logger = None
         self._models_cache: Optional[List[str]] = None
@@ -198,12 +200,23 @@ class ModelSource:
 
             def catalog(self_inner):
                 # Empty until logged in — the section appears once a credential
-                # is registered. Remote/cloud models (no local VRAM fit).
+                # is registered. Remote/cloud models (no local VRAM fit). Each
+                # entry carries a `tier` (free / subscription / paid) so the UI
+                # can label / colour them accordingly.
                 cred, _ = src.resolve_credential()
                 if not cred:
                     return []
-                return [{"model": m, "source": src.name, "remote": True,
-                         "endpoint": src.name} for m in src.list_models()]
+                out = []
+                for m in src.list_models():
+                    d = {"model": m, "source": src.name, "remote": True,
+                         "endpoint": src.name}
+                    if src.tier_fn:
+                        try:
+                            d["tier"] = src.tier_fn(m)
+                        except Exception:
+                            pass
+                    out.append(d)
+                return out
 
             def profiles(self_inner):
                 return []
@@ -298,17 +311,52 @@ class ModelSource:
                 if not ok:
                     return {"ok": False, "detail": f"credential rejected by {self.name}: {res}"}
                 action = self.register_endpoint(cred, owner=admin)
+                # Subscription hint: surface what was actually returned so the user
+                # sees "Go" when Go-family models are present, not a hardcoded label.
+                hint = ""
+                if self.slug == "opencode":
+                    GO = ("glm", "kimi", "mimo", "qwen3.7", "qwen3.6", "minimax", "deepseek")
+                    if any(any(g in str(m).lower() for g in GO) for m in res):
+                        hint = " · Go subscription models detected"
                 return {"ok": True, "source": src, "endpoint": self.name, "action": action,
-                        "models": len(res),
-                        "detail": f"Connected to {self.name} ({len(res)} models). "
+                        "models": len(res), "subscription_hint": hint.strip(" ·"),
+                        "detail": f"Connected to {self.name} ({len(res)} models){hint}. "
                                   f"Use them as 'model@{self.name}'."}
 
             @router.get(f"/api/plugins/{self.slug}/status")
             async def _status(admin: str = Depends(require_admin)):
                 cred, src = self.resolve_credential()
-                return {"name": self.name, "logged_in": bool(cred), "credential_source": src,
-                        "endpoint_registered": self.endpoint_exists() if cred else False,
-                        "base_url": self.base_url}
+                registered = self.endpoint_exists() if cred else False
+                info = {"name": self.name, "logged_in": bool(cred), "credential_source": src,
+                        "endpoint_registered": registered, "base_url": self.base_url}
+                if cred and registered:
+                    models = self.list_models()
+                    info["models"] = len(models)
+                    if self.slug == "opencode":
+                        GO = ("glm", "kimi", "mimo", "qwen3.7", "qwen3.6", "minimax", "deepseek")
+                        if any(any(g in str(m).lower() for g in GO) for m in models):
+                            info["subscription"] = "Go subscription"
+                        else:
+                            info["subscription"] = "Zen pay-as-you-go"
+                return info
+
+            @router.post(f"/api/plugins/{self.slug}/disconnect")
+            async def _disconnect(admin: str = Depends(require_admin)):
+                """Delete the stored credential + endpoint. Like Apple's 'Sign Out'
+                — drops the key, leaves the plugin installed for later reconnect."""
+                from core.database import SessionLocal, ModelEndpoint
+                db = SessionLocal()
+                try:
+                    ep = db.query(ModelEndpoint).filter(ModelEndpoint.name == self.name).first()
+                    if not ep:
+                        return {"ok": False, "detail": "not connected"}
+                    db.delete(ep)
+                    db.commit()
+                    # also drop the in-memory model cache so a re-login re-probes
+                    self._models_cache = None
+                    return {"ok": True, "detail": f"Signed out of {self.name}. The API key was removed."}
+                finally:
+                    db.close()
 
             @router.get(f"/api/plugins/{self.slug}/models")
             async def _models(admin: str = Depends(require_admin)):

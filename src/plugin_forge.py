@@ -248,6 +248,7 @@ async def build_with_aider(slug: str, intent: str, overwrite: bool = False) -> D
     try:
         proc = await asyncio.create_subprocess_exec(
             _bin, "--model", model, "--no-git", "--yes-always",
+            "--no-show-model-warnings",
             "--message", msg, "plugin.py", "plugin.json",
             cwd=pdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         try:

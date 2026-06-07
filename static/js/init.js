@@ -381,6 +381,41 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
   }
 }
 
+/* ── Deep-link panels from the URL hash ─────────────────────────────────────
+   Entry points like the /app dashboard link to #research / #memory / #cookbook
+   to jump straight into a section. The session router treats the hash as a chat
+   id (sessions.js), so these names would otherwise fall through to the last
+   chat — i.e. "the old interface" with nothing to do with what was clicked.
+   Map the known panel names to their open() here, on load and on hashchange,
+   so those links land where they say they will. Unknown hashes (real session
+   ids) are left untouched for the session router. */
+{
+  const PANEL_OPENERS = {
+    research: () => import('./research/panel.js')
+      .then(m => { const f = m.openPanel || (m.default && m.default.openPanel); if (f) f(); })
+      .catch(() => {}),
+    cookbook: () => {
+      if (window.cookbookModule && window.cookbookModule.open) { window.cookbookModule.open(); return; }
+      import('./cookbook.js')
+        .then(m => { const f = m.open || (m.default && m.default.open); if (f) f(); })
+        .catch(() => {});
+    },
+    memory: () => { const b = document.getElementById('tool-memory-btn'); if (b) b.click(); },
+  };
+  PANEL_OPENERS.memories = PANEL_OPENERS.memory;  // accept singular + plural
+  function routePanelHash() {
+    const name = (window.location.hash || '').replace(/^#/, '').toLowerCase();
+    const open = PANEL_OPENERS[name];
+    if (!open) return false;
+    open();
+    return true;
+  }
+  // Run once after boot settles (modules/DOM ready), then on every hash change.
+  if (document.readyState === 'complete') setTimeout(routePanelHash, 0);
+  else window.addEventListener('load', routePanelHash);
+  window.addEventListener('hashchange', routePanelHash);
+}
+
 /* ── Release welcome-screen entrance animations once the page is settled ──
    The splash's entrance animations (#welcome-screen / .welcome-name) are held
    by CSS (`body:not(.welcome-ready)`) until this runs, so they no longer play

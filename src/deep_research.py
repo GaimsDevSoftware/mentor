@@ -259,6 +259,20 @@ class DeepResearcher:
         findings: List[Dict] = list(prior_findings) if prior_findings else []
         report = prior_report or ""
 
+        # Consult long-term memory FIRST — build on what we already know / researched
+        # before, instead of re-searching the web for it.
+        self._prior_knowledge = ""
+        try:
+            import src.ai_interaction as _ai
+            _mm = getattr(_ai, "_memory_manager", None)
+            if _mm:
+                _rel = _mm.get_relevant_memories(question, _mm.load_all(), threshold=0.05, max_items=5)
+                if _rel:
+                    self._prior_knowledge = "\n".join(f"- {m.get('text','')}" for m in _rel)[:1500]
+                    logger.info(f"Research: consulted memory, {len(_rel)} relevant prior item(s)")
+        except Exception as _pk:
+            logger.debug(f"Research prior-knowledge lookup skipped: {_pk}")
+
         # PLAN: Analyze the question and create a research strategy
         if not prior_report:
             self._emit(phase="planning")
@@ -389,7 +403,10 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     async def _create_plan(self, question: str) -> str:
         """LLM analyzes the question and creates a research plan."""
-        prompt = current_date_context() + RESEARCH_PLAN_PROMPT.format(question=question)
+        _prior = getattr(self, "_prior_knowledge", "")
+        _pk = (f"\n\nWHAT WE ALREADY KNOW (from prior research / memory — build on this, do NOT "
+               f"re-derive or waste searches on what is already covered here):\n{_prior}\n" if _prior else "")
+        prompt = current_date_context() + _pk + RESEARCH_PLAN_PROMPT.format(question=question)
         try:
             response = await self._llm(
                 [{"role": "user", "content": prompt}],

@@ -349,11 +349,63 @@ def _check_serving_config() -> List[Dict[str, Any]]:
 
 
 # Registry of built-in checks. Adding a check = one line here.
+def _check_skills() -> List[Dict[str, Any]]:
+    """Skill-library health: surfaces the auto-audit's findings (size, duplicates it
+    flagged, never-used auto-mints, audit coverage) so the library stays lean and the
+    app's health reflects it. Read-only — the actual review runs nightly + after every
+    5 new skills; this just reports its state. Never auto-deletes."""
+    out: List[Dict[str, Any]] = []
+    try:
+        from services.memory.skills import SkillsManager
+        from src.constants import DATA_DIR
+        skills = SkillsManager(DATA_DIR).load_all()
+    except Exception as e:
+        return [_warn("skills", "library", f"could not read skills: {e}",
+                      "check that data/skills/ is readable")]
+    _AUTO = {"self-improvement", "reflection", "gaps", "proactive"}
+    total = len(skills)
+    auto = [s for s in skills if s.get("source") in _AUTO]
+    never_used = [s for s in auto if not s.get("uses")]
+    redundant = [s for s in skills if isinstance(s.get("necessity"), dict)
+                 and (s["necessity"].get("redundant_with") or s["necessity"].get("necessary") is False)]
+    audited = [s for s in skills if s.get("audited_at")]
+
+    if total > 400:
+        out.append(_warn("skills", "library-size", f"{total} skills — library is large",
+                         "run the Skills audit to consolidate/prune (it also runs nightly)"))
+    else:
+        out.append(_ok("skills", "library-size", f"{total} skills ({len(auto)} auto-added)"))
+
+    if redundant:
+        names = ", ".join(s.get("name", "?") for s in redundant[:5])
+        out.append(_warn("skills", "duplicates",
+                         f"{len(redundant)} skill(s) the audit flagged as redundant: {names}",
+                         "review & merge/delete in the Skills manager — the audit only flags, never auto-deletes"))
+    else:
+        out.append(_ok("skills", "duplicates", "no redundant skills flagged by the audit"))
+
+    if len(never_used) > 8:
+        out.append(_warn("skills", "unused",
+                         f"{len(never_used)} auto-added skills have never been used",
+                         "the audit demotes/prunes low-value ones; review if this keeps growing"))
+    else:
+        out.append(_ok("skills", "unused", f"{len(never_used)} never-used auto-added skill(s)"))
+
+    if auto and not audited:
+        out.append(_warn("skills", "audit-coverage",
+                         "auto-added skills have not been audited yet",
+                         "the nightly audit will review them; trigger sooner via the Skills audit"))
+    elif audited:
+        out.append(_ok("skills", "audit-coverage", f"{len(audited)} skill(s) audited"))
+    return out
+
+
 _CHECKS = [
     ("context-memory", _check_context_memory),
     ("serving", _check_serving_config),
     ("plugins", _check_plugins),
     ("embeddings", _check_embeddings),
+    ("skills", _check_skills),
     ("fleet", _check_fleet),
     ("aegis", _check_aegis),
     ("autonomous-loop", _check_autonomous_loop),

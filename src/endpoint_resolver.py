@@ -294,6 +294,48 @@ def resolve_endpoint(
         db.close()
 
 
+def _is_local_base(base: str) -> bool:
+    b = (base or "").lower()
+    return any(h in b for h in ("localhost", "127.0.0.1", "0.0.0.0", "::1",
+                                ".local", "192.168.", "10.0.", ":11434"))
+
+
+def resolve_search_endpoint(owner: Optional[str] = None) -> Tuple[Optional[str], Optional[str], Optional[Dict]]:
+    """Pick the model that runs multi-step web search, honoring the
+    `search_model_mode` setting (app | local | cloud). "app" (and any miss) uses
+    the normal research → utility → default → chat chain; "local"/"cloud" bias to
+    the first enabled endpoint of that locality, then fall back to the chain."""
+    try:
+        from src.settings import get_user_setting, load_settings
+        s = load_settings()
+        mode = (get_user_setting("search_model_mode", owner or "",
+                                 s.get("search_model_mode", "app")) or "app").strip().lower()
+    except Exception:
+        mode = "app"
+    if mode in ("local", "cloud"):
+        db = SessionLocal()
+        try:
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            if owner:
+                from src.auth_helpers import owner_filter
+                q = owner_filter(q, ModelEndpoint, owner)
+            for ep in q.all():
+                base = normalize_base(ep.base_url)
+                if (mode == "local") == _is_local_base(base):
+                    model = _first_chat_model(_endpoint_enabled_models(ep))
+                    if model:
+                        return build_chat_url(base), model, build_headers(ep.api_key, base)
+        except Exception as e:
+            logger.debug(f"resolve_search_endpoint ({mode}) failed: {e}")
+        finally:
+            db.close()
+    for role in ("research", "utility", "default", "chat"):
+        u, m, h = resolve_endpoint(role, owner=owner)
+        if u:
+            return u, m, h
+    return None, None, None
+
+
 def resolve_endpoint_by_id(
     ep_id: str, model: Optional[str] = None, owner: Optional[str] = None
 ) -> Optional[Tuple[str, str, Dict]]:

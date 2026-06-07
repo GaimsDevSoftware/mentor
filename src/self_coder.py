@@ -233,6 +233,7 @@ async def _do_propose(pid: str) -> None:
     try:
         proc = await asyncio.create_subprocess_exec(
             aider_bin(), "--model", model, "--yes-always", "--no-auto-commits",
+            "--no-show-model-warnings",
             "--no-pretty", "--no-stream", "--message", instruction, *safe_files,
             cwd=_repo(), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         # stream stdout line-by-line into the proposal so the UI shows it live

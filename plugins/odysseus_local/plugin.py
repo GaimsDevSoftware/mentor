@@ -202,6 +202,90 @@ def _diagnostic():
     return results
 
 
+def _gb(n):
+    try:
+        return f"{n / 1e9:.1f}GB"
+    except Exception:
+        return "?"
+
+
+def _gpu_vram():
+    """Return (used_mb, total_mb) from nvidia-smi, or (None, None) if no NVIDIA GPU."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=4)
+        if out.returncode == 0 and out.stdout.strip():
+            used, total = out.stdout.strip().split("\n")[0].split(",")
+            return int(used.strip()), int(total.strip())
+    except Exception:
+        pass
+    return None, None
+
+
+def _stats():
+    nodes = _nodes()
+    n_local = len(nodes)
+    # what's actually loaded in Ollama right now, with per-model VRAM footprint
+    loaded = []  # (name, size_bytes)
+    try:
+        import httpx
+        r = httpx.get("http://localhost:11434/api/ps", timeout=3)
+        if r.status_code == 200:
+            for m in (r.json() or {}).get("models", []):
+                loaded.append((m.get("name", "?"), m.get("size_vram", m.get("size", 0))))
+    except Exception:
+        pass
+    served = 0
+    try:
+        import httpx
+        r = httpx.get("http://localhost:11434/api/tags", timeout=3)
+        if r.status_code == 200:
+            served = len((r.json() or {}).get("models", []))
+    except Exception:
+        pass
+    used_mb, total_mb = _gpu_vram()
+    metrics = [
+        {"label": "Nodes", "value": str(n_local)},
+        {"label": "Models served", "value": str(served)},
+        {"label": "Loaded now", "value": str(len(loaded)), "good": len(loaded) > 0},
+    ]
+    if total_mb:
+        pct = int(used_mb / total_mb * 100) if total_mb else 0
+        metrics.append({"label": "GPU VRAM",
+                        "value": f"{used_mb//1024}/{total_mb//1024}GB",
+                        "good": pct < 85})
+    else:
+        metrics.append({"label": "Catalog", "value": str(len(_catalog()))})
+
+    mode = fleet.mode()
+    if loaded:
+        # per-model VRAM breakdown
+        per = " · ".join(f"{n.split(':')[0]} {_gb(sz)}" for n, sz in loaded[:3])
+        vram_note = ""
+        if total_mb:
+            free_gb = (total_mb - used_mb) / 1024
+            vram_note = f" GPU: {used_mb//1024}/{total_mb//1024}GB used, {free_gb:.0f}GB free."
+        insight = f"In VRAM now — {per}.{vram_note}"
+        if total_mb and used_mb / total_mb > 0.90:
+            insight += " VRAM is nearly full; the next model swap may evict this one."
+            status = "warn"
+        else:
+            status = "ok"
+    elif served > 0:
+        insight = ("No model is warm in Ollama. First chat after a cold start will take longer "
+                   "while the model loads into VRAM.")
+        if total_mb:
+            insight += f" GPU: {used_mb//1024}/{total_mb//1024}GB used by other processes."
+        status = "warn"
+    else:
+        insight = "Ollama not reachable. Start it (or fix LLM_HOST) so the fleet has models to serve."
+        status = "err"
+    return {"metrics": metrics, "insight": insight, "status": status}
+
+
 def register(api):
     api.register_tool(
         "local_fleet", _local_fleet,
@@ -212,6 +296,7 @@ def register(api):
     api.register_cookbook_provider(_CookbookProvider())
     api.register_hook("build_prompt", _prompt_hook)
     api.register_hook("diagnostic", _diagnostic)
+    api.register_hook("stats", _stats)
 
     # Read-only HTTP surface for the UI / scripts.
     try:

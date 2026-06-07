@@ -3789,6 +3789,10 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
     return {"output": f"Research library ({len(items)} item{'s' if len(items) != 1 else ''}):\n{rows}", "exit_code": 0}
 
 
+# Strong refs to background Claude-research tasks so they aren't GC'd mid-run.
+_CLAUDE_RESEARCH_TASKS: set = set()
+
+
 async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict:
     """Start a live deep-research job that appears in the Deep Research
     sidebar. Hits /api/research/start (the same path the sidebar's
@@ -3802,6 +3806,35 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
     topic = args.get("topic", "") or args.get("query", "")
     if not topic:
         return {"error": "topic (or query) is required", "exit_code": 1}
+
+    # Engine selection: "claude" runs a headless Claude web-research job (higher
+    # quality, browses live) instead of the local research model. It deposits
+    # into the same Deep Research Library. User-initiated, so it is NOT blocked
+    # by the windowed budget (but still counted). Runs in the background so the
+    # chat stays responsive; appears in the Library when done.
+    engine = str(args.get("engine", "") or "").strip().lower()
+    if not engine and (args.get("with_claude") or args.get("claude")):
+        engine = "claude"
+    if engine == "claude":
+        import asyncio as _asyncio
+        from src.claude_research import run_claude_research
+        cat = args.get("category") or None
+        coro = run_claude_research(topic, owner=owner, category=cat,
+                                   origin="chat-command", enforce_budget=False)
+        _t = _asyncio.create_task(coro)
+        _CLAUDE_RESEARCH_TASKS.add(_t)
+        _t.add_done_callback(_CLAUDE_RESEARCH_TASKS.discard)
+        return {
+            "output": (
+                f"Claude web-research started for “{topic}”. It browses the live "
+                "web and will appear in the Deep Research Library in a few "
+                "minutes — open the Library to read the report."
+            ),
+            "ui_event": "research_started",
+            "engine": "claude",
+            "exit_code": 0,
+        }
+
     payload: Dict[str, Any] = {"query": topic}
     # Optional knobs the research panel supports.
     if args.get("max_rounds") is not None:

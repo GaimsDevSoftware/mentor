@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 # Permission strings ↔ surfaces. A plugin may only call register_* for surfaces
 # it declared in manifest["permissions"].
 _VALID_PERMISSIONS = {"tools", "hooks", "cookbook", "services", "routes"}
-_VALID_HOOK_EVENTS = {"pre_tool", "post_tool", "build_prompt", "diagnostic"}
+_VALID_HOOK_EVENTS = {"pre_tool", "post_tool", "build_prompt", "diagnostic", "stats"}
 
 
 # ── registry state ───────────────────────────────────────────────────────────
@@ -407,6 +407,22 @@ def run_repair(plugin: str, finding: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": True, "detail": str(res)}
     except Exception as e:
         return {"ok": False, "detail": f"repair raised: {e}"}
+
+
+def run_stats() -> Dict[str, Dict[str, Any]]:
+    """Collect 'stats' hooks: each plugin returns a small structured report
+    ({metrics: [...], insight: str, status: ok|warn|err}) that the UI renders as
+    Apple-style mini-tiles inside the plugin card. A hook that returns None /
+    raises is silently skipped (no data to show is OK)."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for h in _HOOKS.get("stats", []):
+        try:
+            res = h["fn"]()
+            if isinstance(res, dict) and (res.get("metrics") or res.get("insight")):
+                out[h["plugin"]] = res
+        except Exception as e:
+            logger.debug("plugin %s stats hook error: %s", h["plugin"], e)
+    return out
 
 
 def run_diagnostics() -> List[Dict[str, Any]]:

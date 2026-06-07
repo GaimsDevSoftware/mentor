@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from src.endpoint_resolver import resolve_endpoint
+from src.endpoint_resolver import resolve_endpoint, resolve_search_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
@@ -392,7 +392,11 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             finally:
                 db.close()
         else:
-            ep_url, ep_model, ep_headers = resolve_endpoint("research")
+            # Honor the search_model_mode setting (app|local|cloud); falls back
+            # to the research → utility → default → chat chain internally.
+            ep_url, ep_model, ep_headers = resolve_search_endpoint()
+            if not ep_url:
+                ep_url, ep_model, ep_headers = resolve_endpoint("research")
             if not ep_url:
                 ep_url, ep_model, ep_headers = resolve_endpoint("utility")
             # When neither research nor utility is configured, use the user's

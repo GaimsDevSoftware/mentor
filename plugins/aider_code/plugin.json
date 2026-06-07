@@ -1,13 +1,34 @@
 {
   "name": "aider_code",
   "version": "0.1.0",
-  "description": "Vibe-code from inside Odysseus: describe a change in plain language and Aider (free, git-aware, BYO local model) makes the real edits in a configured project, returning the git diff. Disabled by default — it edits real files. Scoped to one project path. Needs aider on PATH + aider_model.",
-  "permissions": ["tools", "hooks"],
+  "description": "Build new features for Odysseus by talking to it. Describe a function you want and Aider (free, git-aware, BYO local model) writes the real code, returning the git diff for you to review. Defaults to the Odysseus repo itself \u2014 that's the whole point. Auto-branches off main so a draft never disturbs the running app. Can be pointed at other projects too.",
+  "permissions": [
+    "tools",
+    "hooks",
+    "routes"
+  ],
   "entry": "plugin",
-  "enabled": false,
+  "enabled": true,
   "settings": [
-    {"key": "aider_code_enabled", "label": "Enabled", "type": "bool", "default": false},
-    {"key": "aider_code_project", "label": "Project path (the repo Aider may edit)", "type": "text", "default": ""},
-    {"key": "aider_model", "label": "Aider model (free coder, e.g. ollama/qwen3-coder)", "type": "text", "default": ""}
+    {
+      "key": "aider_code_project",
+      "label": "Project path (the repo Aider may edit)",
+      "type": "text",
+      "default": "",
+      "suggest_url": "/api/manage/fs/git-repos"
+    },
+    {
+      "key": "aider_model",
+      "label": "Aider model",
+      "type": "select",
+      "default": "",
+      "suggest_url": "/api/manage/aider/models"
+    },
+    {
+      "key": "aider_code_auto_branch",
+      "label": "Auto-branch off main (safety: never edit main directly)",
+      "type": "bool",
+      "default": true
+    }
   ]
 }

@@ -249,6 +249,9 @@ DEFAULT_SETTINGS = {
     # Which models Copilot considers when recommending roles: "local" (our fleet),
     # "sources" (plugin/source models like OpenCode Zen / OpenRouter), or "both".
     "recommend_scope": "both",
+    # Which model tier runs multi-step web search (follows the multi-step-web-search skill):
+    # "app" = the app's configured AI (default/research), "local" = a local model, "cloud" = a cloud model.
+    "search_model_mode": "app",
     # ── opencode (OpenCode Zen) plugin ──
     # By default only the FREE Zen models + the models included with the Go
     # subscription are surfaced. Set True to ALSO use per-request PAID models

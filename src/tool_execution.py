@@ -590,6 +590,34 @@ async def _direct_fallback(
                     time_filter = "month"
                 elif " news" in q_lc or q_lc.startswith("news ") or q_lc.endswith(" news"):
                     time_filter = "week"
+            # Search-model delegation: if the user chose a specific tier
+            # (search_model_mode = local|cloud), run the multi-step search
+            # sub-agent on THAT model instead of a single search — so the chosen
+            # tier (not the chat model) does the searching, following the recipe.
+            # "app" (default) keeps the fast single-search path below unchanged.
+            try:
+                from src.settings import get_setting as _gs
+                _smode = (_gs("search_model_mode", "app") or "app").strip().lower()
+            except Exception:
+                _smode = "app"
+            if _smode in ("local", "cloud") and query:
+                try:
+                    from src.endpoint_resolver import resolve_search_endpoint
+                    _su, _sm, _sh = resolve_search_endpoint()
+                    if _su:
+                        from src.deep_research import DeepResearcher
+                        _agent = DeepResearcher(llm_endpoint=_su, llm_model=_sm, llm_headers=_sh,
+                                                max_rounds=2, min_rounds=1, max_time=90)
+                        _ans = await _agent.research(query)
+                        _out = _ans[:MAX_OUTPUT_CHARS] if _ans else "(no results)"
+                        _srcs = [{"url": f.get("url", ""), "title": f.get("title", "")}
+                                 for f in (_agent.findings or []) if f.get("url")]
+                        if _srcs:
+                            _out += "\n\n<!-- SOURCES:" + _json.dumps(_srcs) + " -->"
+                        return {"output": _out, "exit_code": 0}
+                    logger.debug("search delegation: no %s endpoint, using single search", _smode)
+                except Exception as _de:
+                    logger.debug("search delegation failed, single search fallback: %s", _de)
             loop = asyncio.get_running_loop()
             text, sources = await asyncio.wait_for(
                 loop.run_in_executor(

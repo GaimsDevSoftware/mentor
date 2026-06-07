@@ -23,6 +23,8 @@ import caveman_compress as cc
 
 _STATS = {"calls": 0, "original_chars": 0, "compressed_chars": 0,
           "session_original": 0, "session_compressed": 0}
+# per-tool breakdown: tool -> {"calls", "orig", "comp"}
+_BY_TOOL = {}
 _lock = threading.Lock()
 _api = None  # set in register(); used for settings + data_dir
 
@@ -38,6 +40,9 @@ def _load_stats() -> None:
         _STATS["calls"] = int(d.get("calls", 0))
         _STATS["original_chars"] = int(d.get("original_chars", 0))
         _STATS["compressed_chars"] = int(d.get("compressed_chars", 0))
+        bt = d.get("by_tool", {})
+        if isinstance(bt, dict):
+            _BY_TOOL.update(bt)
     except Exception:
         pass
 
@@ -47,18 +52,23 @@ def _persist_stats() -> None:
         with open(_stats_path(), "w", encoding="utf-8") as f:
             json.dump({"calls": _STATS["calls"],
                        "original_chars": _STATS["original_chars"],
-                       "compressed_chars": _STATS["compressed_chars"]}, f)
+                       "compressed_chars": _STATS["compressed_chars"],
+                       "by_tool": _BY_TOOL}, f)
     except Exception:
         pass
 
 
-def _record(orig: int, comp: int) -> None:
+def _record(orig: int, comp: int, tool: str = "system") -> None:
     with _lock:
         _STATS["calls"] += 1
         _STATS["original_chars"] += orig
         _STATS["compressed_chars"] += comp
         _STATS["session_original"] += orig
         _STATS["session_compressed"] += comp
+        t = _BY_TOOL.setdefault(tool, {"calls": 0, "orig": 0, "comp": 0})
+        t["calls"] += 1
+        t["orig"] += orig
+        t["comp"] += comp
         # Persist occasionally to avoid disk churn under load.
         if _STATS["calls"] % 10 == 0:
             _persist_stats()
@@ -105,7 +115,7 @@ def _post_tool(tool, content, result):
             comp, o, c = cc.compress(v, level)
             if c < o:
                 result[key] = comp
-                _record(o, c)
+                _record(o, c, tool=tool)
 
 
 def _prompt_hook(prompt, context):
@@ -133,6 +143,62 @@ def _diagnostic():
 
 # ── registration ──────────────────────────────────────────────────────────────
 
+def _human_int(n):
+    n = int(n)
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n/1_000:.1f}k"
+    return f"{n:,}"
+
+
+def _stats():
+    o = _STATS["original_chars"]
+    c = _STATS["compressed_chars"]
+    if o == 0 and _STATS["calls"] == 0:
+        return {"metrics": [{"label": "Status", "value": "Idle"}],
+                "insight": "No compressions yet. Caveman runs when web_search / research tools return bulky text.",
+                "status": "none"}
+    saved = max(0, o - c)
+    saved_tokens = cc.est_tokens(saved)
+    ratio = (saved / o) if o else 0
+    pct = int(ratio * 100)
+    avg_per_call = saved // max(1, _STATS["calls"])
+    metrics = [
+        {"label": "Compressions", "value": _human_int(_STATS["calls"])},
+        {"label": "Tokens saved", "value": "~" + _human_int(saved_tokens), "good": saved_tokens > 0},
+        {"label": "Avg ratio", "value": f"{pct}%"},
+        {"label": "Per call", "value": "~" + _human_int(cc.est_tokens(avg_per_call)) + " tok"},
+    ]
+    # per-tool breakdown — which tool benefits most from compression
+    breakdown = ""
+    if _BY_TOOL:
+        ranked = sorted(_BY_TOOL.items(),
+                        key=lambda kv: kv[1].get("orig", 0) - kv[1].get("comp", 0),
+                        reverse=True)
+        parts = []
+        for name, t in ranked[:3]:
+            t_saved = cc.est_tokens(t.get("orig", 0) - t.get("comp", 0))
+            parts.append(f"{name}: ~{_human_int(t_saved)} tok")
+        breakdown = " · ".join(parts)
+    # insight + status
+    if pct >= 50:
+        insight = f"Strong savings — {pct}% average across {_STATS['calls']} runs."
+        status = "ok"
+    elif pct >= 25:
+        insight = f"Moderate savings at {pct}%. Consider raising level to 'aggressive' if it's not already."
+        status = "ok"
+    elif pct >= 10:
+        insight = f"Light savings ({pct}%). Inputs may already be terse; try lowering caveman_min_chars."
+        status = "warn"
+    else:
+        insight = f"Low savings ({pct}%). Check caveman_level — text may be unsuitable for structural compression."
+        status = "warn"
+    if breakdown:
+        insight += f"  By tool — {breakdown}."
+    return {"metrics": metrics, "insight": insight, "status": status}
+
+
 def _repair(finding):
     """One-click self-heal: re-enable compression and reset stale stats."""
     try:
@@ -154,9 +220,9 @@ def register(api):
     api.register_hook("post_tool", _post_tool)
     api.register_hook("build_prompt", _prompt_hook)
     api.register_hook("diagnostic", _diagnostic)
+    api.register_hook("stats", _stats)
     api.register_repair(_repair)
     api.register_settings([
-        {"key": "caveman_enabled", "label": "Enabled", "type": "bool", "default": True},
         {"key": "caveman_level", "label": "Compression level", "type": "select",
          "options": ["minimal", "structural", "aggressive"], "default": "aggressive"},
         {"key": "caveman_min_chars", "label": "Min chars to compress", "type": "int", "default": 600},

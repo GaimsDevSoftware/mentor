@@ -207,6 +207,70 @@ class ResearchHandler:
     # Task registry — background research with persistence
     # ------------------------------------------------------------------
 
+    async def _extract_research_to_memory(self, query: str, report: str,
+                                          researcher, owner: str = "") -> None:
+        """Distil a completed research report into 2-3 durable memory facts so
+        future tasks can reuse them instead of re-searching. Deduped; best-effort."""
+        if not report or researcher is None:
+            return
+        import src.ai_interaction as _ai
+        mm = getattr(_ai, "_memory_manager", None)
+        mv = getattr(_ai, "_memory_vector", None)
+        if mm is None:
+            return
+        from src.llm_core import llm_call_async
+        prompt = (
+            f"From this research report answering '{query}', extract 2-3 DURABLE, reusable facts "
+            f"worth remembering for future tasks (definitions, key numbers, conclusions) — NOT the "
+            f"question, NOT transient details. Return ONLY a JSON array of "
+            f'{{"text":"...","category":"fact"}}.\n\nReport:\n{(report or "")[:3000]}'
+        )
+        try:
+            raw = await llm_call_async(
+                url=researcher.llm_endpoint, model=researcher.llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1, max_tokens=500,
+                headers=getattr(researcher, "llm_headers", None), timeout=40)
+        except Exception as e:
+            logger.debug(f"research memory extraction LLM call failed: {e}")
+            return
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        try:
+            facts = json.loads(text)
+        except Exception:
+            logger.debug("research memory extraction returned non-JSON; skipping")
+            return
+        if not isinstance(facts, list):
+            return
+        existing = mm.load_all()
+        added = 0
+        for f in facts:
+            if not isinstance(f, dict):
+                continue
+            ft = str(f.get("text", "")).strip()
+            if len(ft) < 8:
+                continue
+            try:
+                if mv is not None and getattr(mv, "healthy", False) and mv.find_similar(ft, threshold=0.85):
+                    continue
+            except Exception:
+                pass
+            if mm.find_duplicates(ft, existing):
+                continue
+            entry = mm.add_entry(ft, source="research", category=str(f.get("category", "fact")), owner=owner)
+            existing.append(entry)
+            added += 1
+            try:
+                if mv is not None and getattr(mv, "healthy", False):
+                    mv.add(entry["id"], ft)
+            except Exception:
+                pass
+        if added:
+            mm.save(existing)
+            logger.info(f"Research → memory: stored {added} new fact(s) (owner={owner or '-'})")
+
     def start_research(
         self,
         session_id: str,
@@ -320,6 +384,14 @@ class ResearchHandler:
                     _guarded_complete(session_id, result, sources, findings)
                 except Exception as cb_err:
                     logger.error(f"on_complete callback failed: {cb_err}")
+                # Distil the findings into long-term memory (so next time we don't
+                # re-research the same thing). Background, never blocks/breaks.
+                try:
+                    await self._extract_research_to_memory(
+                        query, entry.get("result", ""), entry.get("researcher"),
+                        owner=entry.get("owner", ""))
+                except Exception as mem_err:
+                    logger.warning(f"Research → memory extraction failed: {mem_err}")
             except asyncio.TimeoutError:
                 logger.error(f"Research hard timeout ({hard_timeout}s) for session {session_id}")
                 entry["status"] = "error"

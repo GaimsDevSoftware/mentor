@@ -1482,6 +1482,7 @@ async def stream_agent_loop(
     # also toggle per endpoint). NULL = unknown, fall through to the
     # keyword heuristic + host check.
     _endpoint_supports: Optional[bool] = None
+    _endpoint_name: Optional[str] = None
     try:
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
         _db = _SL()
@@ -1493,6 +1494,7 @@ async def stream_agent_loop(
                       _db.query(_ME).filter(_ME.base_url == _u + "/").first()
             if _ep is not None:
                 _endpoint_supports = _ep.supports_tools
+                _endpoint_name = _ep.name
         finally:
             _db.close()
     except Exception as _e:
@@ -1844,6 +1846,15 @@ async def stream_agent_loop(
                         real_output_tokens += u.get("output_tokens", 0)
                         last_round_input_tokens = round_input
                         has_real_usage = True
+                        # Per-endpoint usage ledger (for the Models tab stats).
+                        # Defensive: never let accounting break the stream.
+                        if _endpoint_name:
+                            try:
+                                from src import usage_ledger
+                                usage_ledger.record(_endpoint_name, round_input,
+                                                    u.get("output_tokens", 0))
+                            except Exception:
+                                pass
                         # Backend-reported TRUE generation speed (llama.cpp
                         # timings.predicted_per_second) — pure decode, excludes
                         # prefill/network. Preferred over tokens/wall-clock, which

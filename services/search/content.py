@@ -265,6 +265,15 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     except RateLimitError as e:
         error_logger.error(str(e))
         return _empty_result(url, str(e))
+    except httpx.HTTPStatusError as e:
+        # A non-2xx response (404/410/5xx, etc.) for a referenced URL must not
+        # crash the caller. This fetch runs during chat context-building, so an
+        # unhandled raise here 500s the whole chat for ANY model. Treat a dead
+        # link as "no content" instead. (HTTPStatusError is not a RequestError,
+        # so without this it escaped the handlers above.)
+        status = e.response.status_code if e.response is not None else "?"
+        error_logger.error(f"HTTPStatusError {status} fetching {url} (attempt {retry_attempt}): {e}")
+        return _empty_result(url, f"HTTPStatusError: {e}")
 
     # PDF handling
     content_type = response.headers.get("Content-Type", "").lower()
