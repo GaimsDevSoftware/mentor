@@ -893,6 +893,68 @@ def setup_manage_routes() -> APIRouter:
     async def free_helper_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         return _helper_state
 
+    @router.post("/api/setup/connect-codex")
+    async def connect_codex(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Import your ChatGPT (Codex subscription) models — ban-safe via the official
+        codex CLI + OAuth (integrations/codex-proxy), never by scraping tokens. Launches
+        the local OpenAI-compatible proxy and registers it as an endpoint."""
+        import json as _json
+        import os
+        import shutil
+        import subprocess
+        import sys
+        import time as _t
+        import urllib.request
+        import uuid as _uuid
+        codex = shutil.which("codex") or os.path.expanduser("~/.local/bin/codex")
+        if not (codex and os.path.exists(codex)):
+            return {"ok": False, "error": "Codex CLI not found. Install it, then run `codex login`."}
+        if not os.path.exists(os.path.expanduser("~/.codex/auth.json")):
+            return {"ok": False, "error": "Not logged in to Codex — run `codex login` (ChatGPT) first."}
+        port = 8775
+        base = "http://127.0.0.1:%d/v1" % port
+
+        def _up():
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:%d/health" % port, timeout=2):
+                    return True
+            except Exception:
+                return False
+
+        if not _up():
+            repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            proxy = os.path.join(repo, "integrations", "codex-proxy", "codex_proxy.py")
+            if not os.path.exists(proxy):
+                return {"ok": False, "error": "codex proxy script missing."}
+            try:
+                logp = os.path.join(repo, "data", "codex-proxy.log")
+                logf = open(logp, "ab")
+                subprocess.Popen([sys.executable, proxy, "--port", str(port)],
+                                 start_new_session=True, stdout=logf, stderr=logf)
+            except Exception as e:
+                return {"ok": False, "error": "Could not start proxy: %s" % e}
+            for _ in range(12):
+                _t.sleep(1)
+                if _up():
+                    break
+        if not _up():
+            return {"ok": False, "error": "Proxy didn't come up — see data/codex-proxy.log."}
+        try:
+            from core.database import SessionLocal, ModelEndpoint
+            db = SessionLocal()
+            try:
+                ep = db.query(ModelEndpoint).filter(ModelEndpoint.base_url.like("%%%d%%" % port)).first()
+                if not ep:
+                    ep = ModelEndpoint(id=_uuid.uuid4().hex, name="ChatGPT (Codex)", base_url=base,
+                                       is_enabled=True, cached_models=_json.dumps(["codex"]), model_type="llm")
+                    db.add(ep)
+                    db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            return {"ok": False, "error": "Proxy up but registering endpoint failed: %s" % e}
+        return {"ok": True, "base_url": base}
+
     @router.get("/api/manage/install-aider/plan")
     async def install_aider_plan(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         """Show what the installer detected + which approach it will use, before running."""
@@ -1303,6 +1365,8 @@ function loadConnect(){
    +'<div id="cp-cloud" style="display:none"><div class="sub">Pick a provider — the URL is filled for you.</div><div class="row" style="flex-wrap:wrap;gap:6px;margin:8px 0">'+provBtns+'</div>'
      +'<div class="row" style="flex-wrap:wrap"><input id="cc-key" type="password" placeholder="API key" style="flex:1;min-width:200px"><button class="go" id="cc-add">Connect</button></div><div id="cc-msg" class="muted" style="font-size:12px;margin-top:6px"></div></div>'
    +'</div>'
+   +'<div class="card"><b>Use a subscription you already have</b><div class="sub">If you have the <b>Codex</b> CLI installed and logged in with ChatGPT, import its models — safely, through the official CLI (no API key, no token-scraping).</div>'
+     +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><button class="go" id="codex-connect">Connect ChatGPT (Codex)</button><span id="codex-msg" class="muted" style="font-size:12px"></span></div></div>'
    +'<div class="card"><b>Connected models</b><div id="ep-list" class="muted" style="margin-top:8px">loading…</div></div>';
   $('#ct-local').onclick=()=>{$('#cp-local').style.display='';$('#cp-cloud').style.display='none';};
   $('#ct-cloud').onclick=()=>{$('#cp-local').style.display='none';$('#cp-cloud').style.display='';};
@@ -1310,6 +1374,12 @@ function loadConnect(){
   host.querySelectorAll('.prov2').forEach(b=>b.onclick=()=>{host.querySelectorAll('.prov2').forEach(x=>x.style.borderColor='');b.style.borderColor='var(--brass)';_cloudSel=CONNECT_PROVIDERS[+b.dataset.i];});
   $('#cl-add').onclick=()=>_addEndpoint($('#cl-url').value.trim(),$('#cl-key').value.trim(),'',false,$('#cl-msg'),$('#cl-add'));
   $('#cc-add').onclick=()=>{ if(!_cloudSel){const m=$('#cc-msg');m.textContent='Pick a provider first.';m.style.color='var(--err)';return;} const k=$('#cc-key').value.trim(); if(!k){const m=$('#cc-msg');m.textContent='Paste the API key.';m.style.color='var(--err)';return;} _addEndpoint(_cloudSel.url,k,_cloudSel.name,!!_cloudSel.req,$('#cc-msg'),$('#cc-add')); };
+  const cxb=$('#codex-connect'); if(cxb) cxb.onclick=async()=>{ const m=$('#codex-msg'); cxb.disabled=true; m.textContent='Connecting via the Codex CLI…'; m.style.color='var(--dim)';
+    try{ const r=await fetch('/api/setup/connect-codex',{method:'POST',credentials:'same-origin'}).then(x=>x.json());
+      if(r.ok){ m.textContent='Connected ✓ — ChatGPT (Codex) added.'; m.style.color='var(--ok)'; loadEndpointList(); }
+      else { m.textContent=r.error||'Could not connect.'; m.style.color='var(--err)'; } }
+    catch(e){ m.textContent='Request failed.'; m.style.color='var(--err)'; }
+    cxb.disabled=false; };
   loadEndpointList();
 }
 
