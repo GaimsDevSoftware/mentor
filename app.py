@@ -1098,6 +1098,30 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
 
+    # Auto-heal (opt-in): periodically apply safe, reversible setting-fixes from
+    # diagnostics, so the health badge isn't just decoration. Default OFF.
+    async def _autoheal_loop():
+        while True:
+            try:
+                from src.settings import get_setting
+                interval = int(get_setting("autoheal_interval_seconds", 1800) or 1800)
+            except Exception:
+                interval = 1800
+            await asyncio.sleep(max(300, interval))
+            try:
+                from src.settings import get_setting
+                if not get_setting("autoheal_enabled", False):
+                    continue
+                from src import autoheal
+                res = await autoheal.tick(owner=None)
+                if res.get("fixed"):
+                    logger.info("autoheal: applied %d safe fix(es): %s",
+                                len(res["fixed"]), ", ".join(f["name"] for f in res["fixed"]))
+            except Exception as e:
+                logger.warning(f"autoheal loop failed: {e}")
+
+    _startup_tasks.append(asyncio.create_task(_autoheal_loop()))
+
     # Autonomous self-improvement loop — proactively reviews real turns, fills
     # skill-coverage gaps, and prepares for the user's standing interests, using
     # Claude (teacher) to write skills + house rules. Gated by the

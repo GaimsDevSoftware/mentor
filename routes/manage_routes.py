@@ -28,7 +28,7 @@ MANAGE_SETTING_KEYS = {
     "caveman_enabled", "caveman_level",
     "agent_continue_on_truncation", "agent_max_continuations",
     "agent_local_no_think", "agent_local_min_predict",
-    "opencode_include_paid", "openrouter_tier", "search_model_mode",
+    "opencode_include_paid", "openrouter_tier", "search_model_mode", "autoheal_enabled",
     "telegram_bot_token", "telegram_allowed_user_ids", "telegram_owner", "telegram_mode",
     "ollama_flash_attention", "ollama_kv_cache_type",
     "teacher_model", "improve_teacher_model",
@@ -67,6 +67,9 @@ CORE_SETTINGS_META = [
     {"key": "search_model_mode", "label": "Search model", "type": "select",
      "options": ["app", "local", "cloud"],
      "desc": "Which model runs multi-step web search (it follows the 'multi-step-web-search' recipe: search → read → refine → re-search). app = the app's configured AI (default/research model); local = a local model (private, free, but weaker — the recipe helps it search well); cloud = one of your cloud models (stronger, costs/sends data out). Falls back to the app model if the chosen tier has no endpoint."},
+    {"key": "autoheal_enabled", "label": "Auto-heal", "type": "select",
+     "options": ["false", "true"],
+     "desc": "When on, the app periodically checks its own health and AUTO-APPLIES only the safe, reversible setting fixes from diagnostics (the same ones behind 'Fix all safe issues') — so the health badge keeps itself green. It never auto-runs riskier fixes (starting services, reindexing, plugin repair); those stay one-click. Off by default."},
 ]
 _PLUGINS_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugins")
 _NAME_RE = re.compile(r"^[a-z0-9_]+$")

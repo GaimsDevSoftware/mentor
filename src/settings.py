@@ -249,6 +249,10 @@ DEFAULT_SETTINGS = {
     # Which models Copilot considers when recommending roles: "local" (our fleet),
     # "sources" (plugin/source models like OpenCode Zen / OpenRouter), or "both".
     "recommend_scope": "both",
+    # Auto-heal: opt-in background loop that applies only safe, reversible setting
+    # fixes from diagnostics (default off). Interval in seconds (min 300).
+    "autoheal_enabled": False,
+    "autoheal_interval_seconds": 1800,
     # Which model tier runs multi-step web search (follows the multi-step-web-search skill):
     # "app" = the app's configured AI (default/research), "local" = a local model, "cloud" = a cloud model.
     "search_model_mode": "app",
