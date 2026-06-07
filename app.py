@@ -541,6 +541,8 @@ memory_router = setup_memory_routes(memory_manager, session_manager, memory_vect
 app.include_router(memory_router)
 from routes.skills_routes import setup_skills_routes
 app.include_router(setup_skills_routes(skills_manager))
+from routes.improve_routes import setup_improve_routes
+app.include_router(setup_improve_routes())
 
 # Chat
 from routes.chat_routes import setup_chat_routes
@@ -644,6 +646,20 @@ app.include_router(setup_cookbook_routes())
 from routes.hwfit_routes import setup_hwfit_routes
 app.include_router(setup_hwfit_routes())
 
+# Cookbook debugger — unified "what is wrong?" diagnostics (serving, embeddings,
+# plugins + their self-checks, Aegis, autonomous loop, fleet).
+from routes.debug_routes import setup_debug_routes
+app.include_router(setup_debug_routes())
+
+# Plugins & Diagnostics admin UI — a clickable page at /manage that drives the
+# plugin/debugger/source/telegram/settings features (otherwise API-only).
+from routes.manage_routes import setup_manage_routes
+app.include_router(setup_manage_routes())
+
+# Our own front-end foundation — the "Celestial Terminal" dashboard at /app.
+from routes.app_routes import setup_app_routes
+app.include_router(setup_app_routes())
+
 # Model A/B Comparison
 from routes.compare_routes import setup_compare_routes
 app.include_router(setup_compare_routes(session_manager))
@@ -719,6 +735,24 @@ app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
+
+# ========= PLUGINS (in-process, manifest-gated) =========
+# Discover and load plugins under plugins/<name>/, then mount any routers they
+# registered. Tools/hooks/cookbook-providers register into src.plugin_system;
+# background services start later in the lifespan. One bad plugin never blocks
+# startup. Disable wholesale with plugins_enabled=false.
+try:
+    from src import plugin_system as _plugin_system
+    _plugin_system.load_all()
+    for _prouter in _plugin_system.get_routers():
+        try:
+            app.include_router(_prouter)
+        except Exception as _pre:
+            logger.warning(f"Plugin router include failed: {_pre}")
+    logger.info("Plugins initialized (%d loaded)",
+                sum(1 for p in _plugin_system.list_plugins() if p.get("status") == "loaded"))
+except Exception as _pe:
+    logger.warning(f"Plugin system not initialized (non-critical): {_pe}")
 
 # ========= ROUTES (kept in app.py) =========
 
@@ -1061,6 +1095,31 @@ async def _startup_event():
                 logger.warning(f"Nightly skill audit failed: {e}")
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
+
+    # Autonomous self-improvement loop — proactively reviews real turns, fills
+    # skill-coverage gaps, and prepares for the user's standing interests, using
+    # Claude (teacher) to write skills + house rules. Gated by the
+    # `improve_loop_enabled` setting; the loop itself no-ops when off or when no
+    # teacher_model is configured.
+    try:
+        from src.improvement_loop import start_improvement_loop
+        _startup_tasks.append(start_improvement_loop())
+    except Exception as e:
+        logger.warning(f"Self-improvement loop not started (non-critical): {e}")
+
+    # Start background services registered by plugins (each factory() returns a
+    # coroutine). Failures are isolated per-service and never abort startup.
+    try:
+        from src import plugin_system as _ps
+        for _svc in _ps.get_services():
+            try:
+                _startup_tasks.append(asyncio.create_task(_svc["factory"]()))
+                logger.info("Plugin service started: %s", _svc.get("plugin"))
+            except Exception as _se:
+                logger.warning(f"Plugin service {_svc.get('plugin')} failed to start: {_se}")
+    except Exception as e:
+        logger.warning(f"Plugin services not started (non-critical): {e}")
+
     logger.info("Application startup complete")
 
 async def _shutdown_event():

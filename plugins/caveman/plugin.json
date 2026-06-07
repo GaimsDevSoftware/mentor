@@ -1,0 +1,8 @@
+{
+  "name": "caveman",
+  "version": "0.1.0",
+  "description": "Token compressor. Shrinks bulky tool output (web/search dumps) before it enters the context window — strips HTML/whitespace/boilerplate/filler while preserving code, URLs, numbers and quotes. Saves context under pressure without losing meaning.",
+  "permissions": ["hooks", "routes"],
+  "entry": "plugin",
+  "enabled": true
+}

@@ -124,7 +124,7 @@ _API_AGENT_RULES = """\
 - Calendar: call `manage_calendar` with `action=list_calendars` FIRST before create/update/delete operations.
 - "Create/add/write a note" / "notes" / "todos" / "remind me to X at <time>" → use `manage_notes`. Do NOT store notes in `manage_memory`; memory is for persistent facts/preferences about the user, not note content. For reminders, include a `due_date`; for todos, use `note_type=checklist` when appropriate. `manage_tasks` is for RECURRING background AI jobs, NOT for one-off user reminders.
 - "Disable/turn off/enable/turn on <tool>" (shell, search, research, browser, documents, incognito, etc.) → call `ui_control` with `toggle <name> <on|off>`. Aliases accepted: shell→bash, search→web, deepresearch→research, documents→document_editor. NEVER record this as a memory — the user wants the toggle flipped, not a note about preferring it.
-- "Research X" / "do research on X" / "look into Y" / "deep dive on Z" → call `trigger_research` with `topic`. This starts a live job that appears in the Deep Research sidebar (streams progress + final report). **Do NOT use `web_search` for these** — saw the agent do a plain web_search for "do research on X" when the user wanted the deep-research job. "research X" is a deep-research request, not a quick lookup. (web_search is only for a single quick fact mid-task.) Do NOT POST /api/research/start via app_api either — blocked. After starting, tell the user it's running in the Deep Research sidebar. Only if the user explicitly wants it inline/quick should you fall back to web_search.
+- "Research X" / "do research on X" / "look into Y" / "deep dive on Z" → call `trigger_research` with `topic`. This starts a live job that appears in the Deep Research sidebar (streams progress + final report). **Do NOT use `web_search` for these** — saw the agent do a plain web_search for "do research on X" when the user wanted the deep-research job. "research X" is a deep-research request, not a quick lookup. (web_search is only for a single quick fact mid-task.) Do NOT POST /api/research/start via app_api either — blocked. After starting, tell the user it's running in the Deep Research sidebar. Only if the user explicitly wants it inline/quick should you fall back to web_search. **"research X with Claude" / "use Claude to research X" → call `trigger_research` with `topic` AND `engine: "claude"`** — this uses Claude's live web research (higher quality) and the report lands in the Deep Research Library when done.
 - "Open/show <panel>" (documents, library, gallery, email, inbox, sessions, brain/memories, skills, settings, notes, cookbook) → call `ui_control` with `open_panel <name>`. Panel aliases: library/doc/docs/document→documents, images→gallery, mail/inbox/emails→email, chats/history→sessions, memory/memories→brain, preferences→settings, models/serve/serving→cookbook. CRITICAL: "open memory/memories/brain" / "open skills" / "open notes" / "open documents" / "open cookbook" means OPEN THE PANEL — call `ui_control`, NOT a manage/list tool. The "manage_*" tools list contents in chat; `ui_control open_panel` opens the visual modal the user is asking for.
 - "Open/start a reply", "open a reply to <sender>", "draft a reply window" for email → find/read the email if needed, then call `ui_control` with `open_email_reply <uid> <folder> reply`. This opens the same email document compose window as clicking Reply in the Email UI. Do NOT call `reply_to_email` unless the user explicitly gave body text and wants to SEND immediately.
 - Bulk email actions ("delete all those", "archive these", "mark all read") require a real email tool call. Use `bulk_email` once with UIDs from the latest `list_emails` result and the same `account`; never claim success without the tool result.
@@ -1044,6 +1044,29 @@ def _build_base_prompt(
         # Skill index is a soft enhancement — never fail prompt assembly on it.
         logger.debug(f"Skill-index injection skipped: {_e}")
 
+    # Inject the active "regelverk" (house rules) maintained by the autonomous
+    # self-improvement loop. Unlike skills these are short, always-on directives
+    # and go into the TRUSTED system prompt. They are gated by confidence and an
+    # injection-content guard at write time (see src/regelverk.py), so by the
+    # time a rule is `active` it is safe to treat as operator guidance.
+    try:
+        from src import regelverk
+        _reg_block = regelverk.render_rules_block(
+            max_items=int(get_setting("regelverk_max_injected", 12) or 12))
+        if _reg_block:
+            agent_prompt += "\n\n" + _reg_block
+    except Exception as _re:
+        logger.debug(f"Regelverk injection skipped: {_re}")
+
+    # Plugin build_prompt hooks — let loaded plugins augment/rewrite the system
+    # prompt (e.g. advertise their own tools, inject domain guidance). Gated by
+    # each plugin's "hooks" permission; failures never break prompt assembly.
+    try:
+        from src import plugin_system
+        agent_prompt = plugin_system.apply_prompt_hooks(agent_prompt, {})
+    except Exception as _ph:
+        logger.debug(f"Plugin prompt hooks skipped: {_ph}")
+
     # Inject integration descriptions
     from src.integrations import get_integrations_prompt
     integ_prompt = get_integrations_prompt()
@@ -1569,6 +1592,78 @@ async def stream_agent_loop(
     # Strip internal metadata keys before sending to the LLM API
     messages = [{k: v for k, v in msg.items() if k != "_protected"} for msg in messages]
 
+    # ── History RAG ───────────────────────────────────────────────────────
+    # Pull the few EARLIER turns relevant to the current request into context, so
+    # a detail from early in a long chat survives a small window (complements
+    # compaction, which only summarizes). Gated; best-effort; never blocks.
+    try:
+        if get_setting("history_rag_enabled", True) and _last_user:
+            from src import history_rag
+            _present = " ".join(
+                str(m.get("content", ""))[:200] for m in messages
+                if isinstance(m.get("content"), str))
+            _hblock = history_rag.context_block(session_id or "", _last_user,
+                                                already_present=_present)
+            if _hblock:
+                _ins = next((i for i, m in enumerate(messages)
+                             if m.get("role") == "system"), -1)
+                messages.insert(_ins + 1, {"role": "system", "content": _hblock})
+                logger.info("[agent] history-rag injected %d chars of recalled context",
+                            len(_hblock))
+    except Exception as _hr_err:
+        logger.debug(f"history-rag inject skipped: {_hr_err}")
+
+    # ── Thinking-model truncation guard ───────────────────────────────────
+    # Reasoning models (qwen3.x, deepseek-r, qwq) route generation into a
+    # <think>/reasoning block FIRST. If num_predict is exhausted there, the
+    # OpenAI-compatible `content` comes back EMPTY with finish_reason "length"
+    # — the turn looks cut off / truncated (confirmed against Ollama). For
+    # self-hosted thinking models in agent mode we (a) append the `/no_think`
+    # soft-switch so reasoning doesn't eat the answer, and (b) enforce a
+    # generous num_predict floor so the answer always has room. Both are
+    # settings-gated and reversible (agent_local_no_think / agent_local_min_predict).
+    try:
+        from urllib.parse import urlparse as _urlparse
+        _mname = (model or "").lower()
+        _host = (_urlparse(endpoint_url).hostname or "").lower()
+        _is_local_host = (_host in ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+                          or _host.startswith(("192.168.", "10.", "172.")))
+        # Reasoning models (route output into a <think> block first) — gpt-oss is
+        # one too, which the old matcher missed. The `/no_think` soft-switch only
+        # works on Qwen3/DeepSeek-R/QwQ; others just need more output room.
+        _no_think_models = ("qwen3", "qwen-3", "deepseek-r", "qwq")
+        _reasoning_models = _no_think_models + ("gpt-oss", "gpt5", "glm-z", "minimax-m",
+                                                "-thinking", "reason")
+        _is_reasoning = any(p in _mname for p in _reasoning_models)
+        _floor = int(get_setting("agent_local_min_predict", 8192) or 8192)
+        if _is_local_host and _floor > 0:
+            # (a) num_predict FLOOR for EVERY local agent turn — num_predict is a
+            # ceiling (the model still stops at its natural end), so flooring only
+            # guarantees the answer always has room. This is the core fix for
+            # "the model stopped mid-message".
+            if not max_tokens or max_tokens < _floor:
+                max_tokens = _floor
+            # (b) reasoning models get extra headroom (thinking eats the budget)…
+            if _is_reasoning:
+                _rfloor = int(get_setting("agent_local_reasoning_predict", 12288) or 12288)
+                if max_tokens < _rfloor:
+                    max_tokens = _rfloor
+                # …and the /no_think soft-switch where the model understands it.
+                if get_setting("agent_local_no_think", True) and any(p in _mname for p in _no_think_models):
+                    _patched = False
+                    for _m in messages:
+                        if _m.get("role") == "system" and isinstance(_m.get("content"), str):
+                            if "/no_think" not in _m["content"]:
+                                _m["content"] = _m["content"].rstrip() + "\n\n/no_think"
+                            _patched = True
+                            break
+                    if not _patched:
+                        messages.insert(0, {"role": "system", "content": "/no_think"})
+            logger.info("[agent] output guard: num_predict>=%s (reasoning=%s) for %s",
+                        max_tokens, _is_reasoning, model)
+    except Exception as _tg_err:
+        logger.debug("[agent] thinking-guard skipped: %s", _tg_err)
+
     yield f"data: {json.dumps({'type': 'agent_prep', 'data': {k: round(v, 3) for k, v in prep_timings.items()}})}\n\n"
 
     full_response = ""
@@ -1606,9 +1701,17 @@ async def stream_agent_loop(
     _doc_opened = False    # whether doc_stream_open was sent
     _doc_last_len = 0      # last content length sent
 
+    # Anti-truncation continuation: if a round's text is cut off (finish_reason
+    # "length") without a tool call, continue the SAME answer instead of stopping
+    # mid-message. Bounded + settings-gated.
+    _cont_used = 0
+    _CONT_MAX = int(get_setting("agent_max_continuations", 3) or 3)
+    _continue_on_trunc = bool(get_setting("agent_continue_on_truncation", True))
+
     for round_num in range(1, max_rounds + 1):
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
+        _round_finish_reason = None
         native_tool_calls = []  # populated if model uses function calling
         # Reset doc streaming state per round
         _doc_acc = ""
@@ -1731,6 +1834,9 @@ async def stream_agent_loop(
                     elif data.get("type") == "tool_calls":
                         native_tool_calls = data.get("calls", [])
                         logger.info(f"Agent round {round_num}: received {len(native_tool_calls)} native tool call(s)")
+                    elif data.get("type") == "finish_reason":
+                        # Internal signal from stream_llm — consume, don't forward.
+                        _round_finish_reason = data.get("reason")
                     elif data.get("type") == "usage":
                         u = data.get("data", {})
                         round_input = u.get("input_tokens", 0)
@@ -1904,6 +2010,23 @@ async def stream_agent_loop(
         round_texts.append(cleaned_round)
 
         if not tool_blocks:
+            # ── Anti-truncation continuation ──────────────────────────
+            # The text was cut off mid-message (finish_reason "length") with no
+            # tool call. Feed the partial back and continue the SAME answer
+            # instead of stopping. The partial already streamed to the user, so
+            # the continuation appends seamlessly. Bounded by _CONT_MAX.
+            if (_continue_on_trunc and _round_finish_reason == "length"
+                    and not _force_answer and _cont_used < _CONT_MAX
+                    and _THINK_RE.sub("", cleaned_round).strip()):
+                _cont_used += 1
+                logger.info("[agent] round %d truncated (length) — continuing (%d/%d)",
+                            round_num, _cont_used, _CONT_MAX)
+                messages.append({"role": "assistant", "content": round_response})
+                messages.append({"role": "user", "content": (
+                    "Continue exactly where you left off. Do not repeat anything "
+                    "already written — just keep going.")})
+                continue
+
             # ── Completion verifier (mechanism 3a) ────────────────────
             # The model is finishing. If this was an effectful agentic turn,
             # have a fresh-context verifier independently check the work
@@ -2296,5 +2419,35 @@ async def stream_agent_loop(
                 yield evt
         except Exception as _esc_err:
             logger.warning(f"teacher escalation hook failed: {_esc_err}", exc_info=True)
+
+        # Self-improvement: log EVERY finished student turn (success or not) to
+        # the review queue. The proactive background loop later asks the teacher
+        # "would I have done this differently?" and turns the answer into skills
+        # / house rules. Fire-and-forget; never blocks or breaks the stream.
+        try:
+            from src.improvement_loop import record_turn_for_review
+            record_turn_for_review(
+                user_request=_extract_last_user_message(messages) or "",
+                tool_events=tool_events,
+                agent_reply=full_response,
+                model=model,
+                endpoint_url=endpoint_url,
+                owner=owner,
+                session_id=session_id,
+            )
+        except Exception as _rec_err:
+            logger.debug(f"turn-capture skipped: {_rec_err}")
+
+        # Index this turn for long-range recall (history RAG) — fire-and-forget.
+        try:
+            if get_setting("history_rag_enabled", True):
+                from src import history_rag
+                _uq = _extract_last_user_message(messages) or ""
+                if _uq:
+                    history_rag.index_turn(session_id or "", "user", _uq)
+                if full_response:
+                    history_rag.index_turn(session_id or "", "assistant", full_response)
+        except Exception as _hr_err:
+            logger.debug(f"history-rag index skipped: {_hr_err}")
 
     yield "data: [DONE]\n\n"

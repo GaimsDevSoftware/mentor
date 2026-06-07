@@ -1,0 +1,8 @@
+{
+  "name": "odysseus_local",
+  "version": "0.1.0",
+  "description": "Our local fleet: M4 + Fedora node topology, curated multilingual-first model catalog, and VRAM-headroom fit rules for the daily-driver GPU. Dogfood plugin for the plugin system.",
+  "permissions": ["tools", "hooks", "cookbook", "routes"],
+  "entry": "plugin",
+  "enabled": true
+}

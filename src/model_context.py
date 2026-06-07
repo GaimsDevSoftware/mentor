@@ -110,6 +110,13 @@ KNOWN_CONTEXT_WINDOWS = {
     'llama-3': 131072,
 
     # --- Qwen ---
+    # NOTE: qwen3.6 / qwen3-coder / qwen3-vl support up to 256K natively, but on a
+    # single 24GB GPU that KV cache won't fit. Clamp to VRAM-safe values so Odysseus
+    # requests a sane num_ctx from Ollama (longer keys win in _lookup_known, so these
+    # override the generic 'qwen3' entry below).
+    'qwen3.6': 32768,
+    'qwen3-coder': 40960,
+    'qwen3-vl': 32768,
     'qwen3': 131072,
     'qwen2.5': 131072,
     'qwen2': 32768,

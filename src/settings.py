@@ -134,6 +134,148 @@ DEFAULT_SETTINGS = {
     # Max relevant skills injected into the prompt for one request. The skills
     # library can grow beyond this; cleanup/retirement is an explicit review flow.
     "skill_max_injected": 3,
+    # ── Autonomous self-improvement loop (src/improvement_loop.py) ──
+    # Proactive background engine: Claude (teacher) reviews real turns, fills
+    # skill-coverage gaps, and prepares for the user's standing interests —
+    # writing skills + house rules (regelverk) automatically.
+    "improve_loop_enabled": True,
+    # Seconds between proactive cycles (floored at 300 to protect rate limits).
+    "improve_interval_seconds": 1800,
+    # Max teacher calls per cycle — the main rate-limit lever.
+    "improve_max_per_cycle": 3,
+    # Items at/above this self-reported confidence are auto-applied; below it
+    # they are queued as drafts for review. Falls back to skill_autosave value.
+    "improve_min_confidence": 0.85,
+    # Which input sources feed each cycle.
+    "improve_sources": ["reflection", "gaps", "proactive"],
+    # Dedicated teacher for the proactive loop. Empty → use teacher_model.
+    "improve_teacher_model": "",
+    # ── Skill quality gates (replay-verify + divergence filter) ──
+    # Mint every candidate as a DRAFT, then publish (inject as authoritative)
+    # only after a cheap LOCAL replay confirms the student can follow it and it
+    # no longer trips failure patterns. Speculative gap/proactive skills stay
+    # draft until used/reviewed. Set False to restore confidence-only publish.
+    "improve_verify_replay": True,
+    # Drop skills born of pure STYLE divergence (Claude would phrase it
+    # differently, not better) or that the small student cannot execute.
+    "improve_filter_divergence": True,
+    # Allow non-replayable (gap/proactive) skills to publish on confidence alone.
+    "improve_publish_unverified": False,
+    # Intake throttle: fraction of SUCCESSFUL turns admitted to the review queue
+    # (detected failures are ALWAYS admitted). Keeps a busy day from flooding the
+    # queue faster than the coach budget can drain it. 1.0 = admit everything.
+    "improve_success_sample_rate": 0.25,
+    # Max active house rules (regelverk) injected into every agent prompt.
+    "regelverk_max_injected": 12,
+    # ── Thinking-model truncation guard (self-hosted qwen3/deepseek-r in agent) ──
+    # Reasoning models put output in a <think> block first; if the token budget
+    # is spent there the answer comes back empty/truncated. Append `/no_think`
+    # and floor num_predict so the answer always has room. Set False to restore
+    # full chain-of-thought reasoning (at the risk of truncated answers).
+    "agent_local_no_think": True,
+    "agent_local_min_predict": 8192,
+    # Reasoning models (qwen3/deepseek-r/qwq/gpt-oss/…) spend output budget on a
+    # <think> block first, so they get extra num_predict headroom for the answer.
+    "agent_local_reasoning_predict": 12288,
+    # Anti-truncation continuation in the live chat: if a reply is cut off
+    # (finish_reason "length") with no tool call, automatically continue the same
+    # answer instead of stopping mid-message. Bounded by agent_max_continuations.
+    "agent_continue_on_truncation": True,
+    "agent_max_continuations": 3,
+    # ── Plugin builder (setup_copilot / plugin_forge) ──
+    # "auto" uses Aider (free, git-aware, BYO local model) if installed + aider_model
+    # set, else the teacher model. "aider"/"teacher" force one. aider_model e.g.
+    # "ollama/qwen3-coder" or "openrouter/<free-model>:free" — a FREE coder.
+    "plugin_builder_backend": "auto",
+    "aider_model": "",
+    # ── Ollama serving (set on the OLLAMA SERVER, not the app) ──
+    # KV-cache quantization fits longer context in much less VRAM (q8_0 ≈ ½ the
+    # KV memory of fp16, tiny quality loss) — needs Flash Attention. Less VRAM
+    # pressure = far fewer mid-generation evictions/stalls on a 24GB daily-driver.
+    # The debugger checks these and shows the exact env to export.
+    "ollama_flash_attention": True,        # → OLLAMA_FLASH_ATTENTION=1
+    "ollama_kv_cache_type": "q8_0",        # → OLLAMA_KV_CACHE_TYPE=q8_0 (or q4_0)
+    # ── History RAG (long-range recall on small windows) ──
+    # Index every turn in the vector store and retrieve the relevant earlier ones
+    # into context, so a detail from early in a long chat survives a small window
+    # (complements compaction). Needs ChromaDB + an embedding model.
+    "history_rag_enabled": True,
+    # ── Telegram bridge (plugins/telegram, disabled by default) ──
+    # Mobile chat front-end. Token from @BotFather; allowlist your numeric
+    # Telegram id (from @userinfobot) — an EMPTY allowlist answers nobody.
+    "telegram_bot_token": "",
+    "telegram_allowed_user_ids": [],
+    "telegram_owner": "admin",          # whose model/data the bot uses
+    "telegram_mode": "agent",           # "agent" (tools) | "chat" (model only)
+    # ── Claude usage budget (windowed — protects the Max subscription) ──
+    # Caps are PER TIME WINDOW, not per day, so capacity is spread evenly and is
+    # never all spent early. Unused allowance does not roll over.
+    "improve_coach_per_window": 3,       # teacher coaching/reflection calls
+    "improve_coach_window_hours": 2,
+    "claude_research_per_window": 2,     # fresh/immediate web-research runs
+    "claude_research_window_hours": 2,
+    # Backlog drain ("free coins") — a SEPARATE allowance so clearing the
+    # research queue never spends the normal research budget above.
+    "claude_research_queue_per_window": 2,
+    "claude_research_queue_window_hours": 2,
+    # ── Claude web-research engine (src/claude_research.py) ──
+    "claude_research_model": "sonnet",   # sonnet | opus | haiku
+    "claude_research_max_turns": 24,     # browsing depth cap (4..60)
+    "claude_research_timeout_seconds": 900,
+    "claude_research_owner": "admin",    # Library owner for automated runs
+    # Auto-rerun a weak local answer with Claude web-research + store it.
+    "improve_rerun_weak_answers": True,
+    # Allow the proactive loop to deposit research on the user's interests.
+    "improve_research_proactive": True,
+    # ── Aegis runtime tool-call firewall (src/aegis_firewall.py) ──
+    # "off" = no-op (default). "audit" = score+log every tool call, never block
+    # (run this first to see what it would do). "enforce" = block calls scoring
+    # at/above aegis_block_threshold before they execute. Audit log:
+    # data/aegis_audit.jsonl. Fully reversible (set back to "off").
+    "aegis_mode": "off",
+    "aegis_block_threshold": 80,   # enforce: block at/above this risk (0..100)
+    "aegis_warn_threshold": 60,    # log as "warn" at/above this (no block)
+    # ── Plugin system (src/plugin_system.py) ──
+    # In-process, manifest-gated plugins under plugins/<name>/. Each declares the
+    # surfaces it touches (tools/hooks/cookbook/services/routes); tool calls still
+    # flow through Aegis + the normal gates. Set False to load no plugins.
+    "plugins_enabled": True,
+    # ── Fleet mode (single machine vs multi-machine) ──
+    # "auto" (single unless LLM_HOSTS lists extra hosts), "single", or "fleet".
+    # Single mode makes topology, recommendations and onboarding treat THIS one
+    # machine as the whole system — the app works excellently on its own.
+    "fleet_mode": "auto",
+    # ── Copilot model recommendations ──
+    # Which models Copilot considers when recommending roles: "local" (our fleet),
+    # "sources" (plugin/source models like OpenCode Zen / OpenRouter), or "both".
+    "recommend_scope": "both",
+    # ── opencode (OpenCode Zen) plugin ──
+    # By default only the FREE Zen models + the models included with the Go
+    # subscription are surfaced. Set True to ALSO use per-request PAID models
+    # (Claude, GPT-5.5, Gemini…) via the opencode API. `opencode_paid_patterns`
+    # defines which model-id families count as paid (id substring match).
+    "opencode_include_paid": False,
+    "opencode_paid_patterns": ["claude-", "gpt-5.5", "gpt-5.4", "gpt-4", "gemini-", "grok-"],
+    # ── openrouter plugin (disabled by default) ──
+    # Which OpenRouter tier to surface: "free" (only :free models), "paid", or "both".
+    "openrouter_tier": "free",
+    # ── Caveman plugin (token compression — plugins/caveman) ──
+    # Compresses bulky tool output (web/search dumps) before it enters the
+    # context window — preserving code, URLs, numbers, quotes. Big, safe token
+    # savings under pressure. Levels: minimal | structural | aggressive.
+    "caveman_enabled": True,
+    "caveman_level": "aggressive",        # curated filler removal is meaning-preserving
+    "caveman_min_chars": 600,             # only compress fields larger than this
+    "caveman_compress_tools": ["web_search", "trigger_research", "manage_research"],
+    "caveman_compress_system_prompt": False,  # opt-in; uses safe 'minimal' level
+    # ── Embedding model (RAG + memory vectors) ──
+    # Switched from all-MiniLM (English-centric, 384-dim) to jina-embeddings-v3
+    # (multilingual, 1024-dim) for better Norwegian retrieval. Served locally via
+    # fastembed (ONNX, downloads ~2GB on first use). Changing this REQUIRES a
+    # Chroma reindex (dim change) — run scripts/reindex_embeddings.py --apply.
+    # Proven 1024-dim fallback if jina misbehaves: intfloat/multilingual-e5-large
+    # (note: e5 needs query:/passage: prefixes we don't add — prefer jina).
+    "embedding_fastembed_model": "jinaai/jina-embeddings-v3",
     # Reminders
     "reminder_channel": "browser",   # "browser" | "email" | "ntfy"
     "reminder_llm_synthesis": False,

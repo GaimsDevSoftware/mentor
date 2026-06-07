@@ -9,7 +9,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from src.model_context import get_context_length, estimate_tokens
-from src.llm_core import llm_call_async
+from src.llm_core import llm_call_async, complete_with_continuation
 from src.endpoint_resolver import resolve_endpoint
 from core.models import ChatMessage
 
@@ -35,9 +35,19 @@ def _content_as_text(content: Any) -> str:
     return ""
 
 
-COMPACT_THRESHOLD = 0.85  # Trigger compaction at 85% of context window
+COMPACT_THRESHOLD = 0.85  # legacy default (kept for callers/imports)
 SUMMARY_MAX_TOKENS = 1024
 SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimming
+
+
+def _compact_threshold(context_length: int) -> float:
+    """Compact EARLIER on small windows so we never hit the wall mid-message.
+    Research consensus is 70-80%; small windows sit at the low end."""
+    if context_length and context_length <= SMALL_CONTEXT_LIMIT:
+        return 0.70
+    if context_length and context_length <= 32768:
+        return 0.78
+    return 0.82
 
 # Cursor-style self-summarization prompt — produces structured, dense summaries
 SELF_SUMMARY_SYSTEM_PROMPT = """You are summarizing a conversation to preserve context after compaction. Produce a structured summary that lets the conversation continue seamlessly.
@@ -275,7 +285,8 @@ async def maybe_compact(
     used = estimate_tokens(messages)
     pct = (used / context_length) * 100 if context_length else 0
 
-    if pct < COMPACT_THRESHOLD * 100:
+    threshold = _compact_threshold(context_length)
+    if pct < threshold * 100:
         return messages, context_length, False
 
     logger.info(
@@ -328,7 +339,7 @@ async def maybe_compact(
     ]
 
     try:
-        summary = await llm_call_async(
+        summary = await complete_with_continuation(
             compact_url,
             compact_model,
             summary_messages,
@@ -336,6 +347,7 @@ async def maybe_compact(
             max_tokens=SUMMARY_MAX_TOKENS,
             headers=compact_headers,
             timeout=30,
+            max_rounds=2,
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")

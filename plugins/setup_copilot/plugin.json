@@ -1,0 +1,8 @@
+{
+  "name": "setup_copilot",
+  "version": "0.1.0",
+  "description": "Copilot that guides a non-technical user from fresh install to a working setup (plain-language checklist with one-click fixes), and can build simple plugins on request via guided 'vibe coding' (generated DISABLED for the user to review and enable).",
+  "permissions": ["tools", "hooks", "routes"],
+  "entry": "plugin",
+  "enabled": true
+}

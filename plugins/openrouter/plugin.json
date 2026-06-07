@@ -1,0 +1,12 @@
+{
+  "name": "openrouter",
+  "version": "0.1.0",
+  "description": "Use OpenRouter models inside Odysseus via its OpenAI-compatible API. Choose the free tier (:free models), the paid tier, or both. Disabled by default — enable it and add your OpenRouter key to use it.",
+  "permissions": ["routes", "hooks", "tools", "cookbook"],
+  "entry": "plugin",
+  "enabled": false,
+  "settings": [
+    {"key": "openrouter_tier", "label": "Model tier", "type": "select",
+     "options": ["free", "paid", "both"], "default": "free"}
+  ]
+}

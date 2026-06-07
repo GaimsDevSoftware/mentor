@@ -111,7 +111,17 @@ class FastEmbedClient:
                 "embeddings server."
             ) from e
 
-        self.model = model or os.getenv("FASTEMBED_MODEL", _DEFAULT_FASTEMBED_MODEL)
+        # Model precedence: explicit arg → app setting (UI-toggleable) → env →
+        # default. The setting lets the embedding model be switched from the
+        # admin panel; a switch REQUIRES a Chroma reindex (dimension change).
+        _setting_model = None
+        try:
+            from src.settings import get_setting
+            _setting_model = (get_setting("embedding_fastembed_model", "") or "").strip() or None
+        except Exception:
+            _setting_model = None
+        self.model = (model or _setting_model
+                      or os.getenv("FASTEMBED_MODEL", _DEFAULT_FASTEMBED_MODEL))
         # Persistent cache under data/ so the model survives reboots and so
         # the download lands exactly where the admin panel's _is_downloaded()
         # check looks (both default to this same path).
@@ -213,6 +223,37 @@ def reset_http_embed_state():
     _http_embed_down = False
 
 
+_consistency_checked = False
+
+
+def _checked(client):
+    """Warn ONCE if the active embedding model differs from the last reindex.
+    The #1444 trap: a silent model/dimension change makes Chroma collections
+    stale and new writes fail. Best-effort; never raises."""
+    global _consistency_checked
+    if _consistency_checked or client is None:
+        return client
+    _consistency_checked = True
+    try:
+        import json
+        state_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data", "embedding_state.json")
+        if not os.path.exists(state_path):
+            return client  # never reindexed yet — nothing to compare
+        prev = json.loads(open(state_path, encoding="utf-8").read())
+        cur_model = getattr(client, "model", "?")
+        if prev.get("model") and prev.get("model") != cur_model:
+            logger.warning(
+                "EMBEDDING MODEL CHANGED: indexed with %r but now using %r — Chroma "
+                "collections are stale/dimension-mismatched. Run "
+                "`python scripts/reindex_embeddings.py --apply` to rebuild.",
+                prev.get("model"), cur_model)
+    except Exception as e:
+        logger.debug("embedding consistency check skipped: %s", e)
+    return client
+
+
 def get_embedding_client():
     """Factory: try HTTP API first, fall back to local fastembed."""
     global _http_embed_down
@@ -234,7 +275,7 @@ def get_embedding_client():
             client = EmbeddingClient()
             client.get_sentence_embedding_dimension()  # health check
             logger.info(f"Using HTTP embedding API: {client.url} model={client.model}")
-            return client
+            return _checked(client)
         except Exception as e:
             _http_embed_down = True
             logger.warning(f"HTTP embedding API unavailable ({e}); using local FastEmbed for the rest of this process")
@@ -244,7 +285,7 @@ def get_embedding_client():
         client = FastEmbedClient()
         client.get_sentence_embedding_dimension()
         logger.info(f"Using local FastEmbed: model={client.model}")
-        return client
+        return _checked(client)
     except ImportError:
         logger.error("fastembed not installed — run: pip install fastembed")
     except Exception as e:

@@ -712,6 +712,12 @@ async def execute_tool_block(
     tool = block.tool_type
     content = block.content
 
+    # Plugin registry (in-process). None if the plugin system is unavailable.
+    try:
+        from src import plugin_system as _plugins
+    except Exception:
+        _plugins = None
+
     # Misformatted tool call detection: model put JSON inside ```python``` (or
     # similar) without naming the tool. Common with MiniMax-style outputs.
     # Return a helpful error so the model retries with the correct format.
@@ -763,6 +769,28 @@ async def execute_tool_block(
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
+
+    # Aegis runtime firewall: risk-score every call before execution. No-op
+    # unless aegis_mode is "audit"/"enforce" (default off). In enforce mode a
+    # high-risk call returns a BLOCKED tuple here, before any side effect.
+    try:
+        from src import aegis_firewall
+        _aegis = aegis_firewall.guard(tool, content, owner=owner, session_id=session_id)
+        if _aegis is not None:
+            return _aegis
+    except Exception as _ae:
+        logger.debug("aegis firewall skipped: %s", _ae)
+
+    # Plugin pre_tool hooks: observability + optional veto. A hook returning a
+    # dict blocks the call (returned as the tool result), same shape as the
+    # gates above. Runs after Aegis so plugins see only calls Aegis allowed.
+    if _plugins is not None:
+        try:
+            _veto = _plugins.run_pre_tool(tool, content, owner)
+            if _veto is not None:
+                return f"{tool}: vetoed by plugin", _veto
+        except Exception as _pe:
+            logger.debug("plugin pre_tool skipped: %s", _pe)
 
     # Background execution: a `bash` block whose first line is the `#!bg`
     # marker runs DETACHED — returns a job id immediately so the chat stream
@@ -928,9 +956,24 @@ async def execute_tool_block(
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
+    elif _plugins is not None and _plugins.has_tool(tool):
+        # Plugin-registered tool. Already passed Aegis + pre_tool hooks above.
+        desc = f"plugin: {tool}"
+        try:
+            result = await _plugins.dispatch_tool(tool, content, owner=owner)
+        except Exception as _pte:
+            logger.warning("plugin tool %s raised: %s", tool, _pte, exc_info=True)
+            result = {"error": f"Plugin tool '{tool}' failed: {_pte}", "exit_code": 1}
     else:
         desc = f"unknown: {tool}"
         result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
+
+    # Plugin post_tool hooks: observe the (tool, content, result) of every call.
+    if _plugins is not None:
+        try:
+            _plugins.run_post_tool(tool, content, result)
+        except Exception as _pe:
+            logger.debug("plugin post_tool skipped: %s", _pe)
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
     return desc, result

@@ -1,0 +1,13 @@
+{
+  "name": "aider_code",
+  "version": "0.1.0",
+  "description": "Vibe-code from inside Odysseus: describe a change in plain language and Aider (free, git-aware, BYO local model) makes the real edits in a configured project, returning the git diff. Disabled by default — it edits real files. Scoped to one project path. Needs aider on PATH + aider_model.",
+  "permissions": ["tools", "hooks"],
+  "entry": "plugin",
+  "enabled": false,
+  "settings": [
+    {"key": "aider_code_enabled", "label": "Enabled", "type": "bool", "default": false},
+    {"key": "aider_code_project", "label": "Project path (the repo Aider may edit)", "type": "text", "default": ""},
+    {"key": "aider_model", "label": "Aider model (free coder, e.g. ollama/qwen3-coder)", "type": "text", "default": ""}
+  ]
+}

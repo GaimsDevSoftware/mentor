@@ -1,0 +1,15 @@
+{
+  "name": "self_coder",
+  "version": "0.1.0",
+  "description": "Autonomous self-improvement of the app's own CODE. Signals (debugger findings, failed turns) become Aider-edited branches that are verified (compile + boot + optional tests) before they can land. Core changes need human approval; small plugin-only changes can auto-merge. Canary deploy auto-rolls-back if the app doesn't come up. Disabled by default.",
+  "permissions": ["routes", "hooks"],
+  "entry": "plugin",
+  "enabled": false,
+  "settings": [
+    {"key": "self_coder_enabled", "label": "Enabled", "type": "bool", "default": false},
+    {"key": "self_coder_autonomy", "label": "Autonomy level (0=propose only · 1=one-click merge · 2=auto-merge scoped+small)", "type": "int", "default": 1},
+    {"key": "self_coder_run_tests", "label": "Run full pytest in verify (slow but safer)", "type": "bool", "default": false},
+    {"key": "self_coder_health_url", "label": "Health URL used by canary", "type": "text", "default": "http://127.0.0.1:7000/app"},
+    {"key": "self_coder_service", "label": "systemd --user service name", "type": "text", "default": "odysseus-ui.service"}
+  ]
+}

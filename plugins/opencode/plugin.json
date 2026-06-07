@@ -1,0 +1,8 @@
+{
+  "name": "opencode",
+  "version": "0.1.0",
+  "description": "Log in to OpenCode Zen and use its curated models (Claude, GPT, DeepSeek, Qwen, GLM, Kimi…) inside Odysseus via the OpenAI-compatible Zen gateway. Registers a 'OpenCode Zen' model endpoint from a pasted key or an existing opencode login.",
+  "permissions": ["routes", "hooks", "tools", "cookbook"],
+  "entry": "plugin",
+  "enabled": true
+}

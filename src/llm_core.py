@@ -276,6 +276,20 @@ def _parse_ollama_response(data: dict) -> str:
     return message.get("content") or data.get("response") or ""
 
 
+def _finish_reason(provider: str, data: dict) -> Optional[str]:
+    """Normalised finish reason; "length" means the output was TRUNCATED."""
+    try:
+        if provider == "anthropic":
+            sr = data.get("stop_reason")
+            return "length" if sr == "max_tokens" else sr
+        if provider == "ollama":
+            # native /api/chat → done_reason; OpenAI-compat → choices[].finish_reason
+            return data.get("done_reason") or (data.get("choices") or [{}])[0].get("finish_reason")
+        return (data.get("choices") or [{}])[0].get("finish_reason")
+    except Exception:
+        return None
+
+
 def _host_match(url: str, *domains: str) -> bool:
     """Return True if url's hostname equals any of `domains` or is a subdomain of one.
 
@@ -948,9 +962,14 @@ async def llm_call_async(
     headers: Optional[Dict] = None,
     timeout: int = LLMConfig.STREAM_TIMEOUT,
     max_retries: int = LLMConfig.MAX_RETRIES,
-    prompt_type: Optional[str] = None
-) -> str:
-    """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
+    prompt_type: Optional[str] = None,
+    return_meta: bool = False,
+):
+    """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging.
+
+    With return_meta=True returns (text, {"finish_reason": ...}) so callers can
+    detect truncation ("length") and continue; default returns just the text
+    (unchanged contract for existing callers)."""
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
@@ -1032,6 +1051,8 @@ async def llm_call_async(
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
                 _set_cached_response(cache_key, response)
+                if return_meta:
+                    return response, {"finish_reason": _finish_reason(provider, data)}
                 return response
             except Exception:
                 raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
@@ -1047,6 +1068,36 @@ async def llm_call_async(
             if attempt >= max_retries:
                 raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
+
+
+async def complete_with_continuation(url: str, model: str, messages: List[Dict],
+                                     *, max_rounds: int = 3, **kwargs) -> str:
+    """Like llm_call_async, but if the model TRUNCATES (finish_reason="length")
+    it automatically continues and stitches the parts — so a long answer is never
+    silently cut off mid-message. Use for non-streaming calls whose output must be
+    complete (teacher skills, recommendation JSON, summaries, generated code).
+
+    Falls back gracefully: a cache hit or a server that doesn't report a finish
+    reason is treated as complete (one round)."""
+    kwargs.pop("return_meta", None)
+    parts: List[str] = []
+    convo = list(messages)
+    for _round in range(max(1, max_rounds)):
+        res = await llm_call_async(url, model, convo, return_meta=True, **kwargs)
+        if isinstance(res, tuple):
+            text, meta = res
+        else:  # cache hit / no-meta path → complete
+            text, meta = res, {"finish_reason": "stop"}
+        parts.append(text or "")
+        if (meta or {}).get("finish_reason") != "length" or not (text or "").strip():
+            break
+        convo = convo + [
+            {"role": "assistant", "content": text or ""},
+            {"role": "user", "content": "Continue exactly where you left off. "
+                                        "Do not repeat anything already written."},
+        ]
+    return "".join(parts)
+
 
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
@@ -1307,6 +1358,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                 yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
                 return
 
+            _fr_seen = None  # OpenAI-compat finish_reason ("length" = truncated)
             async for line in r.aiter_lines():
                 if not line:
                     continue
@@ -1320,6 +1372,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         tc_event = _emit_tool_calls()
                         if tc_event:
                             yield tc_event
+                        if _fr_seen:
+                            yield f'data: {json.dumps({"type": "finish_reason", "reason": _fr_seen})}\n\n'
                         yield "data: [DONE]\n\n"
                         return
 
@@ -1327,6 +1381,15 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         if data.strip():
                             if data.startswith("{"):
                                 j = json.loads(data)
+                                # Capture finish_reason unconditionally (it can ride
+                                # the final delta OR a usage chunk) so the agent loop
+                                # can detect a truncated ("length") answer and continue.
+                                try:
+                                    _frc = (j.get("choices") or [{}])[0].get("finish_reason")
+                                    if _frc:
+                                        _fr_seen = _frc
+                                except Exception:
+                                    pass
                                 # Usage chunk (from stream_options)
                                 _choices = j.get("choices") or []
                                 _delta0 = _choices[0].get("delta") if _choices else None
@@ -1433,6 +1496,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             tc_event = _emit_tool_calls()
             if tc_event:
                 yield tc_event
+            if _fr_seen:
+                yield f'data: {json.dumps({"type": "finish_reason", "reason": _fr_seen})}\n\n'
             yield "data: [DONE]\n\n"
 
     except (httpx.ConnectError, httpx.ConnectTimeout) as e:

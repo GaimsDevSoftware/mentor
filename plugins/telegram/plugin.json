@@ -1,0 +1,14 @@
+{
+  "name": "telegram",
+  "version": "0.1.0",
+  "description": "Chat with your Odysseus assistant from Telegram (mobile) — full agent: tools, memory, skills. Long-polls the Telegram Bot API (no public webhook needed, works behind home NAT). Locked to an allowlist of your own Telegram user IDs. Disabled by default — add a bot token + your user ID and enable it.",
+  "permissions": ["services", "hooks", "routes"],
+  "entry": "plugin",
+  "enabled": false,
+  "settings": [
+    {"key": "telegram_bot_token", "label": "Bot token (@BotFather)", "type": "text", "default": "", "secret": true},
+    {"key": "telegram_allowed_user_ids", "label": "Allowed user ids (comma-sep)", "type": "text", "default": []},
+    {"key": "telegram_mode", "label": "Mode", "type": "select", "options": ["agent", "chat"], "default": "agent"},
+    {"key": "telegram_owner", "label": "Odysseus owner", "type": "text", "default": "admin"}
+  ]
+}
