@@ -82,6 +82,24 @@ _NAME_RE = re.compile(r"^[a-z0-9_]+$")
 
 # State for the one-click Aider installer (isolated, background, ADAPTIVE).
 _install_state: Dict[str, Any] = {"status": "idle", "log": "", "code": None, "strategy": None}
+# Ollama install (the easy local engine) — so the setup wizard can offer a real
+# one-click install instead of only a download link.
+_ollama_state: Dict[str, Any] = {"status": "idle", "log": "", "code": None}
+
+
+async def _run_ollama_install():
+    import asyncio
+    _ollama_state.update(status="running", log="", code=None)
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            "curl -fsSL https://ollama.com/install.sh | sh",
+            executable="/bin/bash",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
+        _ollama_state.update(status=("done" if proc.returncode == 0 else "failed"),
+                             code=proc.returncode, log=(out or b"").decode(errors="replace")[-6000:])
+    except Exception as e:
+        _ollama_state.update(status="failed", code=-1, log=str(e))
 
 
 def _detect_python_env() -> Dict[str, Any]:
@@ -764,6 +782,25 @@ def setup_manage_routes() -> APIRouter:
     async def install_aider_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         from src import plugin_forge
         return {**_install_state, "installed": bool(plugin_forge.aider_bin())}
+
+    @router.post("/api/setup/install-ollama")
+    async def install_ollama(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """One-click install of Ollama (the easy local engine) via the official
+        script, so a non-technical user doesn't have to do it by hand. Falls back
+        to the download link in the UI if this fails (e.g. needs sudo)."""
+        import asyncio
+        import shutil
+        if shutil.which("ollama"):
+            return {"ok": True, "already": True}
+        if _ollama_state.get("status") == "running":
+            return {"ok": True, "status": "running"}
+        asyncio.create_task(_run_ollama_install())
+        return {"ok": True, "status": "running"}
+
+    @router.get("/api/setup/install-ollama/status")
+    async def install_ollama_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        import shutil
+        return {**_ollama_state, "installed": bool(shutil.which("ollama"))}
 
     @router.get("/api/manage/install-aider/plan")
     async def install_aider_plan(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
