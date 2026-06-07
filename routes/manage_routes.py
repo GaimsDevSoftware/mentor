@@ -446,6 +446,32 @@ def setup_manage_routes() -> APIRouter:
         except Exception as e:
             return {"ok": False, "detail": f"AI call failed: {e}"}
 
+    @router.get("/api/manage/trace")
+    async def trace(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Recent agent activity for the trace viewer: Aegis tool-call risk log
+        (what tools ran, their risk score/band) + recent self-coder proposals."""
+        from src.constants import DATA_DIR
+        aegis = []
+        try:
+            with open(os.path.join(DATA_DIR, "aegis_audit.jsonl"), "r", encoding="utf-8") as f:
+                for line in f.readlines()[-80:]:
+                    try:
+                        e = json.loads(line)
+                        aegis.append({k: e.get(k) for k in
+                                      ("ts", "tool", "category", "score", "band", "mode", "session_id", "reasons")})
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        aegis.reverse()
+        proposals = []
+        try:
+            from src import plugin_system
+            sc = plugin_system.run_stats() if hasattr(plugin_system, "run_stats") else {}
+        except Exception:
+            sc = {}
+        return {"aegis": aegis, "stats": sc}
+
     @router.post("/api/manage/explain-topic")
     async def explain_topic(payload: Dict[str, Any], _admin: str = Depends(require_admin)) -> Dict[str, Any]:
         """AI-guide for any concept/section in the UI (Cookbook, etc.): plain-language
@@ -933,6 +959,7 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div class="tabs">
  <div class="tab on" data-t="plugins">Plugins</div>
  <div class="tab" data-t="diag">Diagnostics</div>
+ <div class="tab" data-t="trace">Trace</div>
  <div class="tab" data-t="sources">Models</div>
  <div class="tab" data-t="telegram">Telegram</div>
  <div class="tab" data-t="code">Vibe-code</div>
@@ -943,6 +970,8 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="plugins" class="panel on"><div id="plugins-list" class="muted">Loading…</div></div>
 <div id="diag" class="panel"><button class="go" data-act="runDiag">Run diagnostics</button>
  <div id="diag-out"></div></div>
+<div id="trace" class="panel"><div class="card"><b>Activity trace</b><div class="sub">What the agent has been doing — every tool call the Aegis firewall scored (and whether it was allowed/warned/blocked). Newest first.</div></div>
+ <div id="trace-out" class="muted">loading…</div></div>
 <div id="sources" class="panel"></div>
 <div id="telegram" class="panel"></div>
 <div id="selfcoder" class="panel"><div class="card">
@@ -1016,6 +1045,7 @@ function activateTab(name){
   t.classList.add('on'); $('#'+t.dataset.t).classList.add('on');
   if(t.dataset.t==='plugins')loadPlugins(); if(t.dataset.t==='settings')renderSettings();
   if(t.dataset.t==='diag')runDiag();
+  if(t.dataset.t==='trace')runTrace();
   if(t.dataset.t==='code'){aiderStatus();aiderPlan();}
   if(t.dataset.t==='selfcoder')scLoad();
   if(t.dataset.t==='forge')forgeInit();
@@ -1309,6 +1339,20 @@ function settingRow(d, pluginName){
 }
 async function togglePl(n,en){const r=await j('/api/manage/plugins/toggle',{method:'POST',body:JSON.stringify({name:n,enabled:en})});alert(r.detail||JSON.stringify(r));loadPlugins();}
 async function repairPl(n){const r=await j('/api/cookbook/debug/fix',{method:'POST',body:JSON.stringify({fix:{kind:'plugin_repair',plugin:n}})});alert(r.detail||JSON.stringify(r));loadPlugins();}
+async function runTrace(){
+  const el=$('#trace-out'); el.innerHTML='<div class="muted">loading…</div>';
+  let d; try{ d=await j('/api/manage/trace'); }catch(e){ el.innerHTML='<div class="card"><span class="pill err">error</span> could not load trace</div>'; return; }
+  const a=d.aegis||[];
+  if(!a.length){ el.innerHTML='<div class="muted" style="font-size:13px">No tool activity logged yet — as the agent uses tools, every scored call shows here.</div>'; return; }
+  const cls=b=>b==='block'?'err':b==='warn'?'warn':'ok';
+  const when=ts=>{ try{ return new Date(ts*1000).toLocaleString(); }catch(_){ return ''; } };
+  el.innerHTML='<div class="card">'+a.map(e=>{
+    const reasons=Array.isArray(e.reasons)?e.reasons.join(', '):(e.reasons||'');
+    return `<div class="row" style="padding:6px 0;border-top:1px solid var(--sep)"><span class="pill ${cls(e.band)}">${esc(e.band||'?')}</span>`
+      +`<span class="grow"><b>${esc(e.tool||'?')}</b>${reasons?` <span class="muted" style="font-size:12px">${esc(reasons)}</span>`:''}</span>`
+      +`<span class="muted" style="font-size:11px">score ${esc(e.score)} · ${esc(when(e.ts))}</span></div>`;
+  }).join('')+'</div>';
+}
 async function runDiag(){
   const el=$('#diag-out'); el.innerHTML='<div class="sub">running diagnostics…</div>';
   let d; try{ d=await j('/api/cookbook/debug'); }
