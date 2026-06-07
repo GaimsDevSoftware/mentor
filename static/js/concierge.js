@@ -33,7 +33,10 @@
     '.mc-a{align-self:flex-start;background:var(--tint,rgba(255,255,255,.06));border:1px solid var(--sep,rgba(255,255,255,.1))}',
     '.mc-n{align-self:center;font-size:11px;color:var(--faint,#8a8a8a)}',
     '#mc-foot{display:flex;gap:6px;padding:10px;border-top:1px solid var(--sep,rgba(255,255,255,.1))}',
-    '#mc-in{flex:1;background:var(--tint,rgba(255,255,255,.06));color:var(--txt,#eee);border:1px solid var(--sep-2,rgba(255,255,255,.14));border-radius:8px;padding:8px;outline:none;font:inherit}',
+    '#mc-in{flex:1;background:var(--tint,rgba(255,255,255,.06));color:var(--txt,#eee);border:1px solid var(--sep-2,rgba(255,255,255,.14));border-radius:8px;padding:8px;outline:none;font:inherit;transition:border-color .2s}',
+    '#mc-in.mc-attn{border-color:var(--accent,#0a84ff);animation:mc-inattn 1.1s ease-in-out infinite}',
+    '@keyframes mc-inattn{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent,#0a84ff) 0%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--accent,#0a84ff) 32%,transparent)}}',
+    '#mc-launch.mc-attn{animation:mc-pulse 1s ease-out infinite}',
     '#mc-send{background:var(--accent,#0a84ff);color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font:inherit}'
   ].join('\n');
   document.head.appendChild(style);
@@ -141,18 +144,23 @@
       note('result: ' + String(result).slice(0, 120));
       ASST.push({ role: 'user', content: '[action result] ' + r.action.type + ': ' + result }); save();
       await turn(steps - 1);
+    } else {
+      attn(true); // assistant asked something / is waiting — glow for the user's turn
     }
   }
   function work(on) { try { panel.classList.toggle('mc-working', !!on); } catch (e) {} }
+  function attn(on) { try { inp.classList.toggle('mc-attn', !!on); launch.classList.toggle('mc-attn', !!on); } catch (e) {} }
   async function kickoff() { if (started || busy) return; started = true; busy = true; work(1); try { await turn(6); } finally { busy = false; work(0); } }
   async function send() {
+    attn(false);
     var text = (inp.value || '').trim(); if (!text) return; inp.value = '';
     ASST.push({ role: 'user', content: text }); bubble('user', text); save();
     if (waiting) return; // captured as context during a long task — don't start a turn
     if (busy) return; busy = true; work(1); try { await turn(6); } finally { busy = false; work(0); }
   }
   panel.querySelector('#mc-send').onclick = send;
-  inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+  inp.addEventListener('focus', function () { attn(false); });
+  inp.addEventListener('keydown', function (e) { attn(false); if (e.key === 'Enter') { e.preventDefault(); send(); } });
 
   // Show the launcher on app pages (unless the user closed it). If there's an
   // ongoing conversation, it's clearly continuable from here.

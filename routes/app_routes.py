@@ -964,6 +964,8 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
  .tabpane{animation:fade .2s ease} @keyframes fade{from{opacity:0}to{opacity:1}}
  @keyframes setupglow{0%,100%{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent),0 0 20px color-mix(in srgb,var(--accent) 14%,transparent)}50%{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 50%,transparent),0 0 34px color-mix(in srgb,var(--accent) 28%,transparent)}}
  #assistant-card{animation:setupglow 3.6s ease-in-out infinite}
+ @keyframes asstattn{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 0%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 32%,transparent)}}
+ #asst-input.attn{border-color:var(--accent)!important;animation:asstattn 1.1s ease-in-out infinite}
  .provgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
  @media(max-width:560px){.provgrid{grid-template-columns:repeat(2,1fr)}}
  .prov{padding:11px 10px;border:1px solid var(--sep-2);border-radius:10px;background:var(--tint);cursor:pointer;font:500 12.5px/1.2 inherit;color:var(--txt);text-align:center;transition:border-color .15s,background .15s}
@@ -1231,8 +1233,9 @@ async function asstTurn(steps){
     asstNote('result: '+String(result).slice(0,140));
     ASST.push({role:'user',content:'[action result] '+r.action.type+': '+result}); asstSave();
     await asstTurn(steps-1);  // let it continue the plan toward "done"
-  }
+  } else { asstAttn(true); }  // assistant asked / is waiting — glow for the user's turn
 }
+function asstAttn(on){ const i=$('#asst-input'); if(i) i.classList.toggle('attn',!!on); }
 async function asstKickoff(force){
   if(force){ asstStarted=false; ASST.length=0; const log=$('#asst-log'); if(log) log.innerHTML=''; }
   if(asstStarted||asstBusy) return; asstStarted=true; asstBusy=true; const b=$('#asst-send'); if(b)b.disabled=true;
@@ -1241,6 +1244,7 @@ async function asstKickoff(force){
 // Called when the user picks/sets up their guide AI — the assistant takes over.
 function conciergeReady(){ try{ asstKickoff(true); const el=$('#assistant-card'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }catch(e){} }
 async function asstSend(){
+  asstAttn(false);
   if(asstBusy) return; const inp=$('#asst-input'); const text=(inp.value||'').trim(); if(!text) return;
   asstStarted=true; asstBusy=true; $('#asst-send').disabled=true; inp.value='';
   ASST.push({role:'user',content:text}); asstBubble('user', text); asstSave();
@@ -1250,7 +1254,7 @@ async function asstSend(){
 // Render any conversation carried over from the floating widget / a previous visit.
 (function(){ const log=$('#asst-log'); if(log && ASST.length){ ASST.forEach(m=>{ if((m.role==='user'||m.role==='assistant')){ const t=String(m.content||'').replace(/^\[.*?\]\s*/,''); if(t.indexOf('[action result]')!==0) asstBubble(m.role,t); } }); asstStarted=true; } })();
 (function(){ const b=$('#asst-send'), i=$('#asst-input'); if(b) b.onclick=asstSend;
-  if(i) i.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); asstSend(); } });
+  if(i){ i.addEventListener('focus',()=>asstAttn(false)); i.addEventListener('keydown',e=>{ asstAttn(false); if(e.key==='Enter'){ e.preventDefault(); asstSend(); } }); }
   // Proactive: the assistant greets first and drives — it doesn't wait for you.
   setTimeout(()=>asstKickoff(false), 900); })();
 
