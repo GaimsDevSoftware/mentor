@@ -233,6 +233,9 @@ DEFAULT_SETTINGS = {
     # at/above aegis_block_threshold before they execute. Audit log:
     # data/aegis_audit.jsonl. Fully reversible (set back to "off").
     "aegis_mode": "off",
+    # HITL: pause before tools run and ask the user. off | risky (code/system
+    # tools only) | all (every tool). See src/hitl.py.
+    "hitl_mode": "off",
     "aegis_block_threshold": 80,   # enforce: block at/above this risk (0..100)
     "aegis_warn_threshold": 60,    # log as "warn" at/above this (no block)
     # ── Plugin system (src/plugin_system.py) ──

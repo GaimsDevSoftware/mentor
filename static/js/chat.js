@@ -2009,6 +2009,47 @@ import createResearchSynapse from './researchSynapse.js';
                 }, 50);
                 uiModule.scrollHistory();
 
+              } else if (json.type === 'approval_required') {
+                // HITL: the loop is paused waiting for the user to approve/deny
+                // this tool. Render an inline Approve / Deny card in the chat.
+                if (_isBg) continue;
+                const chatBox = document.getElementById('chat-history');
+                if (chatBox) {
+                  const card = document.createElement('div');
+                  card.className = 'approval-card';
+                  card.dataset.approvalId = json.id;
+                  card.style.cssText = 'margin:8px 0;padding:12px 14px;border:1px solid var(--border,#444);border-left:3px solid var(--red,#e0a95e);border-radius:8px;background:color-mix(in srgb,var(--red,#e0a95e) 7%,transparent);';
+                  card.innerHTML =
+                    '<div style="font-weight:600;font-size:13px;margin-bottom:4px;">Run tool <span style="font-family:ui-monospace,monospace">' + esc(json.tool || '') + '</span>?</div>'
+                    + (json.command ? '<pre style="margin:6px 0;padding:6px 8px;font-size:11px;background:rgba(0,0,0,0.18);border-radius:4px;max-height:120px;overflow:auto;white-space:pre-wrap;">' + esc(json.command) + '</pre>' : '')
+                    + '<div style="display:flex;gap:8px;margin-top:8px;align-items:center;"><button class="approval-yes" style="padding:5px 14px;border-radius:6px;border:1px solid var(--ok,#30d158);background:color-mix(in srgb,var(--ok,#30d158) 12%,transparent);color:var(--ok,#30d158);cursor:pointer;font:inherit;font-size:12px;">Approve</button><button class="approval-no" style="padding:5px 14px;border-radius:6px;border:1px solid var(--err,#ff453a);background:color-mix(in srgb,var(--err,#ff453a) 10%,transparent);color:var(--err,#ff453a);cursor:pointer;font:inherit;font-size:12px;">Deny</button><span class="approval-status" style="font-size:11px;opacity:0.6;"></span></div>';
+                  const send = async (decision) => {
+                    card.querySelectorAll('button').forEach(b => b.disabled = true);
+                    const st = card.querySelector('.approval-status');
+                    if (st) st.textContent = decision === 'approve' ? 'Approving…' : 'Denying…';
+                    try {
+                      await fetch('/api/approvals/' + encodeURIComponent(json.id), { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ decision: decision }) });
+                    } catch (e) { /* the loop also times out, so a failed POST isn't fatal */ }
+                  };
+                  card.querySelector('.approval-yes').onclick = () => send('approve');
+                  card.querySelector('.approval-no').onclick = () => send('deny');
+                  chatBox.appendChild(card);
+                  uiModule.scrollHistory();
+                }
+
+              } else if (json.type === 'approval_resolved') {
+                // Finalize the card (covers approve, deny, and 5-min timeout).
+                if (_isBg) continue;
+                const card = document.querySelector('.approval-card[data-approval-id="' + json.id + '"]');
+                if (card) {
+                  card.querySelectorAll('button').forEach(b => b.disabled = true);
+                  const st = card.querySelector('.approval-status');
+                  const d = json.decision;
+                  if (st) st.textContent = d === 'approve' ? 'Approved ✓' : (d === 'timeout' ? 'Timed out — denied' : 'Denied');
+                  card.style.opacity = '0.7';
+                  card.style.borderLeftColor = d === 'approve' ? 'var(--ok,#30d158)' : 'var(--err,#ff453a)';
+                }
+
               } else if (json.type === 'tool_progress') {
                 // Long-running subprocess (bash, python) is still in
                 // flight — refresh the running tool card with the

@@ -29,6 +29,7 @@ MANAGE_SETTING_KEYS = {
     "agent_continue_on_truncation", "agent_max_continuations",
     "agent_local_no_think", "agent_local_min_predict",
     "opencode_include_paid", "openrouter_tier", "search_model_mode", "autoheal_enabled",
+    "hitl_mode",
     "telegram_bot_token", "telegram_allowed_user_ids", "telegram_owner", "telegram_mode",
     "ollama_flash_attention", "ollama_kv_cache_type",
     "teacher_model", "improve_teacher_model",
@@ -72,6 +73,9 @@ CORE_SETTINGS_META = [
     {"key": "autoheal_enabled", "label": "Auto-heal", "type": "select",
      "options": ["false", "true"],
      "desc": "When on, the app periodically checks its own health and AUTO-APPLIES only the safe, reversible setting fixes from diagnostics (the same ones behind 'Fix all safe issues') — so the health badge keeps itself green. It never auto-runs riskier fixes (starting services, reindexing, plugin repair); those stay one-click. Off by default."},
+    {"key": "hitl_mode", "label": "Ask before tools run", "type": "select",
+     "options": ["off", "risky", "all"],
+     "desc": "Human-in-the-loop approval. When the AI wants to use a tool, pause and ask you first. 'off' = never ask (the AI just runs tools); 'risky' = ask only before tools that run code or touch your machine (bash, python, browser, file writes); 'all' = ask before every tool. You'll see an Approve / Deny card right in the chat; if you don't answer within 5 minutes it auto-denies. Use 'risky' for a safe default once you trust the setup."},
 ]
 _PLUGINS_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugins")
 _NAME_RE = re.compile(r"^[a-z0-9_]+$")

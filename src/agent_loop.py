@@ -2188,43 +2188,63 @@ async def stream_agent_loop(
             else:
                 cmd_display = block.content.strip()
 
+            # ── HITL approval gate ───────────────────────────────────────────
+            # When hitl_mode is on, pause before a gated tool and wait for the
+            # user to approve/deny. A denial returns a tool result instead of
+            # running anything, so the model sees it and can react.
+            _denied = None
+            try:
+                from src import hitl
+                if hitl.needs_approval(block.tool_type, owner):
+                    _aid = hitl.create(block.tool_type, cmd_display)
+                    yield f'data: {json.dumps({"type": "approval_required", "id": _aid, "tool": block.tool_type, "command": cmd_display, "round": round_num})}\n\n'
+                    _decision = await hitl.wait_for_decision(_aid)
+                    yield f'data: {json.dumps({"type": "approval_resolved", "id": _aid, "decision": _decision})}\n\n'
+                    if _decision != "approve":
+                        _denied = "request timed out" if _decision == "timeout" else "declined by you"
+            except Exception:
+                pass
+
             yield (
                 f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "round": round_num})}\n\n'
             )
 
-            # Streaming progress for long-running tools (bash, python).
-            # The bash/python branches inside _direct_fallback emit
-            # periodic {elapsed_s, tail} payloads via this callback;
-            # we forward each one as a `tool_progress` SSE event so
-            # the UI can render live elapsed-time + tail-of-output.
-            _progress_q: asyncio.Queue = asyncio.Queue()
-            async def _push_progress(payload):
-                await _progress_q.put(payload)
+            if _denied is not None:
+                desc, result = block.tool_type, {"error": f"Tool not run — {_denied}.", "exit_code": 1}
+            else:
+                # Streaming progress for long-running tools (bash, python).
+                # The bash/python branches inside _direct_fallback emit
+                # periodic {elapsed_s, tail} payloads via this callback;
+                # we forward each one as a `tool_progress` SSE event so
+                # the UI can render live elapsed-time + tail-of-output.
+                _progress_q: asyncio.Queue = asyncio.Queue()
+                async def _push_progress(payload):
+                    await _progress_q.put(payload)
 
-            async def _run_tool():
-                try:
-                    return await execute_tool_block(
-                        block,
-                        session_id=session_id,
-                        disabled_tools=disabled_tools,
-                        owner=owner,
-                        progress_cb=_push_progress,
+                async def _run_tool():
+                    try:
+                        return await execute_tool_block(
+                            block,
+                            session_id=session_id,
+                            disabled_tools=disabled_tools,
+                            owner=owner,
+                            progress_cb=_push_progress,
+                        )
+                    finally:
+                        # Sentinel so the drainer knows to stop.
+                        await _progress_q.put(None)
+
+                _tool_task = asyncio.create_task(_run_tool())
+                # Drain progress events as they arrive — block until the
+                # next event OR the tool finishes (sentinel = None).
+                while True:
+                    evt = await _progress_q.get()
+                    if evt is None:
+                        break
+                    yield (
+                        f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
                     )
-                finally:
-                    # Sentinel so the drainer knows to stop.
-                    await _progress_q.put(None)
-
-            _tool_task = asyncio.create_task(_run_tool())
-            # Drain progress events as they arrive — block until the
-            # next event OR the tool finishes (sentinel = None).
-            while True:
-                evt = await _progress_q.get()
-                if evt is None:
-                    break
-                yield (
-                    f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
-                )
-            desc, result = await _tool_task
+                desc, result = await _tool_task
 
             # Extract structured web sources from web_search tool output.
             # web_search returns {"output": ..., "exit_code": 0}; check "output"
