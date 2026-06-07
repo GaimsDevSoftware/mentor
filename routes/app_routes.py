@@ -963,7 +963,10 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
 <!-- STEP 1 — Connect AI (Local | Cloud, all in one place) -->
 <div class="step" data-step="1">
   <div class="card">
-    <p class="why">Two ways to give Mentor a brain. <b>Local</b> runs on your own machine — fully private and free, but needs enough graphics memory (VRAM). <b>Cloud</b> connects an API — fastest to start and very capable, but needs a key and your prompts leave your machine.</p>
+    <p class="why">Two ways to give Mentor a brain — pick what fits you:<br>
+      <b>🖥 Local</b> — the AI runs on your own computer. <b>Free</b> and <b>fully private</b> (nothing leaves your machine), but needs a decent graphics card and a one-time install (Ollama), and the first model can take a while to download.<br>
+      <b>☁ Cloud</b> — connect a company's AI over the internet. <b>Instant</b> to start and very capable, but you need an <b>API key</b> (we show you exactly where to get one) and it usually <b>costs money per use</b>; your prompts are sent to that company.<br>
+      <span class="faint">Not sure? If you have a gaming-grade graphics card, try Local. Otherwise Cloud is the quickest path.</span></p>
     <div class="tabs">
       <button class="tab on" data-tab="local" type="button">🖥️ Run locally · private &amp; free</button>
       <button class="tab" data-tab="cloud" type="button">☁️ Connect a cloud API</button>
@@ -972,6 +975,7 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
     <!-- LOCAL pane -->
     <div class="tabpane" data-pane="local">
       <div id="hw" class="hw-grid" style="margin-bottom:14px"><div class="muted">reading your hardware…</div></div>
+      <div id="ollama-note"></div>
       <div id="fit-banner" class="muted" style="font-size:12px;margin-bottom:10px"></div>
       <div id="models" class="muted">finding models that fit…</div>
       <div id="serve-wrap" hidden style="margin-top:14px;border-top:1px solid var(--sep);padding-top:14px">
@@ -988,7 +992,8 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
     <div class="tabpane" data-pane="cloud" hidden>
       <label class="lab">Pick a provider</label>
       <div id="provgrid" class="provgrid"></div>
-      <label class="lab" style="margin-top:14px">API key <span class="faint" style="text-transform:none;letter-spacing:0">— from the provider's dashboard; stored locally, never shared</span></label>
+      <div id="cl-help" class="why" style="margin:10px 0 0;display:none"></div>
+      <label class="lab" style="margin-top:14px">API key <span class="faint" style="text-transform:none;letter-spacing:0">— a secret code from the provider; stored on your machine, never shared</span></label>
       <input id="cl-key" class="fld" type="password" placeholder="paste your API key" autocomplete="off">
       <div class="row" style="margin-top:12px"><button class="btn" id="cl-test" type="button" disabled>Test key</button><button class="btn primary" id="cl-connect" type="button" disabled>Connect</button><span id="cl-msg" class="actmsg muted"></span></div>
     </div>
@@ -1069,8 +1074,24 @@ j('/api/hwfit/system').then(s=>{
     cell('GPU', s.has_gpu?(s.gpu_name||'—'):'None', s.has_gpu?`${s.gpu_count||1}× · ${s.backend||''}`:'CPU inference')+
     cell('VRAM', s.gpu_vram_gb?`${s.gpu_vram_gb} GB`:'—', s.unified_memory?'unified memory':'')+
     cell('RAM', `${s.available_ram_gb||'?'} GB free`, `of ${s.total_ram_gb||'?'} GB`);
+  renderOllamaNote(s.ollama_installed!==false ? true : false);
   loadModels();
 }).catch(e=>{ $('#hw').innerHTML = e===401?adminNote:'<span class="muted">Could not read your hardware — you can still serve a model below, or use the Cloud tab.</span>'; loadModels(); });
+
+// Local models run through Ollama (the easiest engine). If it isn't installed,
+// a non-technical user would hit a cryptic 'ollama not found' on Serve — so guide
+// them to get it FIRST, with a real download link and a re-check button.
+let OLLAMA_OK=true;
+function renderOllamaNote(ok){
+  OLLAMA_OK=!!ok; const el=$('#ollama-note'); if(!el) return;
+  if(ok){ el.innerHTML=''; return; }
+  el.innerHTML='<div class="card" style="border-color:color-mix(in srgb,var(--warn) 45%,transparent);background:color-mix(in srgb,var(--warn) 8%,transparent);margin:0 0 12px">'
+    +'<div style="font-weight:600;margin-bottom:4px">One quick install first: Ollama</div>'
+    +'<div class="why" style="margin:0 0 10px">Running a model on your own machine needs <b>Ollama</b> — a small, free app that does the heavy lifting. Install it once, then come back here. (Prefer not to install anything? Use the <b>Cloud API</b> tab instead.)</div>'
+    +'<div class="row" style="gap:8px;flex-wrap:wrap"><a class="btn primary" href="https://ollama.com/download" target="_blank" rel="noopener">Download Ollama →</a><button class="btn" id="ollama-recheck" type="button">I\'ve installed it — re-check</button><span id="ollama-recheck-msg" class="faint" style="font-size:12px"></span></div></div>';
+  const rb=$('#ollama-recheck'); if(rb) rb.onclick=async()=>{ const m=$('#ollama-recheck-msg'); m.textContent='Checking…';
+    try{ const s2=await j('/api/hwfit/system'); if(s2.ollama_installed){ renderOllamaNote(true); } else { m.textContent='Still not detected — make sure Ollama is installed and running.'; } }catch(e){ m.textContent='Could not check.'; } };
+}
 
 // ── STEP 1 / LOCAL: pick a model that fits (headroom rule) ───────────────────
 let modelsLoaded=false;
@@ -1165,17 +1186,17 @@ $('#serve-skip').onclick=()=>{ markConnected('Skipped — assuming a model is al
 
 // ── STEP 1 / CLOUD: connect a provider API (in the same place) ───────────────
 const PROVIDERS=[
-  {name:'Anthropic', url:'https://api.anthropic.com', hint:'Claude'},
-  {name:'OpenAI', url:'https://api.openai.com/v1', hint:'GPT'},
-  {name:'OpenRouter', url:'https://openrouter.ai/api/v1', hint:'many models', req:true},
-  {name:'DeepSeek', url:'https://api.deepseek.com/v1', hint:'cheap & strong'},
-  {name:'Groq', url:'https://api.groq.com/openai/v1', hint:'very fast'},
-  {name:'Google Gemini', url:'https://generativelanguage.googleapis.com/v1beta/openai', hint:'Gemini'},
-  {name:'Mistral', url:'https://api.mistral.ai/v1', hint:'Mistral'},
-  {name:'Together AI', url:'https://api.together.xyz/v1', hint:'open models'},
-  {name:'xAI Grok', url:'https://api.x.ai/v1', hint:'Grok'},
-  {name:'Z.AI', url:'https://api.z.ai/api/paas/v4', hint:'GLM'},
-  {name:'Ollama Cloud', url:'https://ollama.com/api', hint:'hosted Ollama', req:true},
+  {name:'Anthropic', url:'https://api.anthropic.com', hint:'Claude', get:'https://console.anthropic.com/settings/keys', cost:'pay-as-you-go (needs billing set up)'},
+  {name:'OpenAI', url:'https://api.openai.com/v1', hint:'GPT', get:'https://platform.openai.com/api-keys', cost:'pay-as-you-go (needs billing set up)'},
+  {name:'OpenRouter', url:'https://openrouter.ai/api/v1', hint:'many models', req:true, get:'https://openrouter.ai/keys', cost:'pay-as-you-go · has some free models'},
+  {name:'DeepSeek', url:'https://api.deepseek.com/v1', hint:'cheap & strong', get:'https://platform.deepseek.com/api_keys', cost:'pay-as-you-go (very cheap)'},
+  {name:'Groq', url:'https://api.groq.com/openai/v1', hint:'very fast', get:'https://console.groq.com/keys', cost:'generous free tier'},
+  {name:'Google Gemini', url:'https://generativelanguage.googleapis.com/v1beta/openai', hint:'Gemini', get:'https://aistudio.google.com/apikey', cost:'free tier available'},
+  {name:'Mistral', url:'https://api.mistral.ai/v1', hint:'Mistral', get:'https://console.mistral.ai/api-keys', cost:'free tier + pay-as-you-go'},
+  {name:'Together AI', url:'https://api.together.xyz/v1', hint:'open models', get:'https://api.together.ai/settings/api-keys', cost:'pay-as-you-go'},
+  {name:'xAI Grok', url:'https://api.x.ai/v1', hint:'Grok', get:'https://console.x.ai', cost:'pay-as-you-go'},
+  {name:'Z.AI', url:'https://api.z.ai/api/paas/v4', hint:'GLM', get:'https://z.ai/manage-apikey/apikey-list', cost:'pay-as-you-go'},
+  {name:'Ollama Cloud', url:'https://ollama.com/api', hint:'hosted Ollama', req:true, get:'https://ollama.com/settings/keys', cost:'subscription / pay-as-you-go'},
 ];
 let CLOUD=null, provRendered=false;
 function renderProviders(){
@@ -1186,6 +1207,11 @@ function renderProviders(){
     g.querySelectorAll('.prov').forEach(x=>x.classList.remove('on'));
     b.classList.add('on'); CLOUD=PROVIDERS[+b.dataset.i];
     $('#cl-connect').disabled=false; $('#cl-test').disabled=false;
+    const h=$('#cl-help');
+    if(h && CLOUD.get){ h.style.display='';
+      h.innerHTML='<b>'+esc(CLOUD.name)+':</b> get a free API key here → <a href="'+esc(CLOUD.get)+'" target="_blank" rel="noopener" style="color:var(--cyan)">'+esc(CLOUD.get.replace(/^https?:\/\//,''))+'</a>'
+        +'<br>Sign in, create a key, copy the long code, paste it above. <b>Cost:</b> '+esc(CLOUD.cost||'see the provider')+'. Your prompts are sent to '+esc(CLOUD.name)+'.'; }
+    else if(h){ h.style.display='none'; }
   });
 }
 // Validate the key BEFORE committing — explicit feedback so a wrong key is caught

@@ -105,7 +105,14 @@ def setup_hwfit_routes():
         """Detect and return current system hardware info. Pass host=user@server for remote.
         fresh=true bypasses the per-host cache (the Rescan button)."""
         from services.hwfit.hardware import detect_system
-        return detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
+        sysinfo = detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
+        # Tell the setup wizard whether Ollama (the easiest local engine) is
+        # installed, so it can guide a non-technical user to get it before they
+        # hit a cryptic "ollama not found" on Serve. Local host only.
+        if isinstance(sysinfo, dict) and not host:
+            import shutil
+            sysinfo["ollama_installed"] = bool(shutil.which("ollama"))
+        return sysinfo
 
     @router.get("/models")
     def get_models(use_case: str = "", sort: str = "score", limit: int = 50, search: str = "", host: str = "", quant: str = "", ctx: str = "", gpu_count: str = "", gpu_group: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, fit_only: bool = False):
