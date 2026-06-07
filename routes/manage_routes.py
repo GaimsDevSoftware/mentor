@@ -992,7 +992,7 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  .theme-switch button[aria-current="true"]{ background:var(--txt); color:var(--bg) }
 </style></head><body>
 <nav class="topbar" aria-label="Section navigation">
-  <a class="jump" href="/app" title="Back to dashboard"><span class="arrow">←</span> Home</a>
+  <a class="jump" href="/app">Home</a><a class="jump" href="/">Chat</a><a class="jump" href="/app/office">Office</a><a class="jump" href="/app/code">Code</a><a class="jump" href="/app/cookbook">Cookbook</a>
   <div class="theme-switch" aria-label="Theme">
     <button data-theme-set="dark">Dark</button>
     <button data-theme-set="light">Light</button>
@@ -1010,7 +1010,9 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div class="tab" data-t="diag">Diagnostics</div>
  <div class="tab" data-t="trace">Trace</div>
  <div class="tab" data-t="usage">Usage</div>
+ <div class="tab" data-t="connect">Connect</div>
  <div class="tab" data-t="sources">Models</div>
+ <div class="tab" data-t="users">Users</div>
  <div class="tab" data-t="telegram">Telegram</div>
  <div class="tab" data-t="code">Vibe-code</div>
  <div class="tab" data-t="selfcoder">Self-coder</div>
@@ -1024,7 +1026,9 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div id="trace-out" class="muted">loading…</div></div>
 <div id="usage" class="panel"><div class="card"><b>Usage &amp; cost</b><div class="sub">Tokens per model endpoint. <b>Local</b> = free &amp; private. <b>Cloud</b> counts against your usage limits — watch these.</div></div>
  <div id="usage-out" class="muted">loading…</div></div>
+<div id="connect" class="panel"></div>
 <div id="sources" class="panel"></div>
+<div id="users" class="panel"></div>
 <div id="telegram" class="panel"></div>
 <div id="selfcoder" class="panel"><div class="card">
   <b>Autonomous self-improvement (code)</b> <span id="sc-st" class="muted">…</span>
@@ -1096,6 +1100,7 @@ function activateTab(name){
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
   t.classList.add('on'); $('#'+t.dataset.t).classList.add('on');
   if(t.dataset.t==='plugins')loadPlugins(); if(t.dataset.t==='settings')renderSettings();
+  if(t.dataset.t==='connect')loadConnect(); if(t.dataset.t==='users')loadUsers();
   if(t.dataset.t==='diag')runDiag();
   if(t.dataset.t==='trace')runTrace();
   if(t.dataset.t==='usage')runUsage();
@@ -1110,6 +1115,105 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>activateTab(t.dataset
 // to the right section instead of the default Plugins tab.
 function _tabFromHash(){const h=(location.hash||'').replace('#','');if(h)activateTab(h);}
 window.addEventListener('hashchange',_tabFromHash); _tabFromHash();
+
+// ── Connect tab: add + manage model endpoints (the old SPA "Add Models", reborn
+// in this design). Local quickstarts + cloud provider grid → POST /api/model-endpoints.
+const CONNECT_PROVIDERS=[
+ {name:'Anthropic',url:'https://api.anthropic.com',hint:'Claude'},
+ {name:'OpenAI',url:'https://api.openai.com/v1',hint:'GPT'},
+ {name:'OpenRouter',url:'https://openrouter.ai/api/v1',hint:'many models',req:true},
+ {name:'DeepSeek',url:'https://api.deepseek.com/v1',hint:'cheap & strong'},
+ {name:'Groq',url:'https://api.groq.com/openai/v1',hint:'very fast'},
+ {name:'Google Gemini',url:'https://generativelanguage.googleapis.com/v1beta/openai',hint:'Gemini'},
+ {name:'Mistral',url:'https://api.mistral.ai/v1',hint:'Mistral'},
+ {name:'Together AI',url:'https://api.together.xyz/v1',hint:'open models'},
+ {name:'xAI Grok',url:'https://api.x.ai/v1',hint:'Grok'},
+ {name:'Z.AI',url:'https://api.z.ai/api/paas/v4',hint:'GLM'},
+ {name:'Ollama Cloud',url:'https://ollama.com/api',hint:'hosted Ollama',req:true},
+];
+let _cloudSel=null;
+async function _addEndpoint(url,key,name,requireModels,msgEl,btn){
+  if(!url){ msgEl.textContent='Enter or pick a URL/provider first.'; msgEl.style.color='var(--err)'; return; }
+  if(btn)btn.disabled=true; msgEl.textContent='Connecting…'; msgEl.style.color='var(--dim)';
+  try{
+    const fd=new FormData(); fd.append('base_url',url); if(key)fd.append('api_key',key);
+    if(name)fd.append('name',name); fd.append('model_type','llm');
+    if(requireModels)fd.append('require_models','true'); else fd.append('skip_probe','false');
+    const res=await fetch('/api/model-endpoints',{method:'POST',body:fd,credentials:'same-origin'});
+    const d=await res.json().catch(()=>({}));
+    if(res.ok){ const n=d.models?d.models.length:0; msgEl.textContent='Added — found '+n+' model'+(n!==1?'s':'')+'.'; msgEl.style.color='var(--ok)'; loadEndpointList(); }
+    else { msgEl.textContent=d.detail||'Failed — check the key / URL.'; msgEl.style.color='var(--err)'; }
+  }catch(e){ msgEl.textContent='Request failed.'; msgEl.style.color='var(--err)'; }
+  if(btn)btn.disabled=false;
+}
+async function loadEndpointList(){
+  const el=$('#ep-list'); let eps=[];
+  try{ eps=await j('/api/model-endpoints'); }catch(e){ el.textContent='Could not load endpoints.'; return; }
+  if(!Array.isArray(eps)||!eps.length){ el.innerHTML='<span style="font-size:13px">No models connected yet — add one above.</span>'; return; }
+  el.innerHTML=eps.map(ep=>{
+    const on=ep.is_enabled!==false; const n=(ep.models||[]).length;
+    const local=/localhost|127\.0\.0\.1|0\.0\.0\.0|::1/.test(ep.base_url||'');
+    return `<div class="row" style="padding:7px 0;border-top:1px solid var(--sep)"><span class="pill ${on?'ok':''}">${on?'on':'off'}</span>`
+      +`<span class="grow"><b>${esc(ep.name||ep.base_url)}</b> <span class="muted" style="font-size:12px">${local?'🖥 local':'☁ cloud'} · ${n} model${n!==1?'s':''}</span><div class="muted" style="font-size:11px">${esc(ep.base_url||'')}</div></span>`
+      +`<button class="go" data-ep-tog="${esc(String(ep.id))}">${on?'Disable':'Enable'}</button>`
+      +`<button class="fix" data-ep-del="${esc(String(ep.id))}">Remove</button></div>`;
+  }).join('');
+  el.querySelectorAll('[data-ep-tog]').forEach(b=>b.onclick=async()=>{ await fetch('/api/model-endpoints/'+b.dataset.epTog,{method:'PATCH',credentials:'same-origin'}); loadEndpointList(); });
+  el.querySelectorAll('[data-ep-del]').forEach(b=>b.onclick=async()=>{ if(!confirm('Remove this endpoint?'))return; await fetch('/api/model-endpoints/'+b.dataset.epDel,{method:'DELETE',credentials:'same-origin'}); loadEndpointList(); });
+}
+function loadConnect(){
+  const host=$('#connect');
+  const provBtns=CONNECT_PROVIDERS.map((p,i)=>`<button class="go prov2" data-i="${i}" style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:118px">${esc(p.name)}<span class="muted" style="font-size:10px">${esc(p.hint)}</span></button>`).join('');
+  host.innerHTML=
+   '<div class="card"><b>Add a model</b><div class="sub">Connect a local server (private &amp; free) or a cloud API. Pick — you don\'t type URLs.</div>'
+   +'<div class="row" style="gap:6px;margin:10px 0"><button class="go" id="ct-local">🖥 Local</button><button class="go" id="ct-cloud">☁ Cloud API</button></div>'
+   +'<div id="cp-local"><div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:6px"><button class="go" data-cq="http://localhost:11434/v1">Ollama</button><button class="go" data-cq="http://localhost:1234/v1">LM Studio</button><button class="go" data-cq="http://localhost:8080/v1">llama.cpp</button><button class="go" data-cq="http://localhost:1337/v1">Jan</button></div>'
+     +'<div class="row" style="flex-wrap:wrap"><input id="cl-url" placeholder="http://localhost:11434/v1" style="flex:1;min-width:200px"><input id="cl-key" type="password" placeholder="API key (optional)" style="flex:1;min-width:140px"><button class="go" id="cl-add">Add</button></div><div id="cl-msg" class="muted" style="font-size:12px;margin-top:6px"></div></div>'
+   +'<div id="cp-cloud" style="display:none"><div class="sub">Pick a provider — the URL is filled for you.</div><div class="row" style="flex-wrap:wrap;gap:6px;margin:8px 0">'+provBtns+'</div>'
+     +'<div class="row" style="flex-wrap:wrap"><input id="cc-key" type="password" placeholder="API key" style="flex:1;min-width:200px"><button class="go" id="cc-add">Connect</button></div><div id="cc-msg" class="muted" style="font-size:12px;margin-top:6px"></div></div>'
+   +'</div>'
+   +'<div class="card"><b>Connected models</b><div id="ep-list" class="muted" style="margin-top:8px">loading…</div></div>';
+  $('#ct-local').onclick=()=>{$('#cp-local').style.display='';$('#cp-cloud').style.display='none';};
+  $('#ct-cloud').onclick=()=>{$('#cp-local').style.display='none';$('#cp-cloud').style.display='';};
+  host.querySelectorAll('[data-cq]').forEach(b=>b.onclick=()=>{$('#cl-url').value=b.dataset.cq;});
+  host.querySelectorAll('.prov2').forEach(b=>b.onclick=()=>{host.querySelectorAll('.prov2').forEach(x=>x.style.borderColor='');b.style.borderColor='var(--brass)';_cloudSel=CONNECT_PROVIDERS[+b.dataset.i];});
+  $('#cl-add').onclick=()=>_addEndpoint($('#cl-url').value.trim(),$('#cl-key').value.trim(),'',false,$('#cl-msg'),$('#cl-add'));
+  $('#cc-add').onclick=()=>{ if(!_cloudSel){const m=$('#cc-msg');m.textContent='Pick a provider first.';m.style.color='var(--err)';return;} const k=$('#cc-key').value.trim(); if(!k){const m=$('#cc-msg');m.textContent='Paste the API key.';m.style.color='var(--err)';return;} _addEndpoint(_cloudSel.url,k,_cloudSel.name,!!_cloudSel.req,$('#cc-msg'),$('#cc-add')); };
+  loadEndpointList();
+}
+
+// ── Users tab: list / add / remove + open-signup (the old SPA "Users", reborn).
+async function loadUsers(){
+  const host=$('#users'); let st={};
+  try{ st=await j('/api/auth/status'); }catch(e){}
+  host.innerHTML=
+   '<div class="card"><b>Users</b><div class="sub">Who can sign in to this Mentor.</div><div id="u-list" class="muted" style="margin-top:8px">loading…</div></div>'
+   +'<div class="card"><b>Add a user</b><div class="row" style="margin-top:8px;flex-wrap:wrap"><input id="u-name" placeholder="username (email)" style="flex:1;min-width:160px"><input id="u-pass" type="password" placeholder="password (min 8)" style="flex:1;min-width:160px"><label class="muted" style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="u-admin"> admin</label><button class="go" id="u-add">Add</button></div><div id="u-msg" class="muted" style="font-size:12px;margin-top:6px"></div></div>'
+   +'<div class="card"><div class="row"><span class="grow"><b>Open signup</b><div class="sub">Let anyone create an account from the login page.</div></span><button class="go" id="u-signup">'+(st.signup_enabled?'On — turn off':'Off — turn on')+'</button></div></div>';
+  $('#u-add').onclick=async()=>{
+    const name=$('#u-name').value.trim(), pass=$('#u-pass').value, isAdmin=$('#u-admin').checked, m=$('#u-msg');
+    if(!name||pass.length<8){ m.textContent='Need a username and an 8+ character password.'; m.style.color='var(--err)'; return; }
+    m.textContent='Adding…'; m.style.color='var(--dim)';
+    const res=await fetch('/api/auth/users',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:name,password:pass,is_admin:isAdmin})});
+    if(res.ok){ m.textContent='Added ✓'; m.style.color='var(--ok)'; $('#u-name').value=''; $('#u-pass').value=''; $('#u-admin').checked=false; loadUserList(); }
+    else { const d=await res.json().catch(()=>({})); m.textContent=d.detail||'Failed'; m.style.color='var(--err)'; }
+  };
+  $('#u-signup').onclick=async()=>{ const on=$('#u-signup').textContent.indexOf('On')===0;
+    await fetch('/api/auth/open-signup',{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!on})}); loadUsers(); };
+  loadUserList();
+}
+async function loadUserList(){
+  const el=$('#u-list'); let d={};
+  try{ d=await j('/api/auth/users'); }catch(e){ el.textContent='Could not load users.'; return; }
+  const us=d.users||[];
+  if(!us.length){ el.innerHTML='<span style="font-size:13px">No users yet.</span>'; return; }
+  el.innerHTML=us.map(u=>{
+    const name=(typeof u==='object'?(u.username||u.name):u)||'?';
+    const isAdmin=(typeof u==='object'&&(u.is_admin||u.admin));
+    return `<div class="row" style="padding:6px 0;border-top:1px solid var(--sep)"><span class="grow"><b>${esc(name)}</b>${isAdmin?' <span class="pill">admin</span>':''}</span>${isAdmin?'<span class="muted" style="font-size:11px">protected</span>':`<button class="fix" data-u-del="${esc(name)}">Remove</button>`}</div>`;
+  }).join('');
+  el.querySelectorAll('[data-u-del]').forEach(b=>b.onclick=async()=>{ if(!confirm('Remove user '+b.dataset.uDel+'?'))return; await fetch('/api/auth/users',{method:'DELETE',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:b.dataset.uDel})}); loadUserList(); });
+}
 let scPollTimer=null;
 const SC_STEP_LABEL={branch_created:'created branch',aider_starting:'asking Aider to edit',
   aider_done:'Aider finished',no_changes:'no changes made',committed_on_branch:'committed on branch',
