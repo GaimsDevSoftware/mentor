@@ -1047,7 +1047,7 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
       <div class="row" style="margin-top:12px"><button class="btn" id="cl-test" type="button" disabled>Test key</button><button class="btn primary" id="cl-connect" type="button" disabled>Connect</button><span id="cl-msg" class="actmsg muted"></span></div>
     </div>
   </div>
-  <div class="nav"><a class="btn" href="/app">← Cancel</a><span class="grow"></span><button class="btn primary" id="s1-next" disabled>Next →</button></div>
+  <div class="nav"><a class="btn" href="/app">← Cancel</a><span class="grow"></span><button class="btn primary" id="s1-next">Next →</button></div>
 </div>
 
 <!-- STEP 2 — Hire a starter agent -->
@@ -1064,7 +1064,7 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
     <div class="faint" style="font-size:12px;margin-top:10px">Tools: <span class="mono">web_search</span> · <span class="mono">web_fetch</span></div>
     <div class="row" style="margin-top:14px"><button class="btn primary" id="hire-btn">Hire Iris</button><span id="hire-msg" class="muted" style="font-size:12px"></span></div>
   </div>
-  <div class="nav"><button class="btn" id="s2-back">← Back</button><span class="grow"></span><button class="btn primary" id="s2-next" disabled>Next →</button></div>
+  <div class="nav"><button class="btn" id="s2-back">← Back</button><span class="grow"></span><button class="btn primary" id="s2-next">Next →</button></div>
 </div>
 
 <!-- STEP 3 — Done -->
@@ -1105,6 +1105,15 @@ function showStep(n){
   document.querySelectorAll('#steps .dot').forEach(d=>{const s=+d.dataset.s;
     d.classList.toggle('on',s===STEP); d.classList.toggle('done',s<STEP);});
 }
+
+// Bind navigation IMMEDIATELY (before any code that could throw) and keep the
+// step buttons always clickable — the wizard must never trap the user. You can
+// proceed at any time; nothing is mandatory, and setup is changeable later.
+(function(){
+  const n1=document.getElementById('s1-next'); if(n1){ n1.disabled=false; n1.onclick=()=>showStep(2); }
+  const b2=document.getElementById('s2-back'); if(b2) b2.onclick=()=>showStep(1);
+  const n2=document.getElementById('s2-next'); if(n2){ n2.disabled=false; n2.onclick=()=>showStep(3); }
+})();
 
 // ── tabs: Local | Cloud (everything happens in step 1, no handoff) ───────────
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
