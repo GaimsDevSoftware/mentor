@@ -5,7 +5,8 @@ don't write prompts by hand), a capacity report (solo/private vs concurrent),
 and a run endpoint that delegates a task across selected agents via the
 capacity-aware orchestrator.
 """
-from typing import Any, Dict
+import json
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Body, Depends, Request
 
@@ -49,6 +50,38 @@ def setup_agents_routes() -> APIRouter:
     async def capacity(request: Request, _u: str = Depends(require_user)) -> Dict[str, Any]:
         from src import agent_orchestrator
         return agent_orchestrator.capacity(get_current_user(request) or "")
+
+    @router.get("/api/agents/models")
+    async def models(request: Request, _u: str = Depends(require_user)) -> Dict[str, Any]:
+        """Discovered models as `model@endpoint` specs, scoped to the caller — so
+        the Office model dropdown works for non-admins (unlike the admin-only
+        teacher-model-options)."""
+        from core.database import SessionLocal, ModelEndpoint
+        from src.auth_helpers import owner_filter
+        owner = get_current_user(request) or ""
+        specs: List[str] = []
+        seen = set()
+        db = SessionLocal()
+        try:
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            if owner:
+                q = owner_filter(q, ModelEndpoint, owner)
+            for ep in q.all():
+                try:
+                    ms = json.loads(ep.cached_models) if ep.cached_models else []
+                except Exception:
+                    ms = []
+                for m in ms:
+                    if not m:
+                        continue
+                    spec = f"{m}@{ep.name}"
+                    if spec not in seen:
+                        seen.add(spec)
+                        specs.append(spec)
+        finally:
+            db.close()
+        specs.sort(key=str.lower)
+        return {"models": specs}
 
     @router.post("/api/agents/draft")
     async def draft(request: Request, payload: Dict[str, Any] = Body(...),

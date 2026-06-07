@@ -701,6 +701,7 @@ _OFFICE = r"""<!doctype html><html><head><meta charset="utf-8">
   <label class="lab">Backstory / working style (optional)</label><textarea id="f-back" class="fld" rows="2" placeholder="optional — how they approach the work, standards they hold"></textarea>
   <label class="lab">Model</label><select id="f-model" class="fld"><option value="">— app default —</option></select>
   <label class="lab">Tools they can use</label><div id="f-tools"></div>
+  <div class="faint" style="font-size:11px;margin-top:4px">Saved to the agent. Note: live tool-use by agents is the next build — for now agents give expert answers/advice from their role &amp; knowledge.</div>
   <label class="lab">Autonomy</label>
   <select id="f-auto" class="fld"><option value="approve">Ask me before risky actions</option><option value="auto">Act on its own</option></select>
   <div class="row" style="margin-top:10px"><button class="btn" id="draft-btn">Draft system prompt with AI</button><span id="draft-msg" class="muted" style="font-size:12px"></span></div>
@@ -743,7 +744,7 @@ function renderTools(){$('#f-tools').innerHTML=TOOLS.map(t=>`<span class="chip t
 renderTools();
 
 // model dropdown (discovered)
-j('/api/manage/teacher-model-options').then(d=>{const sel=$('#f-model');(d.models||[]).forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o);});}).catch(()=>{});
+j('/api/agents/models').then(d=>{const sel=$('#f-model');(d.models||[]).forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o);});}).catch(()=>{});
 
 // team list
 function statusCls(s){return s==='thinking'?'thinking':s==='done'?'done':'idle';}

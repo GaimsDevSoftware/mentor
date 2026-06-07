@@ -28,12 +28,18 @@ logger = logging.getLogger(__name__)
 SAFE_SETTING_KEYS = {
     "aegis_mode", "aegis_block_threshold", "aegis_warn_threshold",
     "agent_local_no_think", "agent_local_min_predict",
-    "improve_loop_enabled", "plugins_enabled",
+    # Deliberately EXCLUDED: improve_loop_enabled, plugins_enabled — the auto-fixer
+    # must never be able to flip a token-spending loop or mass-mount plugins
+    # (defense-in-depth; they were here before, removed per audit).
     "caveman_enabled", "caveman_level", "caveman_min_chars",
     "caveman_compress_system_prompt",
     "regelverk_max_injected", "skill_max_injected",
     "improve_success_sample_rate",
 }
+
+# Serialize settings read-modify-write (autoheal can run alongside UI edits).
+import threading as _threading
+_SETTINGS_LOCK = _threading.Lock()
 
 # Vetted background commands the fixer may launch (argv built at call time).
 _COMMANDS = {
@@ -64,10 +70,11 @@ def _apply_setting(fix: Dict[str, Any]) -> Dict[str, Any]:
     val = fix.get("value")
     try:
         from src.settings import load_settings, save_settings
-        s = dict(load_settings())
-        old = s.get(key)
-        s[key] = val
-        save_settings(s)
+        with _SETTINGS_LOCK:
+            s = dict(load_settings())
+            old = s.get(key)
+            s[key] = val
+            save_settings(s)
         return {"ok": True, "detail": f"{key}: {old!r} → {val!r}"}
     except Exception as e:
         return {"ok": False, "detail": f"failed to set {key}: {e}"}

@@ -51,7 +51,7 @@ def capacity(owner: Optional[str] = None) -> Dict[str, Any]:
     except Exception:
         pass
     concurrent = cloud > 0 or local_slots > 1
-    budget = local_slots + (cloud * 4)  # cloud endpoints ≈ effectively parallel
+    budget = min(local_slots + (cloud * 4), _MAX_AGENTS_PER_RUN)  # bounded concurrency hint
     return {
         "mode": "concurrent" if concurrent else "solo",
         "concurrent": concurrent,
@@ -75,7 +75,9 @@ async def _run_agent(agent: Dict[str, Any], task: str, owner: Optional[str]) -> 
     spec = (agent.get("model") or "").strip()
     try:
         if spec:
-            url, model, headers = _resolve_model(spec)
+            # owner-scoped (never dispatch through another user's endpoint/key) and
+            # off the event loop (_resolve_model does a blocking httpx probe).
+            url, model, headers = await asyncio.to_thread(_resolve_model, spec, owner)
         else:
             url, model, headers = resolve_endpoint("default", owner=owner)
         if not url:
@@ -120,12 +122,14 @@ async def run_task(task: str, agents: List[Dict[str, Any]], owner: Optional[str]
 
     contributions = await asyncio.gather(*[_guarded(a) for a in agents])
 
-    # Synthesize (orchestrator) — one extra bounded call on the default model.
+    # Synthesize (orchestrator) — one extra bounded call, but ONLY when >1 agent
+    # actually contributed (skip it for solo/single-success runs to save a call).
     synthesis = ""
+    _ok = [c for c in contributions if c.get("ok")]
     try:
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import complete_with_continuation
-        url, model, headers = resolve_endpoint("default", owner=owner)
+        url, model, headers = resolve_endpoint("default", owner=owner) if len(_ok) > 1 else (None, None, None)
         if url:
             joined = "\n\n".join(f"### {c['agent']} ({c.get('role','')})\n{c['output']}"
                                  for c in contributions if c.get("ok"))
