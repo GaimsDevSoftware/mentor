@@ -889,59 +889,69 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
  .jump:hover{background:var(--tint-2)} .theme-switch{display:flex;gap:2px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;padding:3px;box-shadow:var(--shadow)}
  .theme-switch button{background:transparent;border:none;color:var(--dim);padding:5px 11px;border-radius:99px;cursor:pointer;font:500 11px/1 inherit}
  .theme-switch button[aria-current="true"]{background:var(--txt);color:var(--bg)}
+ .tabs{display:flex;gap:8px;margin-bottom:16px}
+ .tab{flex:1;padding:12px;border:1px solid var(--sep-2);border-radius:11px;background:var(--tint);color:var(--dim);cursor:pointer;font:500 13px/1.3 inherit;text-align:center;transition:border-color .15s,background .15s,color .15s}
+ .tab:hover{border-color:var(--brass)} .tab.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--txt)}
+ .tabpane{animation:fade .2s ease} @keyframes fade{from{opacity:0}to{opacity:1}}
+ .provgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+ @media(max-width:560px){.provgrid{grid-template-columns:repeat(2,1fr)}}
+ .prov{padding:11px 10px;border:1px solid var(--sep-2);border-radius:10px;background:var(--tint);cursor:pointer;font:500 12.5px/1.2 inherit;color:var(--txt);text-align:center;transition:border-color .15s,background .15s}
+ .prov:hover{border-color:var(--brass)} .prov.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+ .prov .ph{display:block;color:var(--faint);font-size:10px;margin-top:3px;font-weight:400}
  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--sep-2);border-radius:5px}
 </style></head><body>
 <nav class="topbar"><a class="jump" href="/app">Home</a><a class="jump" href="/">Chat</a><a class="jump" href="/app/office">Office</a><a class="jump" href="/app/code">Code</a><a class="jump" href="/app/cookbook">Cookbook</a><a class="jump" href="/manage">Admin</a>
  <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
 
-<div class="top"><div class="mark">Set up your AI</div><span id="stepcap" class="pill">Step 1 of 5</span></div>
-<div class="tag">A calm, guided walk from nothing to a working local AI agent — we'll check your machine, pick a model that fits, serve it, and hire your first helper.</div>
+<div class="top"><div class="mark">Set up your AI</div><span id="stepcap" class="pill">Step 1 of 3</span></div>
+<div class="tag">A calm, guided walk from nothing to a working AI agent — connect a brain (local or cloud), then hire your first helper. Everything happens right here.</div>
 
 <div class="steps" id="steps">
-  <div class="dot" data-s="1"><span class="n">1</span><span class="lbl">Machine</span></div><span class="ln"></span>
-  <div class="dot" data-s="2"><span class="n">2</span><span class="lbl">Pick model</span></div><span class="ln"></span>
-  <div class="dot" data-s="3"><span class="n">3</span><span class="lbl">Serve</span></div><span class="ln"></span>
-  <div class="dot" data-s="4"><span class="n">4</span><span class="lbl">Hire</span></div><span class="ln"></span>
-  <div class="dot" data-s="5"><span class="n">5</span><span class="lbl">Done</span></div>
+  <div class="dot" data-s="1"><span class="n">1</span><span class="lbl">Connect AI</span></div><span class="ln"></span>
+  <div class="dot" data-s="2"><span class="n">2</span><span class="lbl">Hire</span></div><span class="ln"></span>
+  <div class="dot" data-s="3"><span class="n">3</span><span class="lbl">Done</span></div>
 </div>
 
-<!-- STEP 1 — This machine -->
+<!-- STEP 1 — Connect AI (Local | Cloud, all in one place) -->
 <div class="step" data-step="1">
   <div class="card">
-    <p class="why">First, let's look at what your computer can do. The two numbers that matter for running AI locally are <b>VRAM</b> (memory on your graphics card — this decides how big a model can be) and <b>RAM</b> (your computer's main memory).</p>
-    <div id="hw" class="hw-grid"><div class="muted">reading your hardware…</div></div>
+    <p class="why">Two ways to give Mentor a brain. <b>Local</b> runs on your own machine — fully private and free, but needs enough graphics memory (VRAM). <b>Cloud</b> connects an API — fastest to start and very capable, but needs a key and your prompts leave your machine.</p>
+    <div class="tabs">
+      <button class="tab on" data-tab="local" type="button">🖥️ Run locally · private &amp; free</button>
+      <button class="tab" data-tab="cloud" type="button">☁️ Connect a cloud API</button>
+    </div>
+
+    <!-- LOCAL pane -->
+    <div class="tabpane" data-pane="local">
+      <div id="hw" class="hw-grid" style="margin-bottom:14px"><div class="muted">reading your hardware…</div></div>
+      <div id="fit-banner" class="muted" style="font-size:12px;margin-bottom:10px"></div>
+      <div id="models" class="muted">finding models that fit…</div>
+      <div id="serve-wrap" hidden style="margin-top:14px;border-top:1px solid var(--sep);padding-top:14px">
+        <div id="serve-pick" class="muted" style="font-size:13px;margin-bottom:10px"></div>
+        <label class="lab">Command we'll run (you can leave this as-is)</label>
+        <textarea id="serve-cmd" class="fld" rows="2"></textarea>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="serve-btn" type="button">Serve this model</button><button class="btn mini" id="serve-skip" type="button">Skip — already running</button></div>
+        <div id="serve-msg" class="actmsg muted"></div>
+        <div id="serve-tasks" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- CLOUD pane -->
+    <div class="tabpane" data-pane="cloud" hidden>
+      <label class="lab">Pick a provider</label>
+      <div id="provgrid" class="provgrid"></div>
+      <label class="lab" style="margin-top:14px">API key <span class="faint" style="text-transform:none;letter-spacing:0">— from the provider's dashboard; stored locally, never shared</span></label>
+      <input id="cl-key" class="fld" type="password" placeholder="paste your API key" autocomplete="off">
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="cl-connect" type="button" disabled>Connect</button><span id="cl-msg" class="actmsg muted"></span></div>
+    </div>
   </div>
-  <div class="nav"><span class="grow"></span><button class="btn primary" id="s1-next" disabled>Next →</button></div>
+  <div class="nav"><a class="btn" href="/app">← Cancel</a><span class="grow"></span><button class="btn primary" id="s1-next" disabled>Next →</button></div>
 </div>
 
-<!-- STEP 2 — Pick a model that fits -->
+<!-- STEP 2 — Hire a starter agent -->
 <div class="step" data-step="2">
   <div class="card">
-    <p class="why">Now pick the AI model to run. We only show models that will fit <b>with room to spare</b>, so your desktop and browser keep running smoothly. A bigger model is usually smarter but needs more memory.</p>
-    <div id="fit-banner" class="muted" style="font-size:12px;margin-bottom:10px"></div>
-    <div id="models" class="muted">finding models that fit…</div>
-  </div>
-  <div class="nav"><button class="btn" id="s2-back">← Back</button><span class="grow"></span><button class="btn primary" id="s2-next" disabled>Next →</button></div>
-</div>
-
-<!-- STEP 3 — Serve it -->
-<div class="step" data-step="3">
-  <div class="card">
-    <p class="why">Let's start your model so the app can talk to it. This loads it into your graphics card and keeps it running in the background. It can take a minute the first time.</p>
-    <div id="serve-pick" class="muted" style="font-size:13px;margin-bottom:10px"></div>
-    <label class="lab">Command we'll run (you can leave this as-is)</label>
-    <textarea id="serve-cmd" class="fld" rows="2"></textarea>
-    <div class="row" style="margin-top:12px"><button class="btn primary" id="serve-btn">Serve this model</button><button class="btn mini" id="serve-skip">Skip — already running</button></div>
-    <div id="serve-msg" class="actmsg muted"></div>
-    <div id="serve-tasks" style="margin-top:12px"></div>
-  </div>
-  <div class="nav"><button class="btn" id="s3-back">← Back</button><span class="grow"></span><button class="btn primary" id="s3-next" disabled>Next →</button></div>
-</div>
-
-<!-- STEP 4 — Hire a starter agent -->
-<div class="step" data-step="4">
-  <div class="card">
-    <p class="why">Last step: hire your first helper. We've filled in a friendly, general-purpose assistant named <b>Iris</b> — she can search the web and read pages, and she'll ask before doing anything risky. Adjust if you like, then hire.</p>
+    <p class="why">Now hire your first helper. We've filled in a friendly, general-purpose assistant named <b>Iris</b> — she can search the web and read pages, and she'll ask before doing anything risky. Adjust if you like, then hire.</p>
     <label class="lab">Name</label><input id="a-name" class="fld" value="Iris">
     <label class="lab">Role / title</label><input id="a-role" class="fld" value="Generalist Assistant">
     <label class="lab">Goal (one sentence)</label><input id="a-goal" class="fld" value="Help with everyday questions and tasks, with sources, fast">
@@ -952,16 +962,16 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
     <div class="faint" style="font-size:12px;margin-top:10px">Tools: <span class="mono">web_search</span> · <span class="mono">web_fetch</span></div>
     <div class="row" style="margin-top:14px"><button class="btn primary" id="hire-btn">Hire Iris</button><span id="hire-msg" class="muted" style="font-size:12px"></span></div>
   </div>
-  <div class="nav"><button class="btn" id="s4-back">← Back</button><span class="grow"></span><button class="btn primary" id="s4-next" disabled>Next →</button></div>
+  <div class="nav"><button class="btn" id="s2-back">← Back</button><span class="grow"></span><button class="btn primary" id="s2-next" disabled>Next →</button></div>
 </div>
 
-<!-- STEP 5 — Done -->
-<div class="step" data-step="5">
+<!-- STEP 3 — Done -->
+<div class="step" data-step="3">
   <div class="card">
     <div class="done-hero">
       <div class="big">🎉</div>
       <h2 style="margin:0 0 6px;font-weight:600;letter-spacing:-0.01em">You're set up</h2>
-      <p class="why" id="done-summary" style="margin:0 auto;max-width:460px">Your machine is ready, a model is serving, and your first helper has been hired. Meet your team in the Office, or head back to the dashboard.</p>
+      <p class="why" id="done-summary" style="margin:0 auto;max-width:460px">A model is connected and your first helper has been hired. Meet your team in the Office, or head back to the dashboard.</p>
       <div class="row" style="justify-content:center;gap:10px;margin-top:18px">
         <a class="btn primary" href="/app/office">Meet your team →</a>
         <a class="btn" href="/app">Back to dashboard</a>
@@ -980,10 +990,10 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;',
 const adminNote='<span class="muted" style="font-size:13px">Admin only — sign in as an admin to use this.</span>';
 
 // ── wizard state ────────────────────────────────────────────────────────────
-let STEP=1; const LAST=5;
+let STEP=1; const LAST=3;
 let HW_VRAM=0, HW_RAM=0, HAS_GPU=false;
 let CHOSEN=null;          // {name, repo, vram}
-let SERVED=false, HIRED=false;
+let CONNECTED=false, HIRED=false;
 const VRAM_RESERVE=3, RAM_RESERVE=4;  // GB kept free for desktop + browser
 
 function showStep(n){
@@ -992,10 +1002,18 @@ function showStep(n){
   $('#stepcap').textContent='Step '+STEP+' of '+LAST;
   document.querySelectorAll('#steps .dot').forEach(d=>{const s=+d.dataset.s;
     d.classList.toggle('on',s===STEP); d.classList.toggle('done',s<STEP);});
-  if(STEP===3) ensureServeCmd();
 }
 
-// ── STEP 1: hardware ────────────────────────────────────────────────────────
+// ── tabs: Local | Cloud (everything happens in step 1, no handoff) ───────────
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+  const which=t.dataset.tab;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
+  document.querySelectorAll('.tabpane').forEach(p=>{ p.hidden = p.dataset.pane!==which; });
+  if(which==='local') loadModels();
+  if(which==='cloud') renderProviders();
+}));
+
+// ── STEP 1 / LOCAL: hardware ─────────────────────────────────────────────────
 j('/api/hwfit/system').then(s=>{
   HAS_GPU=!!s.has_gpu; HW_VRAM=+(s.gpu_vram_gb||0); HW_RAM=+(s.available_ram_gb||0);
   const cell=(k,v,sub)=>`<div class="hw"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>${sub?`<div class="s">${esc(sub)}</div>`:''}</div>`;
@@ -1003,10 +1021,10 @@ j('/api/hwfit/system').then(s=>{
     cell('GPU', s.has_gpu?(s.gpu_name||'—'):'None', s.has_gpu?`${s.gpu_count||1}× · ${s.backend||''}`:'CPU inference')+
     cell('VRAM', s.gpu_vram_gb?`${s.gpu_vram_gb} GB`:'—', s.unified_memory?'unified memory':'')+
     cell('RAM', `${s.available_ram_gb||'?'} GB free`, `of ${s.total_ram_gb||'?'} GB`);
-  $('#s1-next').disabled=false;
-}).catch(e=>{ $('#hw').innerHTML = e===401?adminNote:'<span class="muted">Could not read your hardware. You can still continue.</span>'; $('#s1-next').disabled=false; });
+  loadModels();
+}).catch(e=>{ $('#hw').innerHTML = e===401?adminNote:'<span class="muted">Could not read your hardware — you can still serve a model below, or use the Cloud tab.</span>'; loadModels(); });
 
-// ── STEP 2: pick a model that fits (headroom rule) ──────────────────────────
+// ── STEP 1 / LOCAL: pick a model that fits (headroom rule) ───────────────────
 let modelsLoaded=false;
 function loadModels(){
   if(modelsLoaded) return; modelsLoaded=true;
@@ -1020,7 +1038,7 @@ function loadModels(){
     else ms=ms.filter(m=>m.fit);
     ms=ms.slice(0,12);
     const el=$('#models');
-    if(!ms.length){ el.innerHTML='<span class="muted" style="font-size:13px">Nothing fits once desktop + browser headroom is reserved. Open the Cookbook to try a smaller or more-quantized model.</span>'; return; }
+    if(!ms.length){ el.innerHTML='<span class="muted" style="font-size:13px">Nothing fits once desktop + browser headroom is reserved. Pick a smaller / more-quantized model, or switch to the <b>Cloud API</b> tab above.</span>'; return; }
     el.innerHTML=ms.map((m,i)=>{
       const name=m.model||m.name||'?'; const v=m.vram_q4_gb||m.vram_gb;
       return `<div class="opt" data-i="${i}"><span class="rd"></span>`
@@ -1033,23 +1051,24 @@ function loadModels(){
       el.querySelectorAll('.opt').forEach(x=>x.classList.remove('on'));
       o.classList.add('on');
       CHOSEN={ name:(m.model||m.name||''), repo:(m.name||m.model||''), vram:(m.vram_q4_gb||m.vram_gb||0) };
-      $('#s2-next').disabled=false;
-      modelCmdDirty=false;  // a fresh pick re-derives the serve command
+      modelCmdDirty=false; ensureServeCmd();
+      $('#serve-wrap').hidden=false;
     });
-  }).catch(e=>{ $('#models').innerHTML = e===401?adminNote:'<span class="muted">Could not rank models. You can still continue and serve one in the Cookbook.</span>'; });
+  }).catch(e=>{ $('#models').innerHTML = e===401?adminNote:'<span class="muted">Could not rank models — switch to the Cloud API tab, or serve a model by command below.</span>'; });
 }
 
-// ── STEP 3: serve it ────────────────────────────────────────────────────────
+// ── STEP 1 / LOCAL: serve it ─────────────────────────────────────────────────
 let modelCmdDirty=false;
 $('#serve-cmd').addEventListener('input',()=>{ modelCmdDirty=true; });
 function baseName(s){ return String(s||'').split('/').pop().toLowerCase(); }
 function ensureServeCmd(){
-  if(!CHOSEN){ $('#serve-pick').textContent='No model chosen — go back a step, or skip if one is already running.'; return; }
+  if(!CHOSEN){ $('#serve-pick').textContent='Pick a model above, or skip if one is already running.'; return; }
   $('#serve-pick').innerHTML='Chosen model: <b>'+esc(CHOSEN.name)+'</b>'+(CHOSEN.vram?` · ~${esc(CHOSEN.vram)} GB VRAM`:'');
   if(!modelCmdDirty) $('#serve-cmd').value='ollama run '+baseName(CHOSEN.name);
 }
 function setMsg(id,text,kind){ const el=$('#'+id); if(!el)return; el.textContent=text||'';
   el.style.color = kind==='err'?'var(--err)':kind==='ok'?'var(--ok)':'var(--dim)'; }
+function markConnected(msg){ CONNECTED=true; $('#s1-next').disabled=false; if(msg) setMsg('serve-msg',msg,'ok'); }
 function renderServeTasks(d){
   const el=$('#serve-tasks'); const tasks=(d&&d.tasks)||[];
   if(!tasks.length){ el.innerHTML=''; return; }
@@ -1072,12 +1091,11 @@ function pollTasks(){ j('/api/cookbook/tasks/status').then(d=>{
     renderServeTasks(d);
     const tasks=(d&&d.tasks)||[];
     const ready=tasks.some(t=>['ready','completed'].includes((t.status||'').toLowerCase()));
-    if(ready){ SERVED=true; $('#s3-next').disabled=false;
-      setMsg('serve-msg','Your model is up and running.','ok'); }
+    if(ready){ markConnected('Your model is up and running.'); }
   }).catch(()=>{}); }
 $('#serve-btn').onclick=async()=>{
   const cmd=($('#serve-cmd').value||'').trim();
-  if(!cmd){ setMsg('serve-msg','Nothing to run — go back and pick a model, or skip.','err'); return; }
+  if(!cmd){ setMsg('serve-msg','Nothing to run — pick a model first, or skip.','err'); return; }
   const repo = CHOSEN ? (CHOSEN.repo||CHOSEN.name) : cmd;
   setMsg('serve-msg','Starting your model…');
   $('#serve-btn').disabled=true;
@@ -1085,14 +1103,57 @@ $('#serve-btn').onclick=async()=>{
     const r=await j('/api/model/serve',{method:'POST',body:JSON.stringify({repo_id:repo, cmd:cmd, platform:'linux'})});
     if(r.ok){ setMsg('serve-msg','Starting up — watch the progress below.','ok');
       if(!pollTimer){ pollTasks(); pollTimer=setInterval(pollTasks,3000); }
-      // allow continuing once launched (it keeps running in the background)
-      $('#s3-next').disabled=false;
+      markConnected();
     } else { setMsg('serve-msg', r.error||r.detail||'Could not start the model.','err'); $('#serve-btn').disabled=false; }
   }catch(e){ setMsg('serve-msg', e===401?'Admin only.':'Could not start the model.','err'); $('#serve-btn').disabled=false; }
 };
-$('#serve-skip').onclick=()=>{ SERVED=true; $('#s3-next').disabled=false; setMsg('serve-msg','Skipped — assuming a model is already running.','ok'); };
+$('#serve-skip').onclick=()=>{ markConnected('Skipped — assuming a model is already running.'); };
 
-// ── STEP 4: hire a starter agent ────────────────────────────────────────────
+// ── STEP 1 / CLOUD: connect a provider API (in the same place) ───────────────
+const PROVIDERS=[
+  {name:'Anthropic', url:'https://api.anthropic.com', hint:'Claude'},
+  {name:'OpenAI', url:'https://api.openai.com/v1', hint:'GPT'},
+  {name:'OpenRouter', url:'https://openrouter.ai/api/v1', hint:'many models', req:true},
+  {name:'DeepSeek', url:'https://api.deepseek.com/v1', hint:'cheap & strong'},
+  {name:'Groq', url:'https://api.groq.com/openai/v1', hint:'very fast'},
+  {name:'Google Gemini', url:'https://generativelanguage.googleapis.com/v1beta/openai', hint:'Gemini'},
+  {name:'Mistral', url:'https://api.mistral.ai/v1', hint:'Mistral'},
+  {name:'Together AI', url:'https://api.together.xyz/v1', hint:'open models'},
+  {name:'xAI Grok', url:'https://api.x.ai/v1', hint:'Grok'},
+  {name:'Z.AI', url:'https://api.z.ai/api/paas/v4', hint:'GLM'},
+  {name:'Ollama Cloud', url:'https://ollama.com/api', hint:'hosted Ollama', req:true},
+];
+let CLOUD=null, provRendered=false;
+function renderProviders(){
+  if(provRendered) return; provRendered=true;
+  const g=$('#provgrid');
+  g.innerHTML=PROVIDERS.map((p,i)=>`<div class="prov" data-i="${i}">${esc(p.name)}<span class="ph">${esc(p.hint)}</span></div>`).join('');
+  g.querySelectorAll('.prov').forEach(b=>b.onclick=()=>{
+    g.querySelectorAll('.prov').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); CLOUD=PROVIDERS[+b.dataset.i];
+    $('#cl-connect').disabled=false;
+  });
+}
+$('#cl-connect').onclick=async()=>{
+  if(!CLOUD){ setMsg('cl-msg','Pick a provider first.','err'); return; }
+  const key=($('#cl-key').value||'').trim();
+  if(!key){ setMsg('cl-msg','Paste your API key for '+CLOUD.name+'.','err'); return; }
+  $('#cl-connect').disabled=true; setMsg('cl-msg','Connecting to '+CLOUD.name+'…');
+  try{
+    const fd=new FormData();
+    fd.append('base_url',CLOUD.url); fd.append('api_key',key);
+    fd.append('name',CLOUD.name); fd.append('model_type','llm');
+    if(CLOUD.req) fd.append('require_models','true'); else fd.append('skip_probe','false');
+    const res=await fetch('/api/model-endpoints',{method:'POST',body:fd,credentials:'same-origin'});
+    const d=await res.json();
+    if(res.ok){ const n=d.models?d.models.length:0;
+      setMsg('cl-msg','Connected — found '+n+' model'+(n!==1?'s':'')+'.','ok');
+      CONNECTED=true; $('#s1-next').disabled=false;
+    } else { setMsg('cl-msg', d.detail||'Could not connect — check the key.','err'); $('#cl-connect').disabled=false; }
+  }catch(e){ setMsg('cl-msg', e===401?'Admin only.':'Connection failed.','err'); $('#cl-connect').disabled=false; }
+};
+
+// ── STEP 2: hire a starter agent ─────────────────────────────────────────────
 $('#hire-btn').onclick=async()=>{
   const name=($('#a-name').value||'').trim();
   if(!name){ $('#hire-msg').textContent='Give your helper a name first.'; return; }
@@ -1103,20 +1164,16 @@ $('#hire-btn').onclick=async()=>{
       personality:$('#a-pers').value, tools:['web_search','web_fetch'],
       autonomy:$('#a-auto').value })});
     if(r.ok){ HIRED=true; $('#hire-msg').textContent='Hired '+esc((r.agent&&r.agent.name)||name)+' ✓'; $('#hire-msg').style.color='var(--ok)';
-      $('#hire-btn').textContent='Hired'; $('#s4-next').disabled=false;
-      $('#done-summary').textContent='Your machine is ready, a model is serving, and '+name+' has been hired. Meet your team in the Office, or head back to the dashboard.';
+      $('#hire-btn').textContent='Hired'; $('#s2-next').disabled=false;
+      $('#done-summary').textContent='A model is connected and '+name+' has been hired. Meet your team in the Office, or head back to the dashboard.';
     } else { $('#hire-msg').textContent=r.detail||'Could not hire.'; $('#hire-msg').style.color='var(--err)'; $('#hire-btn').disabled=false; }
   }catch(e){ $('#hire-msg').textContent = e===401?'Admin only.':'Could not hire.'; $('#hire-msg').style.color='var(--err)'; $('#hire-btn').disabled=false; }
 };
 
 // ── navigation ──────────────────────────────────────────────────────────────
-$('#s1-next').onclick=()=>{ loadModels(); showStep(2); };
+$('#s1-next').onclick=()=>showStep(2);
 $('#s2-back').onclick=()=>showStep(1);
 $('#s2-next').onclick=()=>showStep(3);
-$('#s3-back').onclick=()=>showStep(2);
-$('#s3-next').onclick=()=>showStep(4);
-$('#s4-back').onclick=()=>showStep(3);
-$('#s4-next').onclick=()=>showStep(5);
 
 showStep(1);
 </script></body></html>"""
