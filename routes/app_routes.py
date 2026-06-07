@@ -155,7 +155,7 @@ _HOME = r"""<!doctype html><html><head><meta charset="utf-8">
  .theme-switch button[aria-current="true"]{ background:var(--txt); color:var(--bg) }
 </style></head><body>
 <nav class="topbar" aria-label="Section navigation">
-  <a class="jump" href="/manage" title="Plugins, diagnostics, settings">Admin <span class="arrow">→</span></a>
+  <a class="jump" href="/app">Home</a><a class="jump" href="/">Chat</a><a class="jump" href="/app/office">Office</a><a class="jump" href="/app/code">Code</a><a class="jump" href="/app/cookbook">Cookbook</a><a class="jump" href="/manage">Admin</a>
   <div class="theme-switch" aria-label="Theme">
     <button data-theme-set="dark">Dark</button>
     <button data-theme-set="light">Light</button>
@@ -367,8 +367,7 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
  ::-webkit-scrollbar-thumb{ background:var(--sep-2); border-radius:5px } ::-webkit-scrollbar-thumb:hover{ background:var(--dim) }
 </style></head><body>
 <nav class="topbar" aria-label="Section navigation">
-  <a class="jump" href="/app" title="Back to dashboard"><span class="arrow">←</span> Home</a>
-  <a class="jump" href="/manage" title="Plugins, diagnostics, settings">Admin <span class="arrow">→</span></a>
+  <a class="jump" href="/app">Home</a><a class="jump" href="/">Chat</a><a class="jump" href="/app/office">Office</a><a class="jump" href="/app/code">Code</a><a class="jump" href="/app/cookbook">Cookbook</a><a class="jump" href="/manage">Admin</a>
   <div class="theme-switch" aria-label="Theme">
     <button data-theme-set="dark">Dark</button>
     <button data-theme-set="light">Light</button>
@@ -676,7 +675,7 @@ _OFFICE = r"""<!doctype html><html><head><meta charset="utf-8">
  .out{white-space:pre-wrap;font-size:13px;line-height:1.5;color:var(--txt);background:var(--tint);border:1px solid var(--sep);border-radius:10px;padding:12px 14px;margin-top:8px}
  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--sep-2);border-radius:5px}
 </style></head><body>
-<nav class="topbar"><a class="jump" href="/app">← Home</a><a class="jump" href="/manage">Admin →</a>
+<nav class="topbar"><a class="jump" href="/app">Home</a><a class="jump" href="/">Chat</a><a class="jump" href="/app/office">Office</a><a class="jump" href="/app/code">Code</a><a class="jump" href="/app/cookbook">Cookbook</a><a class="jump" href="/manage">Admin</a>
  <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
 
 <div class="top"><div class="mark">Office</div><span id="cap" class="pill">checking capacity…</span></div>
@@ -888,7 +887,7 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
  .theme-switch button[aria-current="true"]{background:var(--txt);color:var(--bg)}
  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--sep-2);border-radius:5px}
 </style></head><body>
-<nav class="topbar"><a class="jump" href="/app">← Home</a><a class="jump" href="/manage">Admin →</a>
+<nav class="topbar"><a class="jump" href="/app">Home</a><a class="jump" href="/">Chat</a><a class="jump" href="/app/office">Office</a><a class="jump" href="/app/code">Code</a><a class="jump" href="/app/cookbook">Cookbook</a><a class="jump" href="/manage">Admin</a>
  <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
 
 <div class="top"><div class="mark">Set up your AI</div><span id="stepcap" class="pill">Step 1 of 5</span></div>
@@ -1152,7 +1151,7 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  .theme-switch button[aria-current="true"]{background:var(--txt);color:var(--bg)}
  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--sep-2);border-radius:5px}
 </style></head><body>
-<nav class="topbar"><a class="jump" href="/app">← Home</a><a class="jump" href="/manage">Admin →</a>
+<nav class="topbar"><a class="jump" href="/app">Home</a><a class="jump" href="/">Chat</a><a class="jump" href="/app/office">Office</a><a class="jump" href="/app/code">Code</a><a class="jump" href="/app/cookbook">Cookbook</a><a class="jump" href="/manage">Admin</a>
  <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
 
 <div class="top"><div class="mark">Code</div><span id="aider-pill" class="pill">checking…</span></div>
