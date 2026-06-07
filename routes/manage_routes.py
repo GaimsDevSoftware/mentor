@@ -704,32 +704,81 @@ def setup_manage_routes() -> APIRouter:
             return {"ok": False, "need_model": True,
                     "detail": "Pick your guide AI first (the card above)."}
         msgs = payload.get("messages") or []
+        # Live setup state — so the guide tells the user EXACTLY what's left and
+        # never re-asks about things already done.
+        eps = []
+        try:
+            from core.database import SessionLocal, ModelEndpoint
+            db = SessionLocal()
+            try:
+                for e in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+                    local = any(h in (e.base_url or "") for h in ("localhost", "127.0.0.1", "11434"))
+                    try:
+                        ms = _json.loads(e.cached_models) if e.cached_models else []
+                    except Exception:
+                        ms = []
+                    eps.append("%s [%s, %d models, e.g. %s]" % (
+                        e.name, "local" if local else "cloud", len(ms),
+                        (", ".join(str(x) for x in ms[:3]) or "—")))
+            finally:
+                db.close()
+        except Exception:
+            pass
+        default_model = (_gs("default_model", "") or "").strip()
+        aider_model = (_gs("aider_model", "") or "").strip()
+        try:
+            import shutil
+            ollama = bool(shutil.which("ollama"))
+        except Exception:
+            ollama = False
+        nagents = 0
+        try:
+            from src.agents_store import list_agents
+            nagents = len(list_agents(_admin) or [])
+        except Exception:
+            pass
+        state = (
+            "\n\nCURRENT SETUP STATE — rely on this; never ask about things already done:\n"
+            "- Guide AI (that's you): %s\n"
+            "- Connected work-model endpoints: %d%s\n"
+            "- Default work model: %s\n"
+            "- Coder model: %s\n"
+            "- Ollama installed locally: %s\n"
+            "- Agents hired: %d\n"
+            "DEFINITION OF DONE: at least one work-model endpoint connected AND a default work model set "
+            "(a hired agent is a nice bonus). When everything's done, emit the `done` action and tell the "
+            "user to click 'Next →' or open Chat." % (
+                spec, len(eps), (": " + "; ".join(eps) if eps else " (none yet)"),
+                (default_model or "NOT set yet"), (aider_model or "not set"), ollama, nagents)
+        )
         system = (
-            "You are Mentor's setup concierge — a friendly, concise guide that helps a possibly "
-            "NON-TECHNICAL user set up their local-first AI app, and DOES the setup for them. "
-            "Keep replies short (1-3 sentences). Ask ONE question at a time.\n\n"
-            "You can perform an action by ending your reply with EXACTLY ONE fenced block:\n"
+            "You are Mentor's setup concierge. Your ONE job: get the user's setup FINISHED — giving advice "
+            "that uses all the context below — then wrap up. You are PROACTIVE and take charge: you can do "
+            "everything yourself; the user just tells you what they want after you ask.\n\n"
+            "STYLE: warm, confident, brief (1-3 sentences). EVERY reply MUST end with either an action OR a "
+            "single clear question/instruction — NEVER leave the user unsure what to do next. Keep the "
+            "conversation going until setup is DONE; if it isn't, state exactly what's needed next and offer "
+            "to do it for them.\n\n"
+            "Do an action by ending your reply with EXACTLY ONE fenced block:\n"
             "```action\n{\"type\":\"<name>\",\"args\":{...}}\n```\n"
-            "Actions:\n"
-            "- detect_system — read the user's GPU/VRAM/RAM.\n"
-            "- install_ollama — install the local engine (needed before local models).\n"
-            "- setup_free_helper — download a small free LOCAL model and set it as a helper.\n"
-            "- recommend_local — list local models that fit this machine, ranked.\n"
-            "- serve_local {\"model\":\"<name>\"} — start a local model so it's usable.\n"
-            "- set_role {\"role\":\"default_model|aider_model|research_model|vision_model\",\"spec\":\"model@endpoint\"} — assign a model to a job.\n"
-            "- open_concierge — scroll the user to the guide-AI / cloud-key picker.\n"
-            "Rules: say ONE sentence about what you're about to do BEFORE the action block. "
-            "Emit at most ONE action per reply, and only when you have what you need. "
-            "NEVER ask for an API key in chat — if a cloud key is needed, use open_concierge and "
-            "tell the user to use the picker. After an action result arrives, continue the plan. "
-            "Begin by asking what the user wants to use Mentor for (coding, research, chat, private/local), "
-            "then propose and run a sensible setup."
+            "Actions: detect_system; install_ollama; setup_free_helper; recommend_local; "
+            "serve_local {\"model\":\"<name>\"}; "
+            "set_role {\"role\":\"default_model|aider_model|research_model|vision_model\",\"spec\":\"model@endpoint\"}; "
+            "open_concierge (scroll user to the key/guide picker); done (setup complete).\n"
+            "RULES: one sentence before an action; at most ONE action per reply, only when ready. NEVER ask "
+            "for an API key in chat — use open_concierge. Use the exact model@endpoint specs from the state "
+            "when setting roles. Match models to the user's stated goal + their hardware." + state
         )
         chat = [{"role": "system", "content": system}]
         for m in msgs[-16:]:
             c = str(m.get("content", "")).strip()
             if c:
                 chat.append({"role": ("assistant" if m.get("role") == "assistant" else "user"), "content": c})
+        if not any(c["role"] != "system" for c in chat):
+            chat.append({"role": "user", "content":
+                         "I just opened setup. Greet me in ONE short line, then — using the setup state — "
+                         "tell me the single next thing to finish setup and offer to do it (or ask my goal "
+                         "if nothing is set up yet)."})
         try:
             from src.ai_interaction import _resolve_model
             from src.llm_core import complete_with_continuation

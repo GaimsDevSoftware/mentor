@@ -1151,7 +1151,7 @@ function cgSelect(c){
       if(r&&r.need_ollama){ m.textContent='Install Ollama first (in the Local tab below), then retry.'; $('#cg-local-go').disabled=false; return; }
       const poll=setInterval(async()=>{ let s; try{ s=await j('/api/setup/free-helper/status'); }catch(e){ return; }
         if(s.log) m.textContent=String(s.log).slice(-120);
-        if(s.status==='done'){ clearInterval(poll); m.textContent='✓ Your guide AI is ready (local).'; m.style.color='var(--ok)'; }
+        if(s.status==='done'){ clearInterval(poll); m.textContent='✓ Your guide AI is ready (local).'; m.style.color='var(--ok)'; conciergeReady(); }
         else if(s.status==='failed'){ clearInterval(poll); m.textContent=String(s.log||'Failed').slice(-160); m.style.color='var(--err)'; $('#cg-local-go').disabled=false; } }, 3000); };
     return;
   }
@@ -1169,7 +1169,7 @@ function cgSelect(c){
       if(!pick){ m.textContent='Connected, but no models came back — try another provider.'; m.style.color='var(--err)'; $('#cg-go').disabled=false; return; }
       const spec=pick+'@'+c.name;
       await fetch('/api/manage/setting',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'teacher_model',value:spec})});
-      m.textContent='✓ Your guide AI is ready: '+pick+' ('+c.name+').'; m.style.color='var(--ok)';
+      m.textContent='✓ Your guide AI is ready: '+pick+' ('+c.name+').'; m.style.color='var(--ok)'; conciergeReady();
     }catch(e){ m.textContent='Request failed.'; m.style.color='var(--err)'; $('#cg-go').disabled=false; }
   };
 }
@@ -1204,30 +1204,42 @@ async function asstAct(a){
     return 'unknown action: '+t;
   }catch(e){ return 'action error: '+e; }
 }
+let asstStarted=false;
 async function asstTurn(steps){
-  if(steps<=0) return;
+  if(steps<=0){ asstNote('Paused — say "continue" and I\'ll keep going.'); return; }
   let r; try{ r=await j('/api/setup/assistant',{method:'POST',body:JSON.stringify({messages:ASST})}); }
-  catch(e){ asstBubble('assistant','Hmm, I could not reach the guide AI.'); return; }
-  if(r && r.need_model){ asstBubble('assistant','Pick your guide AI in the card above first — then I can help set things up.'); return; }
-  if(!r || !r.ok){ asstBubble('assistant', (r&&r.detail)||'Something went wrong.'); return; }
+  catch(e){ asstBubble('assistant','Hmm, I could not reach the guide AI. Try again in a moment.'); return; }
+  if(r && r.need_model){ asstBubble('assistant','First pick your guide AI in the card above — Groq (free, ~1 min) is the easiest. Then I\'ll take it from here.');
+    const el=$('#cg-tiers'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); return; }
+  if(!r || !r.ok){ asstBubble('assistant', (r&&r.detail)||'Something went wrong — let\'s try that again.'); return; }
   if(r.reply){ ASST.push({role:'assistant',content:r.reply}); asstBubble('assistant', r.reply); }
   if(r.action && r.action.type){
+    if(r.action.type==='done'){ asstNote('✓ Setup complete'); asstBubble('assistant','You\'re all set 🎉 — click “Next →” at the bottom, or jump straight into Chat. I\'m here if you want to add or change anything.'); return; }
     asstNote('doing: '+r.action.type+(r.action.args&&r.action.args.model?(' ('+r.action.args.model+')'):''));
     const result=await asstAct(r.action);
     asstNote('result: '+String(result).slice(0,140));
     ASST.push({role:'user',content:'[action result] '+r.action.type+': '+result});
-    await asstTurn(steps-1);  // let it continue the plan
+    await asstTurn(steps-1);  // let it continue the plan toward "done"
   }
 }
+async function asstKickoff(force){
+  if(force){ asstStarted=false; ASST.length=0; const log=$('#asst-log'); if(log) log.innerHTML=''; }
+  if(asstStarted||asstBusy) return; asstStarted=true; asstBusy=true; const b=$('#asst-send'); if(b)b.disabled=true;
+  try{ await asstTurn(6); } finally { asstBusy=false; if(b)b.disabled=false; }
+}
+// Called when the user picks/sets up their guide AI — the assistant takes over.
+function conciergeReady(){ try{ asstKickoff(true); const el=$('#assistant-card'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }catch(e){} }
 async function asstSend(){
   if(asstBusy) return; const inp=$('#asst-input'); const text=(inp.value||'').trim(); if(!text) return;
-  asstBusy=true; $('#asst-send').disabled=true; inp.value='';
+  asstStarted=true; asstBusy=true; $('#asst-send').disabled=true; inp.value='';
   ASST.push({role:'user',content:text}); asstBubble('user', text);
   await asstTurn(6);
   asstBusy=false; $('#asst-send').disabled=false; inp.focus();
 }
 (function(){ const b=$('#asst-send'), i=$('#asst-input'); if(b) b.onclick=asstSend;
-  if(i) i.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); asstSend(); } }); })();
+  if(i) i.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); asstSend(); } });
+  // Proactive: the assistant greets first and drives — it doesn't wait for you.
+  setTimeout(()=>asstKickoff(false), 900); })();
 
 // ── STEP 1 / LOCAL: hardware ─────────────────────────────────────────────────
 j('/api/hwfit/system').then(s=>{
