@@ -1231,7 +1231,12 @@ async function loadPlugins(){
     const rows=sets[p.name]||[];
     if(rows.length){const box=document.createElement('div');box.style.marginTop='14px';box.style.paddingTop='12px';box.style.borderTop='1px solid var(--sep)';
       box.innerHTML='<div class="muted" style="margin-bottom:6px;font-weight:500">Settings</div>';
-      rows.forEach(r=>box.appendChild(settingRow(r,p.name)));c.appendChild(box);}
+      const normal=rows.filter(r=>!r.advanced), adv=rows.filter(r=>r.advanced);
+      normal.forEach(r=>box.appendChild(settingRow(r,p.name)));
+      if(adv.length){const det=document.createElement('details');det.style.marginTop='6px';
+        det.innerHTML='<summary class="muted" style="cursor:pointer;font-size:12px">Advanced ('+adv.length+') — usually leave as-is</summary>';
+        adv.forEach(r=>det.appendChild(settingRow(r,p.name)));box.appendChild(det);}
+      c.appendChild(box);}
     el.appendChild(c);
   });
 }

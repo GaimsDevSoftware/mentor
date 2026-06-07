@@ -25,13 +25,15 @@
       "key": "self_coder_health_url",
       "label": "Health URL used by canary",
       "type": "text",
-      "default": "http://127.0.0.1:7000/app"
+      "default": "http://127.0.0.1:7000/app",
+      "advanced": true
     },
     {
       "key": "self_coder_service",
       "label": "systemd --user service name",
       "type": "text",
-      "default": "odysseus-ui.service"
+      "default": "odysseus-ui.service",
+      "advanced": true
     }
   ]
 }
