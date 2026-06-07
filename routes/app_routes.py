@@ -989,7 +989,7 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
       <div id="provgrid" class="provgrid"></div>
       <label class="lab" style="margin-top:14px">API key <span class="faint" style="text-transform:none;letter-spacing:0">— from the provider's dashboard; stored locally, never shared</span></label>
       <input id="cl-key" class="fld" type="password" placeholder="paste your API key" autocomplete="off">
-      <div class="row" style="margin-top:12px"><button class="btn primary" id="cl-connect" type="button" disabled>Connect</button><span id="cl-msg" class="actmsg muted"></span></div>
+      <div class="row" style="margin-top:12px"><button class="btn" id="cl-test" type="button" disabled>Test key</button><button class="btn primary" id="cl-connect" type="button" disabled>Connect</button><span id="cl-msg" class="actmsg muted"></span></div>
     </div>
   </div>
   <div class="nav"><a class="btn" href="/app">← Cancel</a><span class="grow"></span><button class="btn primary" id="s1-next" disabled>Next →</button></div>
@@ -1086,21 +1086,27 @@ function loadModels(){
     ms=ms.slice(0,12);
     const el=$('#models');
     if(!ms.length){ el.innerHTML='<span class="muted" style="font-size:13px">Nothing fits once desktop + browser headroom is reserved. Pick a smaller / more-quantized model, or switch to the <b>Cloud API</b> tab above.</span>'; return; }
-    el.innerHTML=ms.map((m,i)=>{
+    function selectModel(i){
+      const m=ms[i]; if(!m) return;
+      el.querySelectorAll('.opt').forEach(x=>x.classList.remove('on'));
+      const node=el.querySelector('.opt[data-i="'+i+'"]'); if(node) node.classList.add('on');
+      CHOSEN={ name:(m.model||m.name||''), repo:(m.name||m.model||''), vram:(m.vram_q4_gb||m.vram_gb||0) };
+      modelCmdDirty=false; ensureServeCmd();
+      $('#serve-wrap').hidden=false;
+    }
+    // ✨ "pick for me" = the ranker's top fit for this hardware. No circular LLM
+    // dependency (there's no model connected yet) — it's the honest best score.
+    el.innerHTML='<div class="row" style="margin-bottom:10px"><button class="btn" id="rec-btn" type="button">✨ Pick the best for my machine</button><span id="rec-why" class="faint" style="font-size:12px"></span></div>'
+      + ms.map((m,i)=>{
       const name=m.model||m.name||'?'; const v=m.vram_q4_gb||m.vram_gb;
       return `<div class="opt" data-i="${i}"><span class="rd"></span>`
         +`<span class="grow"><div class="name">${esc(name)}</div>`
         +`<div class="meta">${v?`~${esc(v)} GB VRAM`:''}${m.context_length?` · ${esc(m.context_length)} ctx`:''}${m.size_gb?` · ${esc(m.size_gb)} GB`:''}</div></span>`
-        +`<span class="badge fit">fits</span></div>`;
+        +`${i===0?'<span class="badge run">recommended</span>':''}<span class="badge fit">fits</span></div>`;
     }).join('');
-    el.querySelectorAll('.opt').forEach(o=>o.onclick=()=>{
-      const m=ms[+o.dataset.i];
-      el.querySelectorAll('.opt').forEach(x=>x.classList.remove('on'));
-      o.classList.add('on');
-      CHOSEN={ name:(m.model||m.name||''), repo:(m.name||m.model||''), vram:(m.vram_q4_gb||m.vram_gb||0) };
-      modelCmdDirty=false; ensureServeCmd();
-      $('#serve-wrap').hidden=false;
-    });
+    el.querySelectorAll('.opt').forEach(o=>o.onclick=()=>selectModel(+o.dataset.i));
+    const rb=$('#rec-btn'); if(rb) rb.onclick=()=>{ selectModel(0); const m=ms[0];
+      if(m) $('#rec-why').textContent='Chose '+(m.model||m.name)+' — highest fit score for your hardware (best balance of capability and speed).'; };
   }).catch(e=>{ $('#models').innerHTML = e===401?adminNote:'<span class="muted">Could not rank models — switch to the Cloud API tab, or serve a model by command below.</span>'; });
 }
 
@@ -1178,9 +1184,25 @@ function renderProviders(){
   g.querySelectorAll('.prov').forEach(b=>b.onclick=()=>{
     g.querySelectorAll('.prov').forEach(x=>x.classList.remove('on'));
     b.classList.add('on'); CLOUD=PROVIDERS[+b.dataset.i];
-    $('#cl-connect').disabled=false;
+    $('#cl-connect').disabled=false; $('#cl-test').disabled=false;
   });
 }
+// Validate the key BEFORE committing — explicit feedback so a wrong key is caught
+// here, not later when hiring an agent.
+$('#cl-test').onclick=async()=>{
+  if(!CLOUD){ setMsg('cl-msg','Pick a provider first.','err'); return; }
+  const key=($('#cl-key').value||'').trim();
+  if(!key){ setMsg('cl-msg','Paste your API key to test.','err'); return; }
+  $('#cl-test').disabled=true; setMsg('cl-msg','Testing '+CLOUD.name+'…');
+  try{
+    const fd=new FormData(); fd.append('base_url',CLOUD.url); fd.append('api_key',key);
+    const res=await fetch('/api/model-endpoints/test',{method:'POST',body:fd,credentials:'same-origin'});
+    const d=await res.json();
+    if(res.ok && d.online){ setMsg('cl-msg','✓ Key works — '+(d.count||0)+' model'+((d.count||0)!==1?'s':'')+' available. Click Connect to save.','ok'); }
+    else { setMsg('cl-msg','✗ '+(d.ping_error||'Could not reach '+CLOUD.name+' — check the key.'),'err'); }
+  }catch(e){ setMsg('cl-msg', e===401?'Admin only.':'Test failed.','err'); }
+  $('#cl-test').disabled=false;
+};
 $('#cl-connect').onclick=async()=>{
   if(!CLOUD){ setMsg('cl-msg','Pick a provider first.','err'); return; }
   const key=($('#cl-key').value||'').trim();
