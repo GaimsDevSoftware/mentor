@@ -525,13 +525,18 @@ def setup_manage_routes() -> APIRouter:
         context = str(payload.get("context", "")).strip()
         if not topic:
             return {"ok": False, "detail": "no topic"}
+        # Built-in fallback: the topic strings are already plain-language, so the
+        # guide ALWAYS answers — even before any model is connected (no circular
+        # "set up AI to learn how to set up AI"). A configured model upgrades this
+        # to a richer, machine-specific explanation.
+        _builtin = (topic + "\n\n_Connect a model (Setup) for a fuller explanation tailored to your machine._")
         try:
             from src.settings import get_setting as _gs
             spec = (_gs("improve_teacher_model", "") or _gs("teacher_model", "") or "").strip()
         except Exception:
             spec = ""
         if not spec:
-            return {"ok": False, "detail": "No AI configured. Set teacher_model (a local coder is free)."}
+            return {"ok": True, "explanation": _builtin, "builtin": True}
         prompt = (f"You are a concise UI helper for Odysseus, a self-hosted, local-first AI app "
                   f"(often one machine, small local models, plus optional cloud sources).\n\n"
                   f"The user is looking at this part of the interface: {topic}\n"
@@ -548,9 +553,11 @@ def setup_manage_routes() -> APIRouter:
                 [{"role": "system", "content": "You are a concise, helpful UI assistant."},
                  {"role": "user", "content": prompt}],
                 headers=headers or {}, max_tokens=600, timeout=90)
-            return {"ok": True, "explanation": (reply or "").strip()}
-        except Exception as e:
-            return {"ok": False, "detail": f"AI call failed: {e}"}
+            text = (reply or "").strip()
+            return {"ok": True, "explanation": text or _builtin}
+        except Exception:
+            # Model configured but unreachable → still help, with the built-in text.
+            return {"ok": True, "explanation": _builtin, "builtin": True}
 
     @router.get("/api/manage/teacher-model-options")
     async def teacher_model_options(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
@@ -882,7 +889,7 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
    --tint:rgba(43,58,74,0.04); --tint-2:rgba(43,58,74,0.07); --tint-3:rgba(43,58,74,0.10);
    --shadow: 0 1px 0 rgba(255,255,255,0.5) inset, 0 8px 22px rgba(43,58,74,0.08);
  }
- *{box-sizing:border-box}
+ *{box-sizing:border-box} option{background:var(--bg-2);color:var(--txt)}
  html,body{margin:0}
  body{
    background: radial-gradient(120% 80% at 50% -10%, var(--bg-2), var(--bg)) fixed;
