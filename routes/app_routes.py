@@ -408,26 +408,31 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
 <div class="sec-title">Running now <button class="help-btn" data-topic="The 'Running now' panel — models currently being served or downloaded, with live progress, phase and tokens/sec">?</button></div>
 <div class="card"><div id="tasks" class="muted">checking for serving / downloading jobs…</div></div>
 
-<div class="sec-title">Get a model <button class="help-btn" data-topic="The 'Get a model' panel — download a model from Hugging Face to the local cache, or serve a model so it becomes a usable endpoint. Downloads only fetch files; serving loads the model into VRAM and starts an inference server.">?</button></div>
+<div class="sec-title">Get a model <button class="help-btn" data-topic="The 'Get a model' panel — the easy way is to pick from the ranked 'Fits this machine' list and click Download, then Serve from 'Downloaded & ready'. Advanced users can download by Hugging Face repo ID or serve a custom command.">?</button></div>
 <div class="card">
-  <div class="row"><span class="grow"><b style="font-size:14px">Download</b> <span class="faint" style="font-size:12px">— pull a model from Hugging Face into the local cache (files only, safe)</span></span></div>
-  <div class="fld-row">
-    <label><span class="lab">Hugging Face repo id</span><input id="dl-repo" class="fld" placeholder="e.g. Qwen/Qwen3-4B-GGUF"></label>
-    <label style="flex:0 0 220px"><span class="lab">Include glob (optional)</span><input id="dl-include" class="fld" placeholder="*Q4_K_M*"></label>
-    <button class="btn" id="dl-btn">Download</button>
-  </div>
-  <div id="dl-msg" class="actmsg muted"></div>
-</div>
-<div class="card">
-  <div class="row"><span class="grow"><b style="font-size:14px">Serve</b> <span class="faint" style="font-size:12px">— start an inference server. Review the command first; it loads the model into VRAM.</span></span></div>
-  <div class="fld-row">
-    <label style="flex:0 0 240px"><span class="lab">Model / repo (label)</span><input id="serve-repo" class="fld" placeholder="e.g. qwen3-4b"></label>
-    <label style="flex:0 0 130px"><span class="lab">GPUs (optional)</span><input id="serve-gpus" class="fld" placeholder="0  or  0,1"></label>
-  </div>
-  <div class="fld-row"><label><span class="lab">Command (editable — runs in a tmux session)</span><textarea id="serve-cmd" class="fld" rows="2" placeholder="ollama run qwen3:4b"></textarea></label></div>
-  <div class="faint" style="font-size:11px;margin-top:6px">Examples — Ollama: <span class="mono">ollama run qwen3:4b</span> · llama.cpp: <span class="mono">llama-server -m model.gguf -ngl 99 -c 8192</span> · vLLM: <span class="mono">vllm serve Qwen/Qwen3-4B --max-num-seqs 4</span></div>
-  <div class="fld-row"><button class="btn" id="serve-btn">Launch server</button></div>
+  <div class="why" style="margin:0;color:var(--dim);font-size:13px">Easiest way — no typing: pick a model in <b>Fits this machine</b> below and click <b>Download</b>. When it's ready it shows up in <b>Downloaded &amp; ready</b> — click <b>Serve</b> there and you're done. Mentor fills in the repo ID and the command for you.</div>
+  <div class="row" style="margin-top:10px"><button class="btn" id="jump-fits">Browse models that fit my machine ↓</button></div>
+  <div id="dl-msg" class="actmsg muted" style="margin-top:8px"></div>
   <div id="serve-msg" class="actmsg muted"></div>
+  <details style="margin-top:10px"><summary class="faint" style="cursor:pointer;font-size:12px">Advanced — download by repo ID, or serve a custom command</summary>
+    <div style="margin-top:12px">
+      <div class="row"><span class="grow"><b style="font-size:14px">Download</b> <span class="faint" style="font-size:12px">— pull a model from Hugging Face into the local cache (files only, safe)</span></span></div>
+      <div class="fld-row">
+        <label><span class="lab">Hugging Face repo id</span><input id="dl-repo" class="fld" placeholder="e.g. Qwen/Qwen3-4B-GGUF"></label>
+        <label style="flex:0 0 220px"><span class="lab">Include glob (optional)</span><input id="dl-include" class="fld" placeholder="*Q4_K_M*"></label>
+        <button class="btn" id="dl-btn">Download</button>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--sep);margin:16px 0">
+      <div class="row"><span class="grow"><b style="font-size:14px">Serve</b> <span class="faint" style="font-size:12px">— start an inference server. Review the command first; it loads the model into VRAM.</span></span></div>
+      <div class="fld-row">
+        <label style="flex:0 0 240px"><span class="lab">Model / repo (label)</span><input id="serve-repo" class="fld" placeholder="e.g. qwen3-4b"></label>
+        <label style="flex:0 0 130px"><span class="lab">GPUs (optional)</span><input id="serve-gpus" class="fld" placeholder="0  or  0,1"></label>
+      </div>
+      <div class="fld-row"><label><span class="lab">Command (editable — runs in a tmux session)</span><textarea id="serve-cmd" class="fld" rows="2" placeholder="ollama run qwen3:4b"></textarea></label></div>
+      <div class="faint" style="font-size:11px;margin-top:6px">Examples — Ollama: <span class="mono">ollama run qwen3:4b</span> · llama.cpp: <span class="mono">llama-server -m model.gguf -ngl 99 -c 8192</span> · vLLM: <span class="mono">vllm serve Qwen/Qwen3-4B --max-num-seqs 4</span></div>
+      <div class="fld-row"><button class="btn" id="serve-btn">Launch server</button></div>
+    </div>
+  </details>
 </div>
 
 <div class="sec-title">Recommended roles <button class="help-btn" data-topic="The 'Recommended roles' feature — the teacher model assigns the best available model to each role (coder, planner, vision, …)">?</button></div>
@@ -649,18 +654,20 @@ async function serveModel(repo,cmd,gpus){
 }
 $('#dl-btn').addEventListener('click',()=>downloadModel($('#dl-repo').value,$('#dl-include').value));
 $('#serve-btn').addEventListener('click',()=>serveModel($('#serve-repo').value,$('#serve-cmd').value,$('#serve-gpus').value));
+(function(){const b=$('#jump-fits'); if(b)b.onclick=()=>{const f=$('#fits'); if(f)f.scrollIntoView({behavior:'smooth',block:'start'});};})();
 
 // Per-item buttons: a fit row's Download prefills + runs; a cached row's Serve
 // prefills the form (with a sensible default command) for review, then scrolls.
 document.addEventListener('click',(e)=>{
   const dl=e.target.closest('[data-dl]');
-  if(dl){ $('#dl-repo').value=dl.dataset.dl; $('#dl-repo').scrollIntoView({behavior:'smooth',block:'center'}); downloadModel(dl.dataset.dl,$('#dl-include').value); return; }
+  if(dl){ $('#dl-repo').value=dl.dataset.dl; downloadModel(dl.dataset.dl,$('#dl-include').value);
+    const t=$('#tasks'); if(t) t.scrollIntoView({behavior:'smooth',block:'center'}); return; }
   const sv=e.target.closest('[data-serve]');
   if(sv){ const repo=sv.dataset.serve; const base=repo.split('/').pop();
-    $('#serve-repo').value=base;
-    $('#serve-cmd').value = sv.dataset.gguf ? ('llama-server -m '+repo+' -ngl 99 -c 8192') : ('ollama run '+base.toLowerCase());
-    setMsg('serve-msg','Review the command, then "Launch server".');
-    $('#serve-repo').scrollIntoView({behavior:'smooth',block:'center'}); return; }
+    // One-click: build the command for them and launch (serveModel shows a
+    // confirm with the exact command — that's the review, no form to fill).
+    const cmd = sv.dataset.gguf ? ('llama-server -m '+repo+' -ngl 99 -c 8192') : ('ollama run '+base.toLowerCase());
+    serveModel(base, cmd, ''); return; }
 });
 
 // In-context AI explainers: a "?" on each section asks the teacher model what it
