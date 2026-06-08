@@ -127,7 +127,7 @@ def _post_response(content):
     """
     if not _enabled():
         return content
-    if not isinstance(content, str) or len(content) < _min_chars():
+    if not isinstance(content, str) or len(content) < 80:
         return content
     level = _level()
     comp, o, c = cc.compress(content, level)
