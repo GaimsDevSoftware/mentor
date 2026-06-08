@@ -3787,6 +3787,14 @@ function startOdysseusApp() {
     messageInput.addEventListener('input', () => {
       _syncModelPickerAutohide();
       _debouncedUpdateIcon();
+      // During streaming: swap stop↔queue icon based on whether there's text
+      if (sendBtn && sendBtn.dataset.mode === 'streaming') {
+        const hasText = (messageInput.value || '').trim().length > 0;
+        const _stopSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+        const _queueSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+        sendBtn.innerHTML = hasText ? _queueSvg : _stopSvg;
+        sendBtn.title = hasText ? 'Add to queue' : 'Stop generation';
+      }
     }, { passive: true });
   }
 

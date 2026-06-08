@@ -338,8 +338,6 @@ def _owner_is_admin(owner: Optional[str]) -> bool:
 
 # Map legacy tool names -> (MCP server_id, MCP tool_name)
 _MCP_TOOL_MAP = {
-    "bash":           ("bash",       "bash"),
-    "python":         ("python",     "python"),
     "read_file":      ("filesystem", "read_file"),
     "write_file":     ("filesystem", "write_file"),
     "web_search":     ("web_search", "web_search"),
@@ -384,7 +382,6 @@ def _parse_write_file(content: str) -> Dict:
 
 
 _MCP_ARG_PARSERS: Dict[str, callable] = {
-    "bash":           lambda c: {"command": c},
     "python":         lambda c: {"code": c},
     "web_search":     lambda c: {"query": c.split("\n")[0].strip()},
     "web_fetch":      lambda c: {"url": c.split("\n")[0].strip()},
@@ -1009,6 +1006,17 @@ async def execute_tool_block(
     elif tool == "self_coder":
         desc = "self_coder"
         result = await do_self_coder(content, owner=owner, progress_cb=progress_cb)
+    elif tool == "bash":
+        desc = "bash"
+        try:
+            result = await _direct_fallback(
+                tool=tool,
+                content=content,
+                session_id=session_id,
+            )
+        except Exception as _dbe:
+            logger.warning("bash fallback raised: %s", _dbe, exc_info=True)
+            result = {"error": f"bash failed: {_dbe}", "exit_code": 1}
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()

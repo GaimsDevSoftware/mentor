@@ -246,17 +246,23 @@ import createResearchSynapse from './researchSynapse.js';
         submitBtn.classList.add('anim-land');
         submitBtn.addEventListener('animationend', () => submitBtn.classList.remove('anim-land'), { once: true });
       }, 300);
-      submitBtn.title = 'Stop generation';
+      submitBtn.title = 'Stop generation (or type to queue)';
       submitBtn.dataset.mode = 'streaming';
       submitBtn.dataset.phase = 'processing';
       isStreaming = true;
       _startStallWatchdog();
+      // Update placeholder to hint that typing queues
+      const _qMsg = uiModule.el('message');
+      if (_qMsg) _qMsg.placeholder = 'Type to queue next message…';
     } else if (state === 'idle') {
       submitBtn.dataset.mode = '';
       delete submitBtn.dataset.phase;
       submitBtn.classList.remove('recording');
       isStreaming = false;
       _stopStallWatchdog();
+      // Restore placeholder
+      const _idleMsg = uiModule.el('message');
+      if (_idleMsg) _idleMsg.placeholder = 'Message Mentor…';
       // Auto-drain next queued message
       if (_msgQueue.length > 0 && !_draining) {
         setTimeout(_drainQueue, 150);
@@ -335,13 +341,15 @@ import createResearchSynapse from './researchSynapse.js';
     }
     _queueBarEl.style.display = '';
     const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    _queueBarEl.innerHTML = '<span class="queue-label">Queued:</span>' +
+    _queueBarEl.innerHTML = `<span class="queue-label">Queue (${_msgQueue.length})</span>` +
       _msgQueue.map((item, i) => {
-        const preview = esc(item.text.slice(0, 50)) + (item.text.length > 50 ? '…' : '');
-        return `<span class="queue-chip" data-idx="${i}">` +
+        const preview = esc(item.text.slice(0, 40)) + (item.text.length > 40 ? '…' : '');
+        const isNext = (i === 0);
+        return `<span class="queue-chip${isNext ? ' queue-chip-next' : ''}" data-idx="${i}">` +
+          (isNext ? '<span class="queue-chip-badge">next</span>' : '') +
           `<span class="queue-chip-text">${preview}</span>` +
-          (i > 0 ? `<button class="queue-chip-prio" data-idx="${i}" title="Move to front">⇡</button>` : '') +
-          `<button class="queue-chip-rm" data-idx="${i}" title="Remove">×</button>` +
+          (i > 0 ? `<button class="queue-chip-prio" data-idx="${i}" title="Send this next (move to front)">⤒</button>` : '') +
+          `<button class="queue-chip-rm" data-idx="${i}" title="Remove from queue">×</button>` +
           `</span>`;
       }).join('');
 
@@ -519,11 +527,11 @@ import createResearchSynapse from './researchSynapse.js';
     // Instant visual feedback so the user sees their click was accepted
     // even before the streaming button state kicks in below.
     const _earlyMessageInput = uiModule.el('message');
-    if (_earlyMessageInput) _earlyMessageInput.disabled = true;
+    // NOTE: we no longer disable the input — the user can type the next
+    // message while the agent is working. It will be queued automatically.
     if (submitBtn) submitBtn.classList.add('send-pending');
     const _releaseSendFlag = () => {
       _sendInFlight = false;
-      if (_earlyMessageInput) _earlyMessageInput.disabled = false;
       if (submitBtn) submitBtn.classList.remove('send-pending');
     };
 
