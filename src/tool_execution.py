@@ -1017,6 +1017,30 @@ async def execute_tool_block(
         except Exception as _dbe:
             logger.warning("bash fallback raised: %s", _dbe, exc_info=True)
             result = {"error": f"bash failed: {_dbe}", "exit_code": 1}
+    elif tool == "python":
+        desc = "python"
+        try:
+            result = await _direct_fallback(
+                tool=tool,
+                content=content,
+                owner=owner,
+                session_id=session_id,
+            )
+            if isinstance(result, str):
+                return {"success": False, "error": result}
+            return result
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        desc = "python"
+        try:
+            result = await _direct_fallback(
+                tool=tool,
+                content=content,
+                session_id=session_id,
+            )
+        except Exception as _dbe:
+            logger.warning("python fallback raised: %s", _dbe, exc_info=True)
+            result = {"error": f"python failed: {_dbe}", "exit_code": 1}
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()
