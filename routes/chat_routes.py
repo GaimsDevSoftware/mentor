@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List
 
-from fastapi import APIRouter, Request, HTTPException, Form, Query
+from fastapi import APIRouter, Body, Request, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
