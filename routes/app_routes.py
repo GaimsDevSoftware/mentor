@@ -1775,6 +1775,17 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  .rewind-btn{display:block;margin-top:8px;background:transparent;border:none;color:var(--faint);font:400 11px/1 inherit;cursor:pointer;padding:0;opacity:0;transition:opacity .15s}
  .bub.user:hover .rewind-btn{opacity:1}
  .rewind-btn:hover{color:var(--txt)}
+
+ /* Queue */
+ .bub.queued{align-self:flex-end;background:color-mix(in srgb,var(--warn) 10%,var(--surface));border-color:color-mix(in srgb,var(--warn) 25%,var(--sep));border-radius:14px 14px 4px 14px;opacity:.75}
+ .bub.queued .lbl{color:var(--warn);font-size:10px}
+ .queue-meta{display:flex;gap:8px;align-items:center;margin-top:6px;font-size:11px}
+ .queue-pos{color:var(--faint)}
+ .priority-btn,.dequeue-btn{background:transparent;border:none;color:var(--dim);font:400 11px/1 inherit;cursor:pointer;padding:0;text-decoration:underline}
+ .priority-btn:hover{color:var(--warn)} .dequeue-btn:hover{color:var(--err)}
+ .queue-badge{position:absolute;top:-6px;right:-6px;background:var(--warn);color:#0b0b0d;font:600 10px/1 inherit;padding:3px 7px;border-radius:99px;display:none}
+ .send-priority{background:transparent;color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:14px;flex-shrink:0;transition:all .15s;line-height:1}
+ .send-priority:hover{background:color-mix(in srgb,var(--warn) 16%,transparent);border-color:var(--warn)}
  @keyframes slide{50%{left:100%}100%{left:100%}}
 
  /* "Klemmer" — collapsible technical details inside a result bubble */
@@ -1868,6 +1879,7 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
   <div class="composer">
     <textarea id="instr" rows="1" placeholder="Describe what to build or change…  (Enter to send · Shift+Enter for newline)"></textarea>
     <button class="send" id="run-btn" type="button">Send</button>
+    <button class="send-priority" id="priority-btn" type="button" title="Send to front of queue (runs next)">&#x26A1;</button>
   </div>
   <div class="composer-foot" id="ex-foot"><span class="lbl">Try:</span></div>
 </div>
@@ -1881,12 +1893,16 @@ const j=(u,o)=>fetch(u,Object.assign({credentials:'same-origin',headers:{'Conten
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 const STORE='mentor-code-convo-v1';
+const Q_STORE='mentor-code-queue-v1';
 let aiderReady=false, PROJECTS=[], MODELS=[];
-// turns[i] = {kind:'user'|'narr'|'ai'|'pending'|'error', text?, stage?, since?, result?, log?, warn?, jobId?}
+// turns[i] = {kind:'user'|'narr'|'ai'|'pending'|'error'|'queued', text?, stage?, since?, result?, log?, warn?, jobId?}
 let turns=[];
 let busy=false;
 let elapsedTimer=null;
 let activePoll=null;
+let msgQueue=[];
+function loadQueue(){ try{ return JSON.parse(localStorage.getItem(Q_STORE)||'[]')||[]; }catch(e){ return []; } }
+function saveQueue(){ try{ localStorage.setItem(Q_STORE,JSON.stringify(msgQueue)); }catch(e){} }
 
 const EXAMPLES=[
   'Build a GTK desktop app: a window with a sidebar list of notes and a + button that adds one, saved to ~/.mentor-notes.json. Clean, modern look.',
@@ -2029,6 +2045,15 @@ function renderTurn(t, idx){
       +'<button class="rewind-btn" onclick="rewindTo('+idx+')" title="Rewind conversation to this point and resend">&#x21BA; Rewind to here</button>'
       +'</div></div>';
   }
+  if(t.kind==='queued'){
+    const pos = msgQueue.findIndex(q=>q.text===t.text);
+    const posLabel = pos>=0 ? '#'+(pos+1)+' in queue' : 'queued';
+    return '<div class="turn"><div class="bub queued"><div class="lbl">Queued</div>'+esc(t.text)
+      +'<div class="queue-meta"><span class="queue-pos">'+posLabel+'</span>'
+      +'<button class="priority-btn" onclick="promoteQueued('+idx+')" title="Move to front of queue">Move to front</button>'
+      +'<button class="dequeue-btn" onclick="dequeue('+idx+')" title="Remove from queue">Remove</button>'
+      +'</div></div></div>';
+  }
   if(t.kind==='narr'){
     return '<div class="turn"><div class="narr'+(t.warn?' warn':'')+'">'+(t.html||esc(t.text||''))+'</div></div>';
   }
@@ -2120,15 +2145,23 @@ instrEl.addEventListener('keydown', e=>{
   if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); onSend(); }
 });
 
-$('#run-btn').onclick=onSend;
+$('#run-btn').onclick=()=>onSend(false);
+$('#priority-btn').onclick=()=>onSend(true);
 $('#convo-clear').onclick=()=>{
-  if(busy){ if(!confirm('A run is in progress. Cancel it and start a fresh conversation?')) return; if(activePoll){clearInterval(activePoll); activePoll=null;} stopElapsed(); busy=false; $('#run-btn').disabled=false; }
+  if(busy){ if(!confirm('A run is in progress. Cancel it and start a fresh conversation?')) return; if(activePoll){clearInterval(activePoll); activePoll=null;} stopElapsed(); busy=false; }
   else if(turns.length && !confirm('Start a fresh conversation? Past turns will be cleared.')) return;
-  turns=[]; saveTurns(); renderConvo();
+  turns=[]; msgQueue=[]; saveTurns(); saveQueue(); renderConvo(); renderQueueBadge();
 };
 
-async function onSend(){
-  if(busy) return;
+function renderQueueBadge(){
+  let badge=$('#q-badge');
+  if(!badge){ badge=document.createElement('span'); badge.id='q-badge'; badge.className='queue-badge';
+    const comp=document.querySelector('.composer'); if(comp) comp.appendChild(badge); }
+  badge.textContent=msgQueue.length?msgQueue.length+' queued':'';
+  badge.style.display=msgQueue.length?'':'none';
+}
+
+async function onSend(priority){
   const text=(instrEl.value||'').trim();
   if(!text) return;
   if(!aiderReady){ pushTurn({kind:'narr', warn:true, html:'<b>Aider isn\'t installed yet.</b> Open the setup panel above to install it.'}); toggleSetup(true); return; }
@@ -2136,11 +2169,22 @@ async function onSend(){
   if(!project){ pushTurn({kind:'narr', warn:true, html:'<b>No repository picked.</b> Open the setup panel above to choose one.'}); toggleSetup(true); return; }
   if(!model){ pushTurn({kind:'narr', warn:true, html:'<b>No coder model picked.</b> Open the setup panel above to choose one.'}); toggleSetup(true); return; }
   const files=($('#files')?$('#files').value:'').trim();
-
-  // Clear the composer the moment the user sends — like a real chat.
   instrEl.value=''; autoGrow(instrEl);
-  busy=true; $('#run-btn').disabled=true;
 
+  if(busy){
+    const entry={text, project, model, files};
+    if(priority){ msgQueue.unshift(entry); }
+    else { msgQueue.push(entry); }
+    saveQueue();
+    pushTurn({kind:'queued', text, position: priority?1:msgQueue.length});
+    renderQueueBadge();
+    return;
+  }
+  await execEdit(text, project, model, files);
+}
+
+async function execEdit(text, project, model, files){
+  busy=true;
   pushTurn({kind:'user', text});
   pushTurn({kind:'narr', html:'Working in <b>'+esc(shortPath(project))+'</b> with <b>'+esc(shortModel(model))+'</b> on a safe branch.'+(files?' Focusing on <b>'+esc(files)+'</b>.':'')});
   const pIdx = pushTurn({kind:'pending', stage:'starting…', since:Date.now()});
@@ -2152,18 +2196,44 @@ async function onSend(){
   } catch(e){
     stopElapsed();
     replaceTurn(pIdx, {kind:'error', text:'Couldn\'t start the edit: '+(e===401?'admin only — sign in as an admin.':String(e))});
-    busy=false; $('#run-btn').disabled=false; return;
+    busy=false; processQueue(); return;
   }
   if(!r.ok){
     stopElapsed();
     replaceTurn(pIdx, {kind:'error', text:r.error||'Couldn\'t start the edit.'});
-    busy=false; $('#run-btn').disabled=false; return;
+    busy=false; processQueue(); return;
   }
 
   const id=r.job_id;
   updateTurn(pIdx, {jobId: id});
   saveTurns();
   pollJob(id, pIdx);
+}
+
+function processQueue(){
+  renderQueueBadge();
+  if(busy || !msgQueue.length) return;
+  const next=msgQueue.shift(); saveQueue();
+  // Remove the queued-turn placeholder for this message
+  for(let i=turns.length-1;i>=0;i--){
+    if(turns[i].kind==='queued' && turns[i].text===next.text){ turns.splice(i,1); break; }
+  }
+  saveTurns(); renderConvo();
+  execEdit(next.text, next.project, next.model, next.files);
+}
+
+function promoteQueued(turnIdx){
+  const t=turns[turnIdx]; if(!t||t.kind!=='queued') return;
+  const qi=msgQueue.findIndex(q=>q.text===t.text);
+  if(qi>0){ const item=msgQueue.splice(qi,1)[0]; msgQueue.unshift(item); saveQueue(); }
+  renderConvo(); renderQueueBadge();
+}
+function dequeue(turnIdx){
+  const t=turns[turnIdx]; if(!t||t.kind!=='queued') return;
+  const qi=msgQueue.findIndex(q=>q.text===t.text);
+  if(qi>=0) msgQueue.splice(qi,1);
+  turns.splice(turnIdx,1);
+  saveQueue(); saveTurns(); renderConvo(); renderQueueBadge();
 }
 
 function rewindTo(idx){
@@ -2193,7 +2263,7 @@ function pollJob(id, pIdx){
       misses++;
       if(misses>=2){ clearInterval(activePoll); activePoll=null; stopElapsed();
         replaceTurn(pIdx, {kind:'narr', html:'The job expired (Mentor was probably restarted). Send the same prompt again to retry.'});
-        busy=false; $('#run-btn').disabled=false; }
+        busy=false; processQueue(); }
       return;
     }
     misses=0;
@@ -2206,7 +2276,7 @@ function pollJob(id, pIdx){
       } else {
         replaceTurn(pIdx, {kind:'ai', result: res});
       }
-      busy=false; $('#run-btn').disabled=false;
+      busy=false; processQueue();
     }
   }, 1500);
 }
@@ -2214,7 +2284,9 @@ function pollJob(id, pIdx){
 // ── Boot ──────────────────────────────────────────────────────────────────
 
 turns = loadTurns();
+msgQueue = loadQueue();
 renderConvo();
+renderQueueBadge();
 autoGrow(instrEl);
 
 // Resume any in-flight job from a previous page visit.
