@@ -2338,6 +2338,12 @@ async def stream_agent_loop(
                         except (json.JSONDecodeError, Exception):
                             pass
 
+            # Guard: some tool execution paths return a plain string
+            # instead of a dict. Normalize to dict to prevent crashes in
+            # the result-extraction code below.
+            if isinstance(result, str):
+                result = {"output": result, "exit_code": 0}
+
             # Emit doc-specific event for document tools — the frontend
             # document panel handles this; no need to show content in chat.
             if is_doc_tool and "action" in result:
