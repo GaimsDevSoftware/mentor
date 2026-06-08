@@ -1851,7 +1851,7 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;',
 
 const STORE='mentor-code-convo-v1';
 let aiderReady=false, PROJECTS=[], MODELS=[];
-// turns[i] = {kind:'user'|'narr'|'ai'|'pending'|'error', text?, stage?, since?, result?, log?, warn?}
+// turns[i] = {kind:'user'|'narr'|'ai'|'pending'|'error', text?, stage?, since?, result?, log?, warn?, jobId?}
 let turns=[];
 let busy=false;
 let elapsedTimer=null;
@@ -1865,8 +1865,9 @@ const EXAMPLES=[
   'Add a Settings dialog with a dark-mode toggle that persists between launches.',
 ];
 
-function loadTurns(){ try{ const v=JSON.parse(localStorage.getItem(STORE)||'[]'); return Array.isArray(v)?v.filter(t=>t&&t.kind&&t.kind!=='pending'):[]; }catch(e){ return []; } }
-function saveTurns(){ try{ localStorage.setItem(STORE,JSON.stringify(turns.filter(t=>t.kind!=='pending'))); }catch(e){} }
+function loadTurns(){ try{ const v=JSON.parse(localStorage.getItem(STORE)||'[]'); return Array.isArray(v)?v.filter(t=>t&&t.kind):[]; }catch(e){ return []; } }
+function saveTurns(){ try{ localStorage.setItem(STORE,JSON.stringify(turns)); }catch(e){} }
+window.addEventListener('beforeunload', saveTurns);
 
 function shortPath(p){ if(!p) return '—'; return p.replace(/^\/home\/[^\/]+/,'~').replace(/^\/Users\/[^\/]+/,'~'); }
 function shortModel(m){ return m? m.replace(/^ollama\//,'') : '—'; }
@@ -2051,7 +2052,7 @@ function scrollToBottom(){
 }
 
 function pushTurn(t){ turns.push(t); saveTurns(); renderConvo(); scrollToBottom(); return turns.length-1; }
-function updateTurn(i, patch){ if(i<0||i>=turns.length) return; turns[i]=Object.assign({},turns[i],patch); saveTurns(); renderConvo(); }
+function updateTurn(i, patch){ if(i<0||i>=turns.length) return; Object.assign(turns[i],patch); renderConvo(); }
 function replaceTurn(i, t){ if(i<0||i>=turns.length) return; turns.splice(i,1,t); saveTurns(); renderConvo(); scrollToBottom(); }
 
 function tickElapsed(){
@@ -2114,8 +2115,24 @@ async function onSend(){
   }
 
   const id=r.job_id;
+  updateTurn(pIdx, {jobId: id});
+  saveTurns();
+  pollJob(id, pIdx);
+}
+
+function pollJob(id, pIdx){
+  busy=true; $('#run-btn').disabled=true; startElapsed();
+  let misses=0;
   activePoll=setInterval(async()=>{
     let job; try{ job=await j('/api/code/jobs/'+id); }catch(e){ return; }
+    if(job.error==='no such job'){
+      misses++;
+      if(misses>=2){ clearInterval(activePoll); activePoll=null; stopElapsed();
+        replaceTurn(pIdx, {kind:'narr', html:'The job expired (Mentor was probably restarted). Send the same prompt again to retry.'});
+        busy=false; $('#run-btn').disabled=false; }
+      return;
+    }
+    misses=0;
     if(job.stage && turns[pIdx] && turns[pIdx].kind==='pending') updateTurn(pIdx, {stage: job.stage});
     if(job.status==='done' || job.status==='failed'){
       clearInterval(activePoll); activePoll=null; stopElapsed();
@@ -2135,6 +2152,19 @@ async function onSend(){
 turns = loadTurns();
 renderConvo();
 autoGrow(instrEl);
+
+// Resume any in-flight job from a previous page visit.
+(function resumeJob(){
+  for(let i=0; i<turns.length; i++){
+    if(turns[i].kind==='pending' && turns[i].jobId){
+      turns[i].since = Date.now();
+      renderConvo();
+      pollJob(turns[i].jobId, i);
+      return;
+    }
+  }
+})();
+
 load();
 </script>
 <script src="/static/js/concierge.js"></script>
