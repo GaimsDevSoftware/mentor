@@ -8912,6 +8912,54 @@ body.hide-thinking .thinking-section { display: none !important; }
   line-height: 1.5;
 }
 
+/* ===== CHAT MESSAGE QUEUE BAR ===== */
+.chat-queue-bar {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--accent, #0a84ff) 25%, transparent);
+  background: color-mix(in srgb, var(--accent, #0a84ff) 6%, transparent);
+  font-size: 12px;
+}
+.queue-label {
+  color: var(--accent, #0a84ff);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.queue-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: color-mix(in srgb, var(--accent, #0a84ff) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, #0a84ff) 30%, transparent);
+  border-radius: 12px;
+  max-width: 220px;
+}
+.queue-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--txt);
+  font-size: 11px;
+}
+.queue-chip-prio, .queue-chip-rm {
+  background: transparent;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.queue-chip-prio:hover { color: var(--accent, #0a84ff); }
+.queue-chip-rm:hover { color: var(--err, #ff453a); }
+
 /* ===== SELF-CODER TOOL CARD (inline in agent thread) ===== */
 .sc-tool-card {
   font-size: 12px;

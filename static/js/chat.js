@@ -86,6 +86,11 @@ import createResearchSynapse from './researchSynapse.js';
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
 
+  // ── Message queue — lets the user type while agent is busy ──
+  const _msgQueue = [];        // Array of { text, attachments?, priority? }
+  let _queueBarEl = null;      // DOM element for queue chip bar
+  let _draining = false;       // True while auto-sending next queued msg
+
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
     return _streamSessionId === sessionId || _backgroundStreams.has(sessionId);
@@ -252,6 +257,11 @@ import createResearchSynapse from './researchSynapse.js';
       submitBtn.classList.remove('recording');
       isStreaming = false;
       _stopStallWatchdog();
+      // Auto-drain next queued message
+      if (_msgQueue.length > 0 && !_draining) {
+        setTimeout(_drainQueue, 150);
+      }
+      _renderQueueBar();
       // Defer to global updater which handles mic/newchat/send modes
       if (window._updateSendBtnIcon) {
         setTimeout(window._updateSendBtnIcon, 50);
@@ -267,6 +277,82 @@ import createResearchSynapse from './researchSynapse.js';
   // -----------------------------------------------------------------------
   // Slash commands — now in slashCommands.js
   // -----------------------------------------------------------------------
+
+  // ── Message queue helpers ──────────────────────────────────────────────
+  function _enqueueMessage(text, priority) {
+    if (priority) {
+      _msgQueue.unshift({ text });
+    } else {
+      _msgQueue.push({ text });
+    }
+    _renderQueueBar();
+  }
+
+  function _removeFromQueue(idx) {
+    _msgQueue.splice(idx, 1);
+    _renderQueueBar();
+  }
+
+  function _prioritize(idx) {
+    if (idx <= 0 || idx >= _msgQueue.length) return;
+    const item = _msgQueue.splice(idx, 1)[0];
+    _msgQueue.unshift(item);
+    _renderQueueBar();
+  }
+
+  async function _drainQueue() {
+    if (_draining || isStreaming || _msgQueue.length === 0) return;
+    _draining = true;
+    const next = _msgQueue.shift();
+    _renderQueueBar();
+    const msgInput = uiModule.el('message');
+    if (msgInput) {
+      msgInput.value = next.text;
+      // Trigger submit programmatically
+      const submitBtn = document.querySelector('.send-btn');
+      if (submitBtn) submitBtn.click();
+    }
+    _draining = false;
+  }
+
+  function _renderQueueBar() {
+    // Get or create the bar
+    if (!_queueBarEl) {
+      _queueBarEl = document.createElement('div');
+      _queueBarEl.className = 'chat-queue-bar';
+      _queueBarEl.id = 'chat-queue-bar';
+      // Insert above the input bar
+      const inputBar = document.querySelector('.chat-input-bar');
+      if (inputBar) {
+        inputBar.parentElement.insertBefore(_queueBarEl, inputBar);
+      } else {
+        return; // no input bar yet
+      }
+    }
+    if (_msgQueue.length === 0) {
+      _queueBarEl.style.display = 'none';
+      return;
+    }
+    _queueBarEl.style.display = '';
+    const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    _queueBarEl.innerHTML = '<span class="queue-label">Queued:</span>' +
+      _msgQueue.map((item, i) => {
+        const preview = esc(item.text.slice(0, 50)) + (item.text.length > 50 ? '…' : '');
+        return `<span class="queue-chip" data-idx="${i}">` +
+          `<span class="queue-chip-text">${preview}</span>` +
+          (i > 0 ? `<button class="queue-chip-prio" data-idx="${i}" title="Move to front">⇡</button>` : '') +
+          `<button class="queue-chip-rm" data-idx="${i}" title="Remove">×</button>` +
+          `</span>`;
+      }).join('');
+
+    // Delegated click
+    _queueBarEl.onclick = (e) => {
+      const rmBtn = e.target.closest('.queue-chip-rm');
+      if (rmBtn) { _removeFromQueue(+rmBtn.dataset.idx); return; }
+      const prioBtn = e.target.closest('.queue-chip-prio');
+      if (prioBtn) { _prioritize(+prioBtn.dataset.idx); return; }
+    };
+  }
 
   // API key pattern for the guard in handleChatSubmit
   const API_KEY_RE = /^(sk-[a-zA-Z0-9_\-]{20,}|gsk_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_\-]{30,}|xai-[a-zA-Z0-9]{20,})$/;
@@ -294,8 +380,17 @@ import createResearchSynapse from './researchSynapse.js';
       return;
     }
 
-    // If currently streaming, stop it
+    // If currently streaming: QUEUE the message if there is text, else STOP.
     if (isStreaming) {
+      const _queueText = (uiModule.el('message')?.value || '').trim();
+      if (_queueText) {
+        // Queue the message instead of cancelling
+        _enqueueMessage(_queueText);
+        uiModule.el('message').value = '';
+        if (uiModule.autoResize) uiModule.autoResize(uiModule.el('message'));
+        return;
+      }
+      // No text → user clicked Stop — cancel as before
       // Cancel server-side research if in progress
       const _cancelSid = sessionModule.getCurrentSessionId();
       if (_cancelSid && _researchingStreamIds.has(_cancelSid)) {
