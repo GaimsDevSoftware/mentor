@@ -719,6 +719,19 @@ def setup_model_routes(model_discovery):
     _probe_failures = {}  # ep_id → (last_fail_ts, consecutive_fails)
     _refresh_inflight = {"v": False}  # coarse single-flight guard
 
+    def _apply_source_filter(ep, ids):
+        """Apply plugin-level model filters before caching. Prevents paid
+        models from leaking into cached_models when the user hasn't opted in."""
+        b = (ep.base_url or "").lower()
+        n = (ep.name or "").lower()
+        if "opencode" in b or "/zen" in b or "opencode" in n:
+            try:
+                from plugins.opencode.plugin import _model_filter
+                ids = [m for m in ids if _model_filter(m)]
+            except Exception:
+                pass
+        return ids
+
     def _refresh_caches_bg():
         """Background thread: re-probe all endpoints in PARALLEL with a tight
         timeout, skipping endpoints that have been failing repeatedly.
@@ -761,6 +774,7 @@ def setup_model_routes(model_discovery):
                             for fut in as_completed(futures):
                                 ep, ids, err = fut.result()
                                 if ids:
+                                    ids = _apply_source_filter(ep, ids)
                                     ep.cached_models = json.dumps(ids)
                                     _probe_failures.pop(ep.id, None)
                                 else:
@@ -1105,6 +1119,7 @@ def setup_model_routes(model_discovery):
                     try:
                         ep_obj = db2.query(ModelEndpoint).filter(ModelEndpoint.id == ep["id"]).first()
                         if ep_obj:
+                            all_models = _apply_source_filter(ep_obj, all_models)
                             ep_obj.cached_models = json.dumps(all_models)
                             db2.commit()
                     finally:
@@ -1415,6 +1430,8 @@ def setup_model_routes(model_discovery):
                 ep_obj = db2.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
                 if ep_obj:
                     ep_obj.hidden_models = json.dumps(failed) if failed else None
+                    if all_models:
+                        all_models = _apply_source_filter(ep_obj, all_models)
                     ep_obj.cached_models = json.dumps(all_models) if all_models else None
                     db2.commit()
             finally:
@@ -1444,6 +1461,7 @@ def setup_model_routes(model_discovery):
             # and persist regardless of probe results — never overwritten here.
             all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=3)
             if all_models:
+                all_models = _apply_source_filter(ep, all_models)
                 ep.cached_models = json.dumps(all_models)
                 db.commit()
             elif ep.cached_models:
