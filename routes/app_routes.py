@@ -778,6 +778,7 @@ _OFFICE = r"""<!doctype html><html><head><meta charset="utf-8">
  .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px}
  .grid{display:grid;gap:14px;grid-template-columns:repeat(2,1fr)} @media(max-width:760px){.grid{grid-template-columns:1fr}}
  .emp{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--sep);border-radius:14px;padding:16px;box-shadow:var(--shadow)}
+ @keyframes roomspin{to{transform:rotate(360deg)}}
  .ava{width:42px;height:42px;border-radius:11px;flex-shrink:0;display:grid;place-items:center;font-weight:700;font-size:17px;color:#0b0b0d}
  .emp .nm{font-weight:600;letter-spacing:-0.01em} .emp .rl{color:var(--dim);font-size:12px}
  .emp .meta{color:var(--faint);font-size:11px;margin-top:6px;font-family:ui-monospace,Menlo,monospace}
@@ -822,6 +823,7 @@ _OFFICE = r"""<!doctype html><html><head><meta charset="utf-8">
     <button class="btn" id="say-btn">Send</button>
   </div>
   <div class="row" style="margin-top:6px"><span class="grow faint" style="font-size:11px" id="room-hint">A team message uses a few model calls (capped). DM one agent = 1 call.</span><button class="btn mini" id="room-clear">Clear room</button></div>
+  <div id="room-hint-live" class="faint" style="font-size:11px;color:var(--brass);min-height:14px;margin-top:2px"></div>
 </div>
 
 <div class="sec-title">Hire an agent</div>
@@ -865,6 +867,7 @@ let selTools=new Set();
 
 // capacity banner
 j('/api/agents/capacity').then(c=>{const el=$('#cap');const cap=c.budget||3;
+  window.__teamCap = cap;
   el.textContent=(c.concurrent?'Concurrent team':'Private — agents take turns')+' · up to '+cap+'/msg';el.className='pill '+(c.concurrent?'ok':'warn');
   $('#room-hint').textContent=c.note+' '+c.privacy+' · DM one agent = 1 call · a team message wakes up to '+cap+' agents (capped, to protect your usage).';}).catch(()=>{});
 
@@ -933,6 +936,7 @@ function statusCls(s){return s==='thinking'?'thinking':s==='done'?'done':'idle';
   fit(); raf=requestAnimationFrame(draw);
 })();
 function loadTeam(){ j('/api/agents').then(d=>{const el=$('#team');const a=d.agents||[];
+  TEAM_AGENTS = a.map(x=>({id:x.id, name:x.name, color:(x.color||'var(--cyan)')}));
   if(window.__office) window.__office(a);
   if(!a.length){el.innerHTML='<span class="muted" style="font-size:13px">No agents yet — hire your first employee below.</span>';return;}
   el.className='grid'; el.innerHTML=a.map(x=>`<div class="emp"><div class="ava" style="background:${esc(x.color||'#e0a95e')}">${esc((x.name||'?').slice(0,1).toUpperCase())}</div>
@@ -946,31 +950,70 @@ function loadTeam(){ j('/api/agents').then(d=>{const el=$('#team');const a=d.age
 loadTeam();
 
 // ── The room ──────────────────────────────────────────────────────────────
+// Keep a typed copy of the team so the in-flight placeholders can render the
+// right name + colour + initial for every agent that's actually working.
+let TEAM_AGENTS=[];
 function roomMsg(m){
   if(m.role==='user') return `<div style="align-self:flex-end;max-width:80%;background:color-mix(in srgb,var(--accent) 18%,transparent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);border-radius:12px 12px 4px 12px;padding:9px 12px">${esc(m.text)}</div>`;
   const team=m.role==='team';
   const av=team?'★':esc((m.agent_name||'?').slice(0,1).toUpperCase());
   const col=team?'var(--brass)':(m.color||'var(--cyan)');
+  const pending=!!m.pending;
+  const body = pending
+    ? `<div style="display:flex;align-items:center;gap:8px;color:var(--dim)"><span class="room-spin" style="width:10px;height:10px;border-radius:50%;border:2px solid var(--sep-2);border-top-color:${col};display:inline-block;animation:roomspin 0.9s linear infinite;flex-shrink:0"></span><span class="room-elapsed" data-since="${m.since||Date.now()}">${esc(m.text||'thinking…')}</span></div>`
+    : `<div style="white-space:pre-wrap">${esc(m.text)}</div>`;
   return `<div style="align-self:flex-start;max-width:88%;display:flex;gap:8px"><div class="ava" style="width:28px;height:28px;border-radius:8px;font-size:13px;background:${col}">${av}</div>`
-    +`<div style="background:var(--tint);border:1px solid var(--sep);border-radius:12px 12px 12px 4px;padding:9px 12px"><div class="faint" style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">${esc(m.agent_name||'agent')}</div><div style="white-space:pre-wrap">${esc(m.text)}</div></div></div>`;
+    +`<div style="background:var(--tint);border:1px solid var(--sep);border-radius:12px 12px 12px 4px;padding:9px 12px;min-width:160px"><div class="faint" style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">${esc(m.agent_name||'agent')}</div>${body}</div></div>`;
 }
 function renderRoom(msgs){const el=$('#room'); if(!msgs||!msgs.length){el.innerHTML='<span class="muted" style="font-size:13px">No messages yet. Say hi to your team below.</span>';return;}
   el.innerHTML=msgs.map(roomMsg).join(''); el.scrollTop=el.scrollHeight;}
 let roomMsgs=[];
+let _roomTicker=null;
+function _tickElapsed(){ document.querySelectorAll('.room-elapsed[data-since]').forEach(el=>{
+  const since=parseInt(el.dataset.since||'0',10); if(!since)return;
+  const s=Math.max(1,Math.round((Date.now()-since)/1000));
+  let stage='thinking'; if(s>=45)stage='still working'; else if(s>=20)stage='working';
+  el.textContent = `${stage} · ${s}s`;
+}); }
+function startRoomTicker(){ if(_roomTicker) return; _roomTicker=setInterval(_tickElapsed,1000); }
+function stopRoomTicker(){ if(_roomTicker){clearInterval(_roomTicker);_roomTicker=null;} }
 function loadRoom(){ j('/api/agents/room').then(d=>{roomMsgs=d.messages||[];renderRoom(roomMsgs);}).catch(()=>{}); }
 loadRoom();
 async function sayNow(){
   const inp=$('#say'); const text=(inp.value||'').trim(); if(!text)return;
   const target=$('#target').value||'team'; inp.value='';
-  roomMsgs.push({role:'user',text:text}); renderRoom(roomMsgs);
-  roomMsgs.push({role:team(target)?'team':'agent',agent_name:target==='team'?'Team':'…',text:'thinking…'}); renderRoom(roomMsgs);
-  function team(t){return t==='team';}
+  roomMsgs.push({role:'user',text:text});
+  // Insert one pending placeholder PER agent that'll actually be woken — so the
+  // user sees who is working, not a single silent 'thinking…'.
+  const since=Date.now();
+  let placeholders=[];
+  if(target==='team'){
+    const cap=(window.__teamCap||TEAM_AGENTS.length||3);
+    const woken=TEAM_AGENTS.slice(0, Math.min(TEAM_AGENTS.length, cap));
+    placeholders=woken.map(a=>({role:'agent',agent_name:a.name,color:a.color,text:'thinking…',pending:true,since}));
+    if(!placeholders.length) placeholders=[{role:'team',agent_name:'Team',text:'thinking…',pending:true,since}];
+  } else {
+    const a=TEAM_AGENTS.find(x=>x.id===target);
+    placeholders=[{role:'agent',agent_name:(a&&a.name)||'…',color:(a&&a.color)||'var(--cyan)',text:'thinking…',pending:true,since}];
+  }
+  placeholders.forEach(p=>roomMsgs.push(p));
+  renderRoom(roomMsgs); startRoomTicker();
+  // Soft hint when waits get long — only added once.
+  let hintAdded=false;
+  const hintTimer=setTimeout(()=>{ const el=$('#room-hint-live');
+    if(el && !hintAdded){ hintAdded=true; el.textContent='Agents work in parallel — first reply lands first. Cloud models ~5–20s, local 10–60s+.'; }
+  }, 8000);
   try{ const r=await j('/api/agents/say',{method:'POST',body:JSON.stringify({text:text,target:target})});
-    roomMsgs.pop(); // drop the thinking placeholder
+    // Drop ALL pending placeholders, then push the real replies.
+    roomMsgs = roomMsgs.filter(m=>!m.pending);
     if(r.ok){ (r.messages||[]).forEach(m=>{ if(m.role!=='user') roomMsgs.push(m); }); }
     else roomMsgs.push({role:'agent',agent_name:'note',text:r.detail||'failed'});
     renderRoom(roomMsgs);
-  }catch(e){ roomMsgs.pop(); roomMsgs.push({role:'agent',agent_name:'note',text:'failed: '+e}); renderRoom(roomMsgs); }
+  }catch(e){
+    roomMsgs = roomMsgs.filter(m=>!m.pending);
+    roomMsgs.push({role:'agent',agent_name:'note',text:'failed: '+e}); renderRoom(roomMsgs);
+  }
+  finally{ clearTimeout(hintTimer); stopRoomTicker(); const el=$('#room-hint-live'); if(el) el.textContent=''; }
 }
 $('#say-btn').onclick=sayNow;
 $('#say').addEventListener('keydown',e=>{if(e.key==='Enter')sayNow();});
