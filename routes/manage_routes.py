@@ -1320,6 +1320,38 @@ def setup_manage_routes() -> APIRouter:
             assigned["vision_model"] = vision
         save_settings(s)
 
+        # ── Create Office agents for key roles (if they don't exist) ──
+        agents_created = []
+        try:
+            from src.agents_store import list_agents, create_agent
+            existing = {a.get("role", "").lower(): a for a in (list_agents(payload.get("owner") or _admin) or [])}
+            AGENT_DEFS = [
+                {"name": "Coder", "role": "Code specialist",
+                 "goal": "Write, debug, and review code. Use bash and python tools. Handle complex coding tasks the main chat model can't.",
+                 "personality": "precise", "model": coder or default,
+                 "system_prompt": "You are a dedicated code agent. You have full access to bash, python, read_file, and web_search tools. Write clean, working code. Test it. If you get stuck, explain why.",
+                 "tools": ["bash", "python", "web_search"], "autonomy": "auto"},
+                {"name": "Researcher", "role": "Deep research specialist",
+                 "goal": "Research topics thoroughly using web search, synthesize findings, cite sources.",
+                 "personality": "thorough", "model": research,
+                 "system_prompt": "You are a research agent. Use web_search and web_fetch to find authoritative sources. Synthesize information clearly. Always cite your sources.",
+                 "tools": ["web_search", "web_fetch", "python"], "autonomy": "auto"},
+            ]
+            if vision:
+                AGENT_DEFS.append(
+                    {"name": "Vision", "role": "Image analysis specialist",
+                     "goal": "Analyze images, screenshots, and visual content. Describe what you see accurately.",
+                     "personality": "observant", "model": vision,
+                     "system_prompt": "You are a vision agent. Analyze images the user shares. Describe content accurately and in detail.",
+                     "tools": [], "autonomy": "approve"})
+            for adef in AGENT_DEFS:
+                role_key = adef["role"].lower()
+                if not any(role_key in (e.get("role") or "").lower() for e in existing.values()):
+                    agent = create_agent(adef, owner=payload.get("owner") or _admin)
+                    agents_created.append(agent.get("name", "?"))
+        except Exception as _ae:
+            logger.warning(f"auto_roles agent creation: {_ae}")
+
         nsrc = len(endpoints)
         warn = ""
         if nsrc < 2:
@@ -1328,9 +1360,12 @@ def setup_manage_routes() -> APIRouter:
                     "source (e.g. Groq + Google Gemini, or OpenRouter + Cerebras) so I can route around outages.")
         vis_note = "" if vision else (" No vision-capable model is connected, so image analysis won't work yet — "
                                       "add a multimodal model (a cloud frontier model, or a local VL model) for that.")
+        agents_note = (" Created agents: " + ", ".join(agents_created) + ".") if agents_created else ""
         return {"ok": True, "assigned": assigned, "vision": bool(vision), "coder": coder,
                 "fallbacks": {"default_model": default_fb, "utility_model": utility_fb, "vision_model": vision_fb},
-                "sources": sorted(endpoints), "source_count": nsrc, "note": (warn + vis_note).strip()}
+                "agents_created": agents_created,
+                "sources": sorted(endpoints), "source_count": nsrc,
+                "note": (warn + vis_note + agents_note).strip()}
 
     @router.post("/api/setup/vision-context")
     async def vision_context(payload: Dict[str, Any], _admin: str = Depends(require_admin)) -> Dict[str, Any]:
