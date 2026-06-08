@@ -985,6 +985,72 @@ async def _run_audit_all_job(key, skills_manager, names, url, model, headers, te
         job.pop("task", None)
 
 
+async def _probe_endpoint(url, model, headers):
+    """Quick probe: send a trivial completion to verify the endpoint accepts
+    our key.  Returns True on success, False on auth / balance errors."""
+    from src.llm_core import llm_call_async
+    try:
+        await llm_call_async(
+            url, model,
+            [{"role": "user", "content": "Say OK"}],
+            max_tokens=4, headers=headers, timeout=15,
+        )
+        return True
+    except Exception as e:
+        msg = str(e).lower()
+        if "401" in msg or "403" in msg or "insufficient" in msg or "balance" in msg or "rejected" in msg or "unauthorized" in msg:
+            return False
+        return True
+
+
+async def _resolve_audit_models_async(owner=None):
+    """Async version of _resolve_audit_models with pre-flight probe + fallback."""
+    from src.endpoint_resolver import resolve_endpoint
+    url, model, headers = resolve_endpoint("utility", owner=owner)
+    if not url or not model:
+        raise ValueError("No model configured — set a Default or Utility model in Settings.")
+    try:
+        from src.llm_core import list_model_ids
+        import os as _os
+        _avail = list_model_ids(url, headers=headers)
+        if _avail and model not in _avail:
+            _base = _os.path.basename((model or "").rstrip("/"))
+            model = next((a for a in _avail if _os.path.basename(a.rstrip("/")) == _base), None) or _avail[0]
+    except Exception:
+        pass
+
+    if not await _probe_endpoint(url, model, headers):
+        logger.warning(f"Audit: primary endpoint {model} rejected key — trying fallbacks")
+        from src.endpoint_resolver import resolve_utility_fallback_candidates
+        found = False
+        for fb_url, fb_model, fb_headers in resolve_utility_fallback_candidates(owner=owner):
+            if await _probe_endpoint(fb_url, fb_model, fb_headers):
+                logger.info(f"Audit: fell back to {fb_model}")
+                url, model, headers = fb_url, fb_model, fb_headers
+                found = True
+                break
+            logger.debug(f"Audit: fallback {fb_model} also rejected")
+        if not found:
+            raise ValueError(
+                f"The audit model ({model}) rejected the API key "
+                f"(insufficient balance?) and no working fallback was found."
+            )
+
+    teacher = None
+    try:
+        from src.settings import get_setting
+        if get_setting("teacher_enabled", False):
+            spec = (get_setting("teacher_model", "") or "").strip()
+            if spec:
+                from src.ai_interaction import _resolve_model
+                t_url, t_model, t_headers = _resolve_model(spec)
+                if t_url and t_model:
+                    teacher = (t_url, t_model, t_headers)
+    except Exception as e:
+        logger.warning(f"Audit teacher resolve failed: {e}")
+    return url, model, headers, teacher
+
+
 def _resolve_audit_models(owner=None):
     """Resolve (url, model, headers, teacher) for an audit run from Settings.
 
@@ -992,6 +1058,9 @@ def _resolve_audit_models(owner=None):
     model id); teacher = the optional Settings → Teacher Model config. Shared
     by the manual /audit-all route and scheduled/event audits. Raises
     ValueError if no worker model.
+
+    Sync wrapper — callers that need the pre-flight probe + fallback should
+    use _resolve_audit_models_async instead.
     """
     from src.endpoint_resolver import resolve_endpoint
     url, model, headers = resolve_endpoint("utility", owner=owner)
@@ -1038,7 +1107,7 @@ async def run_scheduled_skill_audit(skills_manager: SkillsManager,
         return {"status": "running", "skipped": True}
 
     try:
-        url, model, headers, teacher = _resolve_audit_models(owner=owner)
+        url, model, headers, teacher = await _resolve_audit_models_async(owner=owner)
     except ValueError as e:
         logger.info(f"Scheduled skill audit skipped — {e}")
         return {"status": "skipped", "reason": str(e)}
@@ -1368,8 +1437,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             }
 
         # Worker model (Default, normalized) + optional teacher — shared resolver.
+        # Uses the async variant to probe the endpoint and fall back on 401.
         try:
-            url, model, headers, teacher = _resolve_audit_models(owner=user)
+            url, model, headers, teacher = await _resolve_audit_models_async(owner=user)
         except ValueError as e:
             raise HTTPException(400, str(e))
 

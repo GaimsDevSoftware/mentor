@@ -1223,7 +1223,7 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         from services.memory.skills import SkillsManager
         from src.constants import DATA_DIR
         from routes.skills_routes import (
-            _resolve_audit_models, _run_audit_all_job, _skill_audit_jobs,
+            _resolve_audit_models_async, _run_audit_all_job, _skill_audit_jobs,
         )
 
         if not owner:
@@ -1243,7 +1243,7 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         if not names:
             raise TaskNoop("no unaudited skills")
 
-        url, model, headers, teacher = _resolve_audit_models()
+        url, model, headers, teacher = await _resolve_audit_models_async()
         try:
             from src.llm_core import seconds_since_model_activity
             recent = seconds_since_model_activity(url, model)
