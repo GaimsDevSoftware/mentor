@@ -35,12 +35,14 @@ def classify(name: str, base: str, model_id: str):
     if local:
         return "local", "free"
     # OpenCode Zen: discriminate by model name (matches plugins/opencode/plugin.py).
+    if "/zen/go/" in b or "opencode go" in n:
+        return "cloud", "subscription"       # OpenCode Go — all models on this endpoint are subscription
     if "opencode" in b or "/zen" in b or any(k in n for k in ("opencode", "zen")):
         if any(p in m for p in ("claude-", "gpt-5.5", "gpt-5.4", "gpt-4", "gemini-", "grok-")):
             return "cloud", "paid"
         if any(p in m for p in ("glm", "kimi", "mimo", "qwen3.7", "qwen3.6", "qwen3-coder",
                                  "minimax", "deepseek")):
-            return "cloud", "subscription"   # OpenCode Go
+            return "cloud", "subscription"   # OpenCode Go model on Zen endpoint
         return "cloud", "free"               # Zen free tier
     # Ollama Cloud is a subscription/pay-as-you-go service.
     if "ollama.com" in b:
