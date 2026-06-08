@@ -2317,7 +2317,7 @@ async def stream_agent_loop(
             # web_search returns {"output": ..., "exit_code": 0}; check "output"
             # first so the <!-- SOURCES:…--> marker is found and stripped even
             # when the result doesn't carry a "results" or "stdout" key.
-            _src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+            _src_text = (result.get("output") or result.get("results") or result.get("stdout") or "") if isinstance(result, dict) else str(result)
             if block.tool_type == "web_search" and _src_text:
                 _src_marker = "<!-- SOURCES:"
                 _src_idx = _src_text.find(_src_marker)
