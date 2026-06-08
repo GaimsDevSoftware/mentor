@@ -36,6 +36,21 @@ def get_plan(session_id: str) -> Optional[Dict[str, Any]]:
     return _PLANS.get(session_id) if session_id else None
 
 
+def serialize_plan(session_id: str) -> Optional[Dict[str, Any]]:
+    """The plan as a JSON-friendly dict the UI can render live."""
+    p = _PLANS.get(session_id or "")
+    if not p:
+        return None
+    return {
+        "goal": p.get("goal", ""),
+        "steps": [{"step": s.get("step", ""), "status": s.get("status", "pending"),
+                   "note": s.get("note")} for s in p.get("steps", [])],
+        "blockers": list(p.get("blockers", [])),
+        "revisions": int(p.get("revisions", 0)),
+        "last_revised": p.get("last_revised") or p.get("drafted"),
+    }
+
+
 def render_for_context(session_id: str) -> str:
     """Render the current plan as a compact, model-friendly block. Injected into
     each agent turn so the model always sees its own north star."""

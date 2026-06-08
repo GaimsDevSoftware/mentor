@@ -2009,6 +2009,48 @@ import createResearchSynapse from './researchSynapse.js';
                 }, 50);
                 uiModule.scrollHistory();
 
+              } else if (json.type === 'plan_update') {
+                // The agent's long-horizon plan changed — render or update a
+                // sticky, in-place panel in the chat so the user SEES the plan
+                // and watches the agent revise it live (not buried in tool spam).
+                if (_isBg) continue;
+                const chatBox = document.getElementById('chat-history');
+                if (!chatBox || !json.data) continue;
+                let card = chatBox.querySelector('.agent-plan-card');
+                const just_changed = !!card;
+                if (!card) {
+                  card = document.createElement('div');
+                  card.className = 'agent-plan-card';
+                  card.style.cssText = 'position:sticky;top:6px;z-index:5;margin:8px 0;padding:10px 12px;border:1px solid color-mix(in srgb,var(--accent,#0a84ff) 35%,transparent);border-left:3px solid var(--accent,#0a84ff);border-radius:8px;background:color-mix(in srgb,var(--accent,#0a84ff) 6%,transparent);font-size:13px;backdrop-filter:blur(8px);transition:box-shadow .3s ease';
+                  chatBox.appendChild(card);
+                }
+                const p = json.data;
+                const ICON = { pending:'<span style="opacity:.45">○</span>', in_progress:'<span style="color:var(--brass,#e0a95e)">◐</span>', done:'<span style="color:var(--ok,#30d158)">●</span>', blocked:'<span style="color:var(--err,#ff453a)">⊘</span>' };
+                const stepsHtml = (p.steps || []).map((s, i) => {
+                  const ico = ICON[s.status] || ICON.pending;
+                  const txt = s.status === 'done'
+                    ? '<span style="opacity:.55;text-decoration:line-through">' + esc(s.step) + '</span>'
+                    : esc(s.step);
+                  const note = s.note ? ' <span style="opacity:.55;font-size:11px">— ' + esc(s.note) + '</span>' : '';
+                  return '<li style="margin:3px 0;list-style:none;display:flex;gap:6px"><span style="width:18px;text-align:center;flex:0 0 18px">' + ico + '</span><span>' + txt + note + '</span></li>';
+                }).join('');
+                const head = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-weight:600">📋 Plan</span>' +
+                  (p.revisions ? '<span style="font-size:10px;opacity:.55">revised ' + p.revisions + 'x</span>' : '') +
+                  '<span style="flex:1"></span><button class="plan-toggle" type="button" style="background:transparent;border:none;color:inherit;opacity:.5;cursor:pointer;font-size:11px">hide</button></div>' +
+                  (p.goal ? '<div style="opacity:.75;margin-bottom:6px">' + esc(p.goal) + '</div>' : '');
+                const blockers = (p.blockers && p.blockers.length)
+                  ? '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--sep,rgba(255,255,255,.1));font-size:12px;color:var(--err,#ff453a)">Blockers: ' + p.blockers.map(esc).join('; ') + '</div>'
+                  : '';
+                card.innerHTML = head + '<ul style="margin:0;padding:0">' + stepsHtml + '</ul>' + blockers;
+                const tog = card.querySelector('.plan-toggle');
+                const body = card.querySelector('ul');
+                if (tog && body) tog.onclick = () => { const h = body.style.display === 'none'; body.style.display = h ? '' : 'none'; tog.textContent = h ? 'hide' : 'show'; };
+                if (just_changed) {
+                  card.style.boxShadow = '0 0 0 3px color-mix(in srgb,var(--accent,#0a84ff) 35%,transparent)';
+                  setTimeout(() => { card.style.boxShadow = ''; }, 900);
+                }
+                uiModule.scrollHistory();
+
               } else if (json.type === 'approval_required') {
                 // HITL: the loop is paused waiting for the user to approve/deny
                 // this tool. Render an inline Approve / Deny card in the chat.

@@ -2299,6 +2299,19 @@ async def stream_agent_loop(
                     )
                 desc, result = await _tool_task
 
+            # Plan updates → emit a live event so the chat UI can render/update
+            # the agent's plan panel (goal + steps + status + blockers + revisions).
+            if block.tool_type == "plan_task":
+                try:
+                    from src.agent_plan import serialize_plan
+                    _serialized = serialize_plan(session_id or "")
+                    if _serialized:
+                        yield (
+                            f'data: {json.dumps({"type": "plan_update", "data": _serialized})}\n\n'
+                        )
+                except Exception:
+                    pass
+
             # Extract structured web sources from web_search tool output.
             # web_search returns {"output": ..., "exit_code": 0}; check "output"
             # first so the <!-- SOURCES:…--> marker is found and stripped even
