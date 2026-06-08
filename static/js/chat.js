@@ -1811,6 +1811,10 @@ import createResearchSynapse from './researchSynapse.js';
                 if (!_isBg) {
                   uiModule.showToast('🔄 ' + (json.message || 'Model switched automatically'), 8000);
                 }
+              } else if (json.type === 'escalation_hint') {
+                if (!_isBg) {
+                  uiModule.showToast('🔄 ' + (json.message || 'Korrigerer — prøver på nytt med verktøy'), 5000);
+                }
               } else if (json.type === 'autoheal_failed') {
                 if (!_isBg) {
                   uiModule.showToast('⚠ ' + (json.message || 'All models exhausted — add a backup source'), 12000);

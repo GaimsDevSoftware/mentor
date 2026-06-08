@@ -2552,4 +2552,40 @@ async def stream_agent_loop(
         except Exception as _hr_err:
             logger.debug(f"history-rag index skipped: {_hr_err}")
 
+    # ── Auto-escalation: if the model claimed it can't code/bash but tools are
+    # available and no tools were called, nudge it to use them or escalate.
+    try:
+        if full_response and round_num <= 2:
+            _resp_lower = full_response.lower()
+            _cant_phrases = (
+                "kan ikke kjøre", "can't run", "cannot run", "can't execute",
+                "cannot execute", "ikke mulig", "not possible here",
+                "don't have access", "har ikke tilgang", "ikke tilgjengelig",
+                "bash er", "shell er", "is not available", "er ødelagt",
+                "du må gjøre dette selv", "you need to do this manually",
+                "åpne code-fanen", "use the code tab",
+            )
+            if any(p in _resp_lower for p in _cant_phrases):
+                _correction = (
+                    "[SYSTEM CORRECTION: The tools bash, python, read_file, web_search "
+                    "ARE available to you right now. You CAN run commands, write code, "
+                    "and execute it. If you genuinely cannot handle this task with "
+                    "your current capabilities, use the ask_teacher tool to escalate "
+                    "to a more capable model. Do NOT tell the user it's impossible — "
+                    "either do it or escalate.]"
+                )
+                yield f'data: {json.dumps({"type": "escalation_hint", "message": "Modellen trodde den ikke kunne gjøre dette — korrigerer og prøver igjen."})}\n\n'
+                messages.append({"role": "assistant", "content": full_response})
+                messages.append({"role": "user", "content": _correction})
+                logger.info("[escalation] model claimed inability — injecting correction")
+                async for chunk in stream_agent_loop(
+                    url, model, messages, headers=headers,
+                    temperature=temperature, max_tokens=max_tokens,
+                    max_rounds=2, session_id=session_id, owner=owner,
+                ):
+                    yield chunk
+                return
+    except Exception as _esc_err:
+        logger.debug(f"escalation check skipped: {_esc_err}")
+
     yield "data: [DONE]\n\n"
