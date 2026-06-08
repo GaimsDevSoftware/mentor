@@ -452,13 +452,22 @@ def run_diagnostics() -> List[Dict[str, Any]]:
 def apply_post_response_hooks(content: str) -> str:
     """Chain post_response hooks; each may return compressed/transformed content.
     Used to compress verbose AI responses before they enter the context window."""
-    for h in _HOOKS.get("post_response", []):
+    hooks = _HOOKS.get("post_response", [])
+    if not hooks:
+        logger.debug("post_response: no hooks registered (registered events: %s)",
+                     list(_HOOKS.keys()))
+        return content
+    orig_len = len(content)
+    for h in hooks:
         try:
             out = h["fn"](content)
             if isinstance(out, str) and out:
                 content = out
         except Exception as e:
-            logger.debug("plugin %s post_response hook error: %s", h["plugin"], e)
+            logger.warning("plugin %s post_response hook error: %s", h["plugin"], e)
+    if len(content) < orig_len:
+        logger.info("post_response compressed %d → %d chars (saved %d)",
+                     orig_len, len(content), orig_len - len(content))
     return content
 
 
