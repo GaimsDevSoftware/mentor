@@ -1651,7 +1651,10 @@ function loadConnect(){
    +'<div class="card"><b>Use a subscription you already have</b><div class="sub">Have a <b>ChatGPT</b> subscription? Import its models via the official Codex CLI. You sign in with <b>OAuth</b> right here — no API key, no token-scraping.</div>'
      +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><button class="go" id="codex-connect">Connect ChatGPT (Codex)</button><span id="codex-msg" class="muted" style="font-size:12px"></span></div>'
      +'<div id="codex-login-box" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--sep-2);border-radius:8px;background:var(--tint)"></div></div>'
-   +'<div class="card"><b>Connected models</b><div id="ep-list" class="muted" style="margin-top:8px">loading…</div></div>';
+   +'<div class="card"><b>Connected models</b><div id="ep-list" class="muted" style="margin-top:8px">loading…</div></div>'
+   +'<div class="card"><b>Your models</b><div class="sub">Only models from sources you added. Check the ones to keep available; uncheck to hide them from chat &amp; roles. Filter by type.</div>'
+     +'<div id="mc-filters" class="row" style="gap:6px;flex-wrap:wrap;margin:10px 0"></div>'
+     +'<div id="mc-models" class="muted">loading…</div></div>';
   $('#ct-local').onclick=()=>{$('#cp-local').style.display='';$('#cp-cloud').style.display='none';};
   $('#ct-cloud').onclick=()=>{$('#cp-local').style.display='none';$('#cp-cloud').style.display='';};
   host.querySelectorAll('[data-cq]').forEach(b=>b.onclick=()=>{$('#cl-url').value=b.dataset.cq;});
@@ -1679,6 +1682,35 @@ function loadConnect(){
       if(s.url && !$('#codex-login-box a')) _codexShowLogin(s.url,s.code);
       if(s.logged_in){ clearInterval(poll); _codexDoConnect(); } }, 3000); };
   loadEndpointList();
+  loadModelCatalog();
+}
+// ── Your models: catalog with tier/kind filter chips + per-model visibility ──
+let MC=[], MCF='all';
+async function loadModelCatalog(){
+  let d={}; try{ d=await j('/api/models/catalog'); }catch(e){ const el=$('#mc-models'); if(el) el.textContent='Could not load models.'; return; }
+  MC=d.models||[]; renderMCFilters(); renderMC();
+}
+function renderMCFilters(){
+  const f=$('#mc-filters'); if(!f) return;
+  const counts={all:MC.length}; ['free','paid','subscription','local','cloud'].forEach(k=>counts[k]=0);
+  MC.forEach(m=>{ counts[m.tier]=(counts[m.tier]||0)+1; counts[m.kind]=(counts[m.kind]||0)+1; });
+  const defs=[['all','All'],['free','Free'],['paid','Paid'],['subscription','Subscription'],['local','Local'],['cloud','Cloud']];
+  f.innerHTML=defs.map(d=>`<button class="go mc-f" data-f="${d[0]}" style="${MCF===d[0]?'border-color:var(--brass);color:var(--brass)':''}">${d[1]} <span class="muted">${counts[d[0]]||0}</span></button>`).join('');
+  f.querySelectorAll('.mc-f').forEach(b=>b.onclick=()=>{ MCF=b.dataset.f; renderMCFilters(); renderMC(); });
+}
+function _tierBadge(t){ const c=t==='free'?'var(--ok)':t==='subscription'?'var(--cyan)':'var(--warn)'; return '<span style="font-size:9px;border:1px solid color-mix(in srgb,'+c+' 40%,transparent);color:'+c+';border-radius:4px;padding:0 4px;text-transform:uppercase">'+t+'</span>'; }
+function renderMC(){
+  const el=$('#mc-models'); if(!el) return;
+  const ms=MC.filter(m=>MCF==='all'||m.tier===MCF||m.kind===MCF);
+  if(!ms.length){ el.innerHTML='<span style="font-size:13px">No models match this filter.</span>'; return; }
+  el.innerHTML=ms.map(m=>'<label class="row" style="padding:6px 0;border-top:1px solid var(--sep);cursor:pointer">'
+    +'<input type="checkbox" data-vep="'+esc(m.ep_id)+'" data-vmodel="'+esc(m.model)+'" '+(m.hidden?'':'checked')+'>'
+    +'<span class="grow"><b>'+esc(m.model)+'</b> <span class="muted" style="font-size:11px">'+esc(m.endpoint)+'</span></span>'
+    +_tierBadge(m.tier)+' <span style="font-size:11px;opacity:.6">'+(m.kind==='local'?'🖥':'☁')+'</span></label>').join('');
+  el.querySelectorAll('input[data-vep]').forEach(c=>c.onchange=async()=>{
+    await fetch('/api/models/visibility',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ep_id:c.dataset.vep,model:c.dataset.vmodel,visible:c.checked})});
+    const it=MC.find(x=>x.ep_id===c.dataset.vep&&x.model===c.dataset.vmodel); if(it) it.hidden=!c.checked; renderMCFilters();
+  });
 }
 
 // ── Users tab: list / add / remove + open-signup (the old SPA "Users", reborn).

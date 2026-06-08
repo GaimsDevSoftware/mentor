@@ -76,6 +76,12 @@ def setup_agents_routes() -> APIRouter:
                     ms = json.loads(ep.cached_models) if ep.cached_models else []
                 except Exception:
                     ms = []
+                # Respect per-model visibility (hidden_models) so checking a model
+                # off in the manager removes it from role pickers too.
+                try:
+                    hidden = set(json.loads(ep.hidden_models)) if ep.hidden_models else set()
+                except Exception:
+                    hidden = set()
                 # local = private + free + on your hardware; cloud = capable but
                 # costs money and sends data out. This is the signal that lets a
                 # user pick a helper's model by cost / privacy.
@@ -86,6 +92,8 @@ def setup_agents_routes() -> APIRouter:
                 except Exception:
                     pass
                 for m in ms:
+                    if m in hidden:
+                        continue
                     if not m:
                         continue
                     spec = f"{m}@{ep.name}"
