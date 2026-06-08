@@ -401,6 +401,15 @@ def setup_manage_routes() -> APIRouter:
         except Exception as e:
             return {"ok": False, "detail": str(e)}
 
+    @router.get("/api/manage/autoheal")
+    async def autoheal_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Recent auto-heal events — the UI polls this for calm notifications."""
+        try:
+            from src.model_autoheal import recent_heals
+            return {"heals": recent_heals()}
+        except Exception:
+            return {"heals": []}
+
     @router.post("/api/manage/setting")
     async def set_setting(payload: Dict[str, Any] = Body(...),
                           _admin: str = Depends(require_admin)) -> Dict[str, Any]:

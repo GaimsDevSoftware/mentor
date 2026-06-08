@@ -1807,6 +1807,10 @@ import createResearchSynapse from './researchSynapse.js';
                     }
                   }
                 }
+              } else if (json.type === 'autoheal') {
+                if (!_isBg) {
+                  uiModule.showToast('🔄 ' + (json.message || 'Model switched automatically'), 8000);
+                }
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
                 // Update user bubble — replace file chips with image previews

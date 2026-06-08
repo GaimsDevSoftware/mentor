@@ -1589,6 +1589,21 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
             yield chunk
         if not retried:
             return  # candidate finished (success, or terminal error already sent)
-    # Every candidate failed pre-content — surface the last error.
+    # Every candidate failed pre-content — try auto-heal, then surface the error.
     if last_error:
+        try:
+            from src.model_autoheal import is_quota_error, heal_role
+            err_text = _summarize_stream_error(last_error)
+            if is_quota_error(Exception(err_text)):
+                new = heal_role("default_model", f"{primary_model}", err_text[:100])
+                if new:
+                    yield ('data: ' + json.dumps({
+                        "type": "autoheal",
+                        "old_model": primary_model,
+                        "new_model": new,
+                        "reason": err_text[:120],
+                        "message": f"Switched to {new.split('@')[0]} — the previous model hit its limit. This change is saved.",
+                    }) + '\n\n')
+        except Exception:
+            pass
         yield last_error
