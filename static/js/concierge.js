@@ -46,11 +46,11 @@
   document.head.appendChild(style);
 
   var launch = document.createElement('button');
-  launch.id = 'mc-launch'; launch.title = 'Setup assistant';
-  launch.innerHTML = '💬 Setup help';
+  launch.id = 'mc-launch'; launch.title = 'Atlas — your setup guide';
+  launch.innerHTML = '✦ Atlas';
   var panel = document.createElement('div');
   panel.id = 'mc-panel';
-  panel.innerHTML = '<div id="mc-head"><b>✦ Setup assistant</b><span id="mc-ready" style="display:none;font-size:10px;color:var(--ok,#30d158);background:color-mix(in srgb,var(--ok,#30d158) 12%,transparent);border:1px solid color-mix(in srgb,var(--ok,#30d158) 30%,transparent);border-radius:99px;padding:2px 7px;margin-left:6px" title="Open Mentor">● Mentor is ready</span><button id="mc-min" title="Minimize">—</button><button id="mc-close" title="Close">✕</button></div>'
+  panel.innerHTML = '<div id="mc-head"><b>✦ Atlas</b><span id="mc-ready" style="display:none;font-size:10px;color:var(--ok,#30d158);background:color-mix(in srgb,var(--ok,#30d158) 12%,transparent);border:1px solid color-mix(in srgb,var(--ok,#30d158) 30%,transparent);border-radius:99px;padding:2px 7px;margin-left:6px" title="Open Mentor">● Mentor is ready</span><button id="mc-min" title="Minimize">—</button><button id="mc-close" title="Close">✕</button></div>'
     + '<div id="mc-log"></div>'
     + '<div id="mc-foot"><input id="mc-in" placeholder="Tell me what you want…"><button id="mc-send">Send</button></div>';
   document.body.appendChild(launch);
@@ -210,6 +210,7 @@
       if (t === 'set_role') { if (!args.role || !args.spec) return 'missing role/spec'; await fetch('/api/manage/setting', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: args.role, value: args.spec }) }); return 'set ' + args.role + ' = ' + args.spec; }
       if (t === 'auto_roles') { var body = JSON.stringify({ tiers: (args.tiers || null) }); var rr = await J('/api/setup/auto-roles', { method: 'POST', body: body }); if (!rr.ok) return rr.error || 'could not auto-fill roles'; var aa = rr.assigned || {}; var fb = rr.fallbacks || {}; var nfb = 0; for (var k in fb) { nfb += (fb[k] || []).length; } return 'roles filled — ' + Object.keys(aa).map(function (k) { return k + '=' + aa[k]; }).join(', ') + (rr.vision ? ' · vision ok' : ' · no vision') + ' · ' + nfb + ' fallbacks across ' + (rr.source_count || 0) + ' source(s).' + (rr.note ? ' ' + rr.note : ''); }
       if (t === 'open_concierge') { location.href = '/app/setup'; return 'sent the user to the setup picker'; }
+      if (t === 'toggle_paid_models') { var en = !!(args.enabled); await J('/api/manage/setting', { method: 'POST', body: JSON.stringify({ key: 'opencode_include_paid', value: en }) }); return en ? 'Paid API models are now VISIBLE (Claude, GPT, Gemini, Grok). They cost per request on top of any subscription.' : 'Paid API models are now HIDDEN. Only free + subscription models are shown.'; }
       return 'unknown action ' + t;
     } catch (e) { return 'action error: ' + e; }
   }
@@ -218,8 +219,8 @@
     if (steps <= 0) { note('Paused — say "continue".'); return; }
     var r;
     try { r = await J('/api/setup/assistant', { method: 'POST', body: JSON.stringify({ messages: ASST }) }); }
-    catch (e) { bubble('assistant', 'I could not reach the guide AI — try again in a moment.'); return; }
-    if (r && r.need_model) { bubble('assistant', 'Pick a guide AI in Setup first — taking you there.'); setTimeout(function () { location.href = '/app/setup'; }, 1200); return; }
+    catch (e) { bubble('assistant', 'I could not reach the backend — try again in a moment.'); return; }
+    if (r && r.need_model) { bubble('assistant', 'I need a model first — taking you to Setup.'); setTimeout(function () { location.href = '/app/setup'; }, 1200); return; }
     if (!r || !r.ok) { bubble('assistant', (r && r.detail) || 'Something went wrong — let\'s try again.'); return; }
     if (r.reply) { ASST.push({ role: 'assistant', content: r.reply }); bubble('assistant', r.reply); save(); }
     if (r.action && r.action.type) {
@@ -256,7 +257,7 @@
   }
   function work(on) { try { panel.classList.toggle('mc-working', !!on); } catch (e) {} }
   function attn(on) { try { inp.classList.toggle('mc-attn', !!on); launch.classList.toggle('mc-attn', !!on); } catch (e) {} }
-  function urgent(on) { try { panel.classList.toggle('mc-urgent', !!on); launch.classList.toggle('mc-urgent', !!on); launch.innerHTML = on ? '⚠ Finish setup' : '💬 Setup help'; } catch (e) {} }
+  function urgent(on) { try { panel.classList.toggle('mc-urgent', !!on); launch.classList.toggle('mc-urgent', !!on); launch.innerHTML = on ? '⚠ Atlas' : '✦ Atlas'; } catch (e) {} }
   function recheckRoles() { J('/api/setup/role-status').then(function (s) { if (s && !s.critical_missing) urgent(false); }).catch(function () {}); }
   async function kickoff() { if (started || busy) return; started = true; busy = true; work(1); try { await turn(6); } finally { busy = false; work(0); } }
   async function send() {

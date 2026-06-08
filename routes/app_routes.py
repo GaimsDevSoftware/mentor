@@ -1151,8 +1151,8 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
     <!-- Concierge / guide AI — a small free model that explains things and (next)
          can run setup for you. Separate from the main work model below. -->
     <div style="border:1px solid color-mix(in srgb,var(--cyan) 35%,transparent);background:color-mix(in srgb,var(--cyan) 6%,transparent);border-radius:11px;padding:14px;margin:0 0 16px">
-      <div style="font-weight:600;margin-bottom:3px">First: pick your guide AI <span class="faint" style="font-weight:400;font-size:12px">— free; it explains things &amp; can set the rest up for you</span></div>
-      <div class="why" style="margin:0 0 10px;font-size:13px">Your in-app helper (separate from the main work model below). It only guides + runs setup, so a small free one is perfect. Recommended: <b>Groq</b> — free, fast, ~1 minute.</div>
+      <div style="font-weight:600;margin-bottom:3px">First: pick a model for Atlas <span class="faint" style="font-weight:400;font-size:12px">— your setup guide; free, explains things &amp; can set the rest up for you</span></div>
+      <div class="why" style="margin:0 0 10px;font-size:13px">Atlas is your in-app guide (separate from the main work model below). It only guides + runs setup, so a small free one is perfect. Recommended: <b>Groq</b> — free, fast, ~1 minute.</div>
       <div id="cg-tiers" class="provgrid" style="grid-template-columns:repeat(2,1fr)"></div>
       <div id="cg-action" style="display:none;margin-top:10px"></div>
       <div id="cg-msg" class="actmsg muted" style="margin-top:6px"></div>
@@ -1161,10 +1161,10 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
     <!-- Active assistant — the guide AI does setup for you (powered by the concierge above). -->
     <div id="assistant-card" style="border:1px solid var(--sep-2);border-radius:11px;padding:14px;margin:0 0 16px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
-        <span style="font-weight:600">💬 Or let the assistant set it up for you</span>
+        <span style="font-weight:600">✦ Atlas — let the guide set it up for you</span>
         <a id="asst-ready" href="/" title="Open Mentor" style="display:none;font-size:10px;color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);border:1px solid color-mix(in srgb,var(--ok) 30%,transparent);border-radius:99px;padding:2px 7px;text-decoration:none">● Mentor is ready</a>
       </div>
-      <div class="why" style="margin:0 0 8px;font-size:13px">Pick your guide AI above, then just tell it what you want — it can install, download, connect and configure things for you, and you watch it happen.</div>
+      <div class="why" style="margin:0 0 8px;font-size:13px">Pick a model for Atlas above, then just tell it what you want — Atlas can install, download, connect and configure things for you, and you watch it happen.</div>
       <div id="asst-log" style="max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:8px"></div>
       <div class="row" style="gap:8px"><input id="asst-input" class="fld" style="flex:1" placeholder="e.g. set me up for private local coding"><button class="btn primary" id="asst-send" type="button">Send</button></div>
     </div>
@@ -1313,18 +1313,18 @@ function cgSelect(c){
   const a=$('#cg-action'); a.style.display='';
   if(c.local){
     a.innerHTML='<div class="why" style="font-size:12px;margin:0 0 8px">Downloads a small model (~1.3 GB) that runs on your machine — free, private, no key.<br><span style="color:var(--warn)">Heads-up: a small local model can answer questions, but it often <b>can\'t reliably run the do-it-for-me actions</b> (it may invent model names). For the active assistant, a free cloud guide — <b>Groq</b> or <b>OpenCode Zen</b> — works much better. Local is great for privacy.</span></div>'
-      +'<button class="btn primary" id="cg-local-go" type="button">Set up local guide AI anyway</button>';
+      +'<button class="btn primary" id="cg-local-go" type="button">Set up Atlas locally</button>';
     $('#cg-local-go').onclick=async()=>{ const m=$('#cg-msg'); $('#cg-local-go').disabled=true; m.textContent='Setting up — downloading (~1.3 GB)…'; m.style.color='var(--dim)';
       let r; try{ r=await j('/api/setup/free-helper',{method:'POST'}); }catch(e){ m.textContent='Could not start.'; $('#cg-local-go').disabled=false; return; }
       if(r&&r.need_ollama){ m.textContent='Install Ollama first (in the Local tab below), then retry.'; $('#cg-local-go').disabled=false; return; }
       const poll=setInterval(async()=>{ let s; try{ s=await j('/api/setup/free-helper/status'); }catch(e){ return; }
         if(s.log) m.textContent=String(s.log).slice(-120);
-        if(s.status==='done'){ clearInterval(poll); m.textContent='✓ Your guide AI is ready (local).'; m.style.color='var(--ok)'; conciergeReady(); }
+        if(s.status==='done'){ clearInterval(poll); m.textContent='✓ Atlas is ready (local).'; m.style.color='var(--ok)'; conciergeReady(); }
         else if(s.status==='failed'){ clearInterval(poll); m.textContent=String(s.log||'Failed').slice(-160); m.style.color='var(--err)'; $('#cg-local-go').disabled=false; } }, 3000); };
     return;
   }
   a.innerHTML='<div class="why" style="font-size:12px;margin:0 0 6px">Get a <b>free</b> key (no card needed) → <a href="'+esc(c.get)+'" target="_blank" rel="noopener" style="color:var(--cyan)">'+esc(c.get.replace(/^https?:\/\//,''))+'</a>, then paste it:</div>'
-    +'<div class="row" style="gap:8px;flex-wrap:wrap"><input id="cg-key" class="fld" type="password" placeholder="paste your '+esc(c.name)+' key" style="flex:1;min-width:180px"><button class="btn primary" id="cg-go" type="button">Use as guide AI</button></div>';
+    +'<div class="row" style="gap:8px;flex-wrap:wrap"><input id="cg-key" class="fld" type="password" placeholder="paste your '+esc(c.name)+' key" style="flex:1;min-width:180px"><button class="btn primary" id="cg-go" type="button">Use for Atlas</button></div>';
   $('#cg-go').onclick=async()=>{ const m=$('#cg-msg'); const key=($('#cg-key').value||'').trim();
     if(!key){ m.textContent='Paste your '+c.name+' key first.'; m.style.color='var(--err)'; return; }
     $('#cg-go').disabled=true; m.textContent='Connecting to '+c.name+'…'; m.style.color='var(--dim)';
@@ -1337,7 +1337,7 @@ function cgSelect(c){
       if(!pick){ m.textContent='Connected, but no models came back — try another provider.'; m.style.color='var(--err)'; $('#cg-go').disabled=false; return; }
       const spec=pick+'@'+c.name;
       await fetch('/api/manage/setting',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'teacher_model',value:spec})});
-      m.textContent='✓ Your guide AI is ready: '+pick+' ('+c.name+').'; m.style.color='var(--ok)'; conciergeReady();
+      m.textContent='✓ Atlas is ready: '+pick+' ('+c.name+').'; m.style.color='var(--ok)'; conciergeReady();
     }catch(e){ m.textContent='Request failed.'; m.style.color='var(--err)'; $('#cg-go').disabled=false; }
   };
 }
@@ -1373,6 +1373,7 @@ async function asstAct(a){
     if(t==='set_role'){ const role=args.role, spec=args.spec; if(!role||!spec) return 'missing role/spec'; await fetch('/api/manage/setting',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:role,value:spec})}); return 'set '+role+' = '+spec; }
     if(t==='auto_roles'){ const body=JSON.stringify({tiers:(args.tiers||null)}); const r=await j('/api/setup/auto-roles',{method:'POST',body:body}); if(!r.ok) return r.error||'could not auto-fill roles'; const a=r.assigned||{}; const fb=r.fallbacks||{}; const nfb=Object.values(fb).reduce((n,xs)=>n+(xs||[]).length,0); return 'roles filled — '+Object.keys(a).map(k=>k+'='+a[k]).join(', ')+(r.vision?' · vision ✓':' · no vision')+' · '+nfb+' fallbacks across '+(r.source_count||0)+' source(s).'+(r.note?' '+r.note:''); }
     if(t==='open_concierge'){ const el=$('#cg-tiers'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); return 'opened the guide-AI / key picker for the user'; }
+    if(t==='toggle_paid_models'){ const en=!!(args.enabled); await j('/api/manage/setting',{method:'POST',body:JSON.stringify({key:'opencode_include_paid',value:en})}); return en?'Paid API models are now VISIBLE.':'Paid API models are now HIDDEN.'; }
     return 'unknown action: '+t;
   }catch(e){ return 'action error: '+e; }
 }
@@ -1380,8 +1381,8 @@ let asstStarted=false;
 async function asstTurn(steps){
   if(steps<=0){ asstNote('Paused — say "continue" and I\'ll keep going.'); return; }
   let r; try{ r=await j('/api/setup/assistant',{method:'POST',body:JSON.stringify({messages:ASST})}); }
-  catch(e){ asstBubble('assistant','Hmm, I could not reach the guide AI. Try again in a moment.'); return; }
-  if(r && r.need_model){ asstBubble('assistant','First pick your guide AI in the card above — Groq (free, ~1 min) is the easiest. Then I\'ll take it from here.');
+  catch(e){ asstBubble('assistant','I could not reach the backend. Try again in a moment.'); return; }
+  if(r && r.need_model){ asstBubble('assistant','Pick a model for me in the card above — Groq (free, ~1 min) is the easiest. Then I\'ll take it from here.');
     const el=$('#cg-tiers'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); return; }
   if(!r || !r.ok){ asstBubble('assistant', (r&&r.detail)||'Something went wrong — let\'s try that again.'); return; }
   if(r.reply){ ASST.push({role:'assistant',content:r.reply}); asstBubble('assistant', r.reply); asstSave(); }
