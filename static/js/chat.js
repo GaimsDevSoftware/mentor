@@ -105,6 +105,48 @@ import createResearchSynapse from './researchSynapse.js';
   // stripToolBlocks and roleTimestamp now in chatRenderer.js
   var stripToolBlocks = chatRenderer.stripToolBlocks;
 
+  /** Render self_coder tool_output as a rich card with diff + action buttons. */
+  function _renderSelfCoderOutput(rawOutput) {
+    try {
+      var data = JSON.parse(rawOutput);
+    } catch {
+      return `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(rawOutput)}</pre></details>`;
+    }
+    var status = data.status || 'unknown';
+    var decision = data.decision || status;
+    var why = data.why || '';
+    var files = (data.changed_files || []).join(', ') || 'none';
+    var riskTier = data.risk_tier || '';
+    var pid = data.id || '';
+    var nextSteps = data.next_steps || '';
+
+    var statusColor = status === 'verified' ? 'var(--ok,#30d158)' : (status === 'failed' ? 'var(--err,#ff453a)' : 'var(--dim)');
+    var statusIcon = status === 'verified' ? '✓' : (status === 'failed' ? '✗' : '○');
+
+    var html = '<div class="sc-tool-card">';
+    html += `<div class="sc-tool-header"><span style="color:${statusColor};font-weight:600">${statusIcon} ${esc(decision)}</span>`;
+    if (riskTier) html += `<span class="sc-tool-risk">${esc(riskTier)}</span>`;
+    html += '</div>';
+    if (why) html += `<div class="sc-tool-why">${esc(why)}</div>`;
+    html += `<div class="sc-tool-files">Files: ${esc(files)}</div>`;
+
+    if (data.diff_preview && data.diff_preview.trim()) {
+      var diffHtml = data.diff_preview.split('\n').map(function(l) {
+        var c = 'var(--dim)';
+        if (l.startsWith('+++') || l.startsWith('---')) c = 'var(--faint)';
+        else if (l.startsWith('@@')) c = 'var(--cyan)';
+        else if (l[0] === '+') c = 'var(--ok,#30d158)';
+        else if (l[0] === '-') c = 'var(--err,#ff453a)';
+        return '<span style="color:' + c + '">' + esc(l) + '</span>';
+      }).join('\n');
+      html += `<details class="sc-tool-diff"><summary>Diff</summary><pre>${diffHtml}</pre></details>`;
+    }
+
+    if (nextSteps) html += `<div class="sc-tool-next">${esc(nextSteps)}</div>`;
+    html += '</div>';
+    return html;
+  }
+
   function _normalizeEndpointForCompare(url) {
     if (!url) return '';
     try {
@@ -1034,6 +1076,7 @@ import createResearchSynapse from './researchSynapse.js';
         'image_gen': 'Generating',
         'generate_image': 'Generating',
         'manage_memory': 'Remembering',
+        'self_coder': '🔧 Self-coding',
         'save_memory': 'Remembering',
         'search_memory': 'Recalling',
         'manage_session': 'Organizing',
@@ -2144,7 +2187,9 @@ import createResearchSynapse from './researchSynapse.js';
                   const ok = (json.exit_code === 0 || json.exit_code == null);
                   const cmd = json.command || '';
                   let outHtml = '';
-                  if (json.output && json.output.trim()) {
+                  if (json.tool === 'self_coder' && json.output && json.output.trim()) {
+                    outHtml = _renderSelfCoderOutput(json.output);
+                  } else if (json.output && json.output.trim()) {
                     outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(json.output)}</pre></details>`;
                   }
                   const cmdHtml2 = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';

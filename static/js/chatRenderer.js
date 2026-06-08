@@ -15,6 +15,42 @@ const CHAT_ABOUT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="n
 const COPY_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const CHECK_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 
+/** Render self_coder tool output as rich card (static — for history replay). */
+function _renderSelfCoderOutputStatic(rawOutput, esc) {
+  try {
+    var data = JSON.parse(rawOutput);
+  } catch {
+    return `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(rawOutput)}</pre></details>`;
+  }
+  var status = data.status || 'unknown';
+  var decision = data.decision || status;
+  var why = data.why || '';
+  var files = (data.changed_files || []).join(', ') || 'none';
+  var riskTier = data.risk_tier || '';
+  var statusColor = status === 'verified' ? 'var(--ok,#30d158)' : (status === 'failed' ? 'var(--err,#ff453a)' : 'var(--dim)');
+  var statusIcon = status === 'verified' ? '✓' : (status === 'failed' ? '✗' : '○');
+  var html = '<div class="sc-tool-card">';
+  html += `<div class="sc-tool-header"><span style="color:${statusColor};font-weight:600">${statusIcon} ${esc(decision)}</span>`;
+  if (riskTier) html += `<span class="sc-tool-risk">${esc(riskTier)}</span>`;
+  html += '</div>';
+  if (why) html += `<div class="sc-tool-why">${esc(why)}</div>`;
+  html += `<div class="sc-tool-files">Files: ${esc(files)}</div>`;
+  if (data.diff_preview && data.diff_preview.trim()) {
+    var diffHtml = data.diff_preview.split('\n').map(function(l) {
+      var c = 'var(--dim)';
+      if (l.startsWith('+++') || l.startsWith('---')) c = 'var(--faint)';
+      else if (l.startsWith('@@')) c = 'var(--cyan)';
+      else if (l[0] === '+') c = 'var(--ok,#30d158)';
+      else if (l[0] === '-') c = 'var(--err,#ff453a)';
+      return '<span style="color:' + c + '">' + esc(l) + '</span>';
+    }).join('\n');
+    html += `<details class="sc-tool-diff"><summary>Diff</summary><pre>${diffHtml}</pre></details>`;
+  }
+  if (data.next_steps) html += `<div class="sc-tool-next">${esc(data.next_steps)}</div>`;
+  html += '</div>';
+  return html;
+}
+
 /** Sanitize a URL for use in href — only allow http(s) and protocol-relative. */
 function _safeHref(url) {
   if (!url) return '#';
@@ -1949,7 +1985,9 @@ export function addMessage(role, content, modelName, metadata) {
           for (const ev of roundTools) {
             const ok = (ev.exit_code === 0 || ev.exit_code == null);
             let outHtml = '';
-            if (ev.output && ev.output.trim()) {
+            if (ev.tool === 'self_coder' && ev.output && ev.output.trim()) {
+              outHtml = _renderSelfCoderOutputStatic(ev.output, esc);
+            } else if (ev.output && ev.output.trim()) {
               outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(ev.output)}</pre></details>`;
             }
             if (ev.screenshot) {

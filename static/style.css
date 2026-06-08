@@ -8912,6 +8912,74 @@ body.hide-thinking .thinking-section { display: none !important; }
   line-height: 1.5;
 }
 
+/* ===== SELF-CODER TOOL CARD (inline in agent thread) ===== */
+.sc-tool-card {
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 0 0;
+}
+.sc-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.sc-tool-risk {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--cyan) 18%, transparent);
+  color: var(--cyan);
+}
+.sc-tool-why {
+  color: var(--dim);
+  margin-bottom: 4px;
+}
+.sc-tool-files {
+  color: var(--faint);
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.sc-tool-diff {
+  margin-top: 6px;
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 20%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.sc-tool-diff summary {
+  cursor: pointer;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  user-select: none;
+  list-style: none;
+}
+.sc-tool-diff summary::-webkit-details-marker { display: none; }
+.sc-tool-diff pre {
+  background: transparent;
+  border: none;
+  padding: 8px 10px;
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  font: 11px/1.4 ui-monospace, Menlo, monospace;
+  white-space: pre-wrap;
+}
+.sc-tool-next {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--ok, #30d158) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok, #30d158) 25%, transparent);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--dim);
+}
+
 /* Mobile responsive styles */
 @media (max-width: 768px) {
   #recording-indicator {

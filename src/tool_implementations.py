@@ -4195,7 +4195,8 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
 # self_coder — autonomous code improvement loop
 # ---------------------------------------------------------------------------
 
-async def do_self_coder(content: str, owner: Optional[str] = None) -> Dict:
+async def do_self_coder(content: str, owner: Optional[str] = None,
+                       progress_cb=None) -> Dict:
     """Expose the self-coder engine as a chat tool.
 
     Actions:
@@ -4208,6 +4209,7 @@ async def do_self_coder(content: str, owner: Optional[str] = None) -> Dict:
     """
     from src import self_coder as sc
     import time as _time
+    import asyncio as _asyncio
 
     try:
         args = _parse_tool_args(content)
@@ -4258,7 +4260,69 @@ async def do_self_coder(content: str, owner: Optional[str] = None) -> Dict:
         files = list(args.get("files") or [])
         result = await sc.propose(instruction, files, source="chat-tool",
                                   ts=_time.time())
-        return {"output": json.dumps(result, indent=2, default=str), "exit_code": 0}
+        if not result.get("ok"):
+            return {"output": json.dumps(result, indent=2, default=str), "exit_code": 1}
+
+        pid = result.get("id") or ""
+        if not pid:
+            return {"output": json.dumps(result, indent=2, default=str), "exit_code": 0}
+
+        _STEP_LABELS = {
+            "branch_created": "Created branch",
+            "aider_starting": "Aider is editing…",
+            "aider_done": "Aider finished",
+            "no_changes": "No changes made",
+            "committed_on_branch": "Committed on branch",
+            "verify_starting": "Verifying…",
+            "verify_py_compile": "Compile check",
+            "verify_import_app": "Boot check",
+            "verify_pytest": "Running tests",
+            "decided": "Decision",
+            "error": "Error",
+        }
+        seen_steps = 0
+        for _ in range(300):  # max ~10 min
+            await _asyncio.sleep(2)
+            p = sc.get_proposal(pid)
+            if not p:
+                break
+
+            prog = p.get("progress") or []
+            if progress_cb and len(prog) > seen_steps:
+                for step in prog[seen_steps:]:
+                    label = _STEP_LABELS.get(step.get("step"), step.get("step", ""))
+                    ok = step.get("ok")
+                    status = " ✓" if ok is True else (" ✗" if ok is False else "")
+                    tail = f"{label}{status}"
+                    try:
+                        await progress_cb({"tail": tail})
+                    except Exception:
+                        pass
+                seen_steps = len(prog)
+
+            if p.get("status") != "building":
+                dec = p.get("decision") or {}
+                summary = dec.get("action", p.get("status", "done"))
+                why = dec.get("why", "")
+                diff_preview = (p.get("diff") or "")[:2000]
+                out = {
+                    "id": pid,
+                    "status": p.get("status"),
+                    "decision": summary,
+                    "why": why,
+                    "risk_tier": (p.get("risk") or {}).get("tier"),
+                    "changed_files": p.get("changed", []),
+                    "diff_preview": diff_preview,
+                }
+                if p.get("status") == "verified":
+                    out["next_steps"] = (
+                        f"Proposal {pid} is verified and ready. "
+                        f"Call self_coder with action='apply' id='{pid}' to merge + canary deploy, "
+                        f"or action='discard' id='{pid}' to delete."
+                    )
+                return {"output": json.dumps(out, indent=2, default=str), "exit_code": 0}
+
+        return {"output": f"Proposal {pid} is still running (timed out waiting). Check with action='get' id='{pid}'.", "exit_code": 0}
 
     if action == "apply":
         pid = args.get("id") or args.get("pid") or ""

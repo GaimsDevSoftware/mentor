@@ -1006,7 +1006,7 @@ async def execute_tool_block(
         result = await do_vault_unlock(content, owner=owner)
     elif tool == "self_coder":
         desc = "self_coder"
-        result = await do_self_coder(content, owner=owner)
+        result = await do_self_coder(content, owner=owner, progress_cb=progress_cb)
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()
