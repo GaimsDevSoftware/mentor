@@ -1811,6 +1811,10 @@ import createResearchSynapse from './researchSynapse.js';
                 if (!_isBg) {
                   uiModule.showToast('🔄 ' + (json.message || 'Model switched automatically'), 8000);
                 }
+              } else if (json.type === 'autoheal_failed') {
+                if (!_isBg) {
+                  uiModule.showToast('⚠ ' + (json.message || 'All models exhausted — add a backup source'), 12000);
+                }
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
                 // Update user bubble — replace file chips with image previews

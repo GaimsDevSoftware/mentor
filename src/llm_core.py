@@ -1634,6 +1634,16 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                         "reason": err_text[:120],
                         "message": f"Switched to {new.split('@')[0]} — the previous model hit its limit. This change is saved.",
                     }) + '\n\n')
+                else:
+                    from src.model_autoheal import recent_heals
+                    last = recent_heals()[-1] if recent_heals() else {}
+                    yield ('data: ' + json.dumps({
+                        "type": "autoheal_failed",
+                        "old_model": primary_model,
+                        "reason": err_text[:120],
+                        "suggestion": last.get("suggestion", "Add another free source (OpenRouter, Groq, Gemini) as backup."),
+                        "message": f"All models exhausted. {last.get('suggestion', 'Add a backup source.')}",
+                    }) + '\n\n')
         except Exception:
             pass
         yield last_error

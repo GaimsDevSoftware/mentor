@@ -87,6 +87,22 @@ def heal_role(role_key: str, old_spec: str, reason: str,
     replacement = find_replacement(old_spec, role=role_key, owner=owner)
     if not replacement:
         logger.info(f"[autoheal] no replacement found for {role_key}={old_spec}")
+        _heal_log.append({
+            "ts": time.time(),
+            "role": role_key,
+            "old": old_spec,
+            "new": None,
+            "reason": "No replacement available",
+            "suggestion": (
+                "All connected models in this tier are from the same provider. "
+                "Add a free backup source — OpenRouter (free tier, no card needed) "
+                "is the quickest: get a key at openrouter.ai/keys, then paste it "
+                "in Admin → Connect. Or add Groq / Cerebras / Google Gemini for "
+                "another free pool. Atlas can help: say 'add a free backup source'."
+            ),
+        })
+        if len(_heal_log) > _MAX_LOG:
+            del _heal_log[:-_MAX_LOG]
         return None
 
     try:

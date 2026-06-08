@@ -1759,6 +1759,14 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  .setup-side .btn{background:var(--surface);border:1px solid var(--sep);box-shadow:var(--shadow)}
  .setup-body{margin-top:10px;padding:14px 16px;background:var(--surface);border:1px solid var(--sep);border-radius:12px;box-shadow:var(--shadow)}
 
+ /* Status bar */
+ .status-bar{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--faint);padding:0 2px 6px;min-height:0}
+ .status-bar:empty{display:none}
+ .status-chip{display:inline-flex;align-items:center;gap:4px;background:var(--tint);border:1px solid var(--sep);border-radius:6px;padding:3px 8px}
+ .status-chip.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,transparent);background:color-mix(in srgb,var(--warn) 8%,transparent)}
+ .status-chip.ok{color:var(--ok)}
+ .status-chip b{font-weight:600}
+
  /* Conversation */
  .convo{display:flex;flex-direction:column;gap:14px;padding:4px 0 12px;min-height:200px}
  .empty{color:var(--dim);font-size:14px;text-align:center;padding:36px 16px 24px;line-height:1.65}
@@ -1905,6 +1913,9 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
 </div>
 
 <!-- Conversation -->
+<!-- Status bar — quota + autoheal notices -->
+<div id="status-bar" class="status-bar"></div>
+
 <div id="convo" class="convo"></div>
 
 <!-- Composer -->
@@ -2423,6 +2434,35 @@ function pollJob(id, pIdx){
   }, 1500);
 }
 
+// ── Status bar — quota + autoheal ──
+async function refreshStatus(){
+  const bar=$('#status-bar'); if(!bar) return;
+  let chips=[];
+  try{
+    const q=await j('/api/manage/quota');
+    const provs=q.providers||{};
+    for(const [host,p] of Object.entries(provs)){
+      const rr=p['x-ratelimit-remaining-requests']||p['x-ratelimit-remaining'];
+      const rt=p['x-ratelimit-remaining-tokens'];
+      const cr=p['x-credits-remaining'];
+      const shortHost=host.replace(/https?:\/\//,'').split('/')[0].split('.').slice(-2).join('.');
+      if(rr!=null && parseInt(rr)<50) chips.push('<span class="status-chip warn">'+esc(shortHost)+': <b>'+rr+'</b> req left</span>');
+      else if(rr!=null) chips.push('<span class="status-chip ok">'+esc(shortHost)+': <b>'+rr+'</b> req</span>');
+      if(cr!=null) chips.push('<span class="status-chip'+(parseFloat(cr)<1?' warn':'')+'">'+esc(shortHost)+': <b>$'+cr+'</b></span>');
+    }
+  }catch(e){}
+  try{
+    const h=await j('/api/manage/autoheal');
+    const heals=(h.heals||[]).filter(x=>Date.now()/1000-x.ts<300);
+    for(const ev of heals){
+      if(ev.new) chips.push('<span class="status-chip warn">Switched '+esc((ev.old||'').split('@')[0])+' → '+esc((ev.new||'').split('@')[0])+'</span>');
+      else if(ev.suggestion) chips.push('<span class="status-chip warn">'+esc(ev.suggestion.slice(0,80))+'</span>');
+    }
+  }catch(e){}
+  bar.innerHTML=chips.join('');
+}
+setInterval(refreshStatus, 30000);
+
 // ── Boot ──────────────────────────────────────────────────────────────────
 
 turns = loadTurns();
@@ -2444,6 +2484,7 @@ autoGrow(instrEl);
 })();
 
 load();
+refreshStatus();
 </script>
 <script src="/static/js/concierge.js"></script>
 </body></html>"""

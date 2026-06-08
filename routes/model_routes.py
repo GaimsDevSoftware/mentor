@@ -730,6 +730,13 @@ def setup_model_routes(model_discovery):
                 ids = [m for m in ids if _model_filter(m)]
             except Exception:
                 pass
+        if "openrouter" in b or "openrouter" in n:
+            try:
+                from src.settings import get_setting
+                if not get_setting("openrouter_include_paid", False):
+                    ids = [m for m in ids if m.endswith(":free") or ":free" in m]
+            except Exception:
+                pass
         return ids
 
     def _refresh_caches_bg():
