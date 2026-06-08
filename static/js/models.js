@@ -197,6 +197,14 @@ export async function refreshModels(force = false) {
     const groups = { local: {}, api: {} };
     // Also track extra (non-curated) models per endpoint
     const extraGroups = { local: {}, api: {} };
+    const activeTier = Storage.get('odysseus-model-tier-filter', 'all');
+    const _isLocalUrl = (u) => /localhost|127\.0\.0\.1|::1/.test(u || '');
+    function _tierMatch(tier, url) {
+      if (activeTier === 'all') return true;
+      if (activeTier === 'local') return _isLocalUrl(url);
+      if (activeTier === 'free') return tier === 'free' && !_isLocalUrl(url);
+      return tier === activeTier;
+    }
     if (_cachedItems && _cachedItems.length > 0) {
       _cachedItems.forEach(item => {
         const cat = item.category === 'local' ? 'local' : 'api';
@@ -208,28 +216,30 @@ export async function refreshModels(force = false) {
         const epModelType = item.model_type || 'llm';
         const tierList = item.models_tier || [];
         (item.models || []).forEach((mid, i) => {
+          const tier = tierList[i] || (cat === 'local' ? 'free' : 'unknown');
+          if (!_tierMatch(tier, item.url)) return;
           groups[cat][epName].push({
             mid, url: item.url,
             displayName: displayNames[i] || mid,
             endpointId: item.endpoint_id || null,
             offline: isOffline,
             modelType: epModelType,
-            tier: tierList[i] || (cat === 'local' ? 'free' : 'unknown'),
-            epName: epName,
+            tier, epName,
           });
         });
         // Extra (non-curated) models from server
         const extraDisplayNames = item.models_extra_display || item.models_extra || [];
         const extraTierList = item.models_extra_tier || [];
         (item.models_extra || []).forEach((mid, i) => {
+          const tier = extraTierList[i] || (cat === 'local' ? 'free' : 'unknown');
+          if (!_tierMatch(tier, item.url)) return;
           extraGroups[cat][epName].push({
             mid, url: item.url,
             displayName: extraDisplayNames[i] || mid,
             endpointId: item.endpoint_id || null,
             offline: isOffline,
             modelType: epModelType,
-            tier: extraTierList[i] || (cat === 'local' ? 'free' : 'unknown'),
-            epName: epName,
+            tier, epName,
           });
         });
       });
@@ -552,27 +562,28 @@ export async function refreshModels(force = false) {
       box.insertBefore(searchBox, box.firstChild);
     }
 
-    // ── Tier filter chips (All | Local | Free | Subscription) ──
+    // ── Tier filter chips — count from raw _cachedItems (unfiltered) ──
     {
-      const allModels = [];
-      for (const cat of ['local', 'api']) {
-        for (const epModels of Object.values(groups[cat])) {
-          for (const m of epModels) allModels.push(m);
-        }
-        for (const epModels of Object.values(extraGroups[cat])) {
-          for (const m of epModels) allModels.push(m);
-        }
-      }
-      const tierCounts = {};
-      let localCount = 0;
-      allModels.forEach(m => {
-        const t = m.tier || 'unknown';
-        tierCounts[t] = (tierCounts[t] || 0) + 1;
-        if (m.epName && /localhost|127\.0\.0\.1|::1/i.test(m.url || '')) localCount++;
+      const tierCounts = {}; let totalAll = 0; let localCount = 0;
+      (_cachedItems || []).forEach(item => {
+        const tiers = item.models_tier || [];
+        const isLocal = _isLocalUrl(item.url);
+        (item.models || []).forEach((mid, i) => {
+          const t = tiers[i] || (isLocal ? 'free' : 'unknown');
+          tierCounts[t] = (tierCounts[t] || 0) + 1;
+          if (isLocal) localCount++;
+          totalAll++;
+        });
+        const eTiers = item.models_extra_tier || [];
+        (item.models_extra || []).forEach((mid, i) => {
+          const t = eTiers[i] || (isLocal ? 'free' : 'unknown');
+          tierCounts[t] = (tierCounts[t] || 0) + 1;
+          if (isLocal) localCount++;
+          totalAll++;
+        });
       });
       const cloudFree = (tierCounts['free'] || 0) - localCount;
-      const activeTier = Storage.get('odysseus-model-tier-filter', 'all');
-      const chips = [['all', 'All', allModels.length]];
+      const chips = [['all', 'All', totalAll]];
       if (localCount > 0) chips.push(['local', 'Local', localCount]);
       if (cloudFree > 0) chips.push(['free', 'Free', cloudFree]);
       if (tierCounts['subscription']) chips.push(['subscription', 'Subscription', tierCounts['subscription']]);
@@ -598,51 +609,8 @@ export async function refreshModels(force = false) {
         else box.insertBefore(bar, box.firstChild);
       }
 
-      // Apply tier filter: hide non-matching rows + their groups
-      if (activeTier !== 'all') {
-        const _isLocal = (url) => /localhost|127\.0\.0\.1|::1/.test(url || '');
-        // Hide individual model rows
-        box.querySelectorAll('.models-row').forEach(row => {
-          const t = row.getAttribute('data-tier') || '';
-          const mid = row.getAttribute('data-model-id') || '';
-          let match = false;
-          if (activeTier === 'local') {
-            const item = (_cachedItems || []).find(it => (it.models || []).includes(mid) || (it.models_extra || []).includes(mid));
-            match = item && _isLocal(item.url);
-          } else if (activeTier === 'free') {
-            const item = (_cachedItems || []).find(it => (it.models || []).includes(mid) || (it.models_extra || []).includes(mid));
-            match = t === 'free' && !(item && _isLocal(item.url));
-          } else {
-            match = (t === activeTier);
-          }
-          row.style.display = match ? '' : 'none';
-        });
-        // Also hide "Show N more" buttons if all hidden models are filtered out
-        box.querySelectorAll('.models-show-all-btn').forEach(btn => {
-          const target = btn._target || btn.parentElement;
-          if (!target) return;
-          const visibleSiblings = target.querySelectorAll('.models-row:not([style*="display: none"])');
-          if (visibleSiblings.length === 0) btn.style.display = 'none';
-        });
-        // Hide empty group headers
-        box.querySelectorAll('.models-group-content').forEach(gc => {
-          const vis = gc.querySelectorAll('.models-row:not([style*="display: none"])');
-          const showBtn = gc.querySelector('.models-show-all-btn');
-          const hasVisible = vis.length > 0 || (showBtn && showBtn.style.display !== 'none');
-          gc.style.display = hasVisible ? '' : 'none';
-          if (gc.previousElementSibling && gc.previousElementSibling.classList.contains('models-endpoint-label'))
-            gc.previousElementSibling.style.display = hasVisible ? '' : 'none';
-        });
-        box.querySelectorAll('.models-category-header').forEach(hdr => {
-          let next = hdr.nextElementSibling;
-          let anyVisible = false;
-          while (next && !next.classList.contains('models-category-header')) {
-            if (next.style.display !== 'none') anyVisible = true;
-            next = next.nextElementSibling;
-          }
-          if (!anyVisible) hdr.style.display = 'none';
-        });
-      }
+      // Tier filter is applied at data level (during collection above) —
+      // empty groups/categories are naturally absent from the DOM.
     }
 
     if (!_cachedItems || _cachedItems.length === 0) {
