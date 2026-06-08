@@ -672,7 +672,35 @@ import createResearchSynapse from './researchSynapse.js';
     let timedOut = false;
     let processingProbeTimer = null;
     let processingProbeAbort = null;
-    let _renderStream = () => {};
+    let _renderStreamRaw = () => {};
+    let _renderStreamPending = false;
+    let _renderStreamRaf = null;
+    let _renderStreamLastT = 0;
+    const _RENDER_THROTTLE_MS = 80; // max ~12 renders/sec — smooth enough for text
+    function _renderStream() {
+      // Throttle: batch rapid SSE deltas into one render per frame
+      if (_renderStreamPending) return;
+      const now = performance.now();
+      const elapsed = now - _renderStreamLastT;
+      if (elapsed >= _RENDER_THROTTLE_MS) {
+        _renderStreamLastT = now;
+        _renderStreamRaw();
+      } else {
+        _renderStreamPending = true;
+        _renderStreamRaf = requestAnimationFrame(() => {
+          _renderStreamPending = false;
+          _renderStreamLastT = performance.now();
+          _renderStreamRaw();
+        });
+      }
+    }
+    // Force an immediate render (used at finalization points)
+    function _renderStreamFlush() {
+      if (_renderStreamRaf) { cancelAnimationFrame(_renderStreamRaf); _renderStreamRaf = null; }
+      _renderStreamPending = false;
+      _renderStreamLastT = performance.now();
+      _renderStreamRaw();
+    }
     let _cancelThinkingTimer = () => {};
     let _removeThinkingSpinner = () => {};
     const clearProcessingProbe = () => {
@@ -1254,7 +1282,7 @@ import createResearchSynapse from './researchSynapse.js';
       }
 
       // Direct render helper for streaming text
-      _renderStream = () => {
+      _renderStreamRaw = () => {
         let dt = stripToolBlocks(roundText);
         const bodyEl = roundHolder.querySelector('.body');
         const contentEl = _ensureStreamLayout(bodyEl);
@@ -2073,7 +2101,7 @@ import createResearchSynapse from './researchSynapse.js';
                   if (_liveThinkContent) _liveThinkContent.id = _thinkId2;
                   if (_liveThinkToggle) _liveThinkToggle.id = _thinkId2 + '-toggle';
                 }
-                _renderStream();
+                _renderStreamFlush();
                 // --- Finalize current text bubble (only once per round) ---
                 if (!roundFinalized) {
                   roundFinalized = true;
@@ -2452,7 +2480,7 @@ import createResearchSynapse from './researchSynapse.js';
                 if (_isBg) continue;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
-                _renderStream();
+                _renderStreamFlush();
                 // Mark thread as connected to bubble below
                 const _activeThread = document.querySelector('.agent-thread.streaming');
                 if (_activeThread) {
@@ -2565,7 +2593,7 @@ import createResearchSynapse from './researchSynapse.js';
         throw new Error('Stream closed before completion');
       }
 
-      _renderStream();
+      _renderStreamFlush();
       _cancelThinkingTimer();
       _removeThinkingSpinner();
       // Stop any thread pulse animations
@@ -2831,7 +2859,7 @@ import createResearchSynapse from './researchSynapse.js';
       } // end if (!_isBgFinal)
 
     } catch (err) {
-      _renderStream();
+      _renderStreamFlush();
       // Clean up any active spinner (e.g. "Generating response" during tool calls)
       if (spinner && spinner.element) spinner.destroy();
       _cancelThinkingTimer();
