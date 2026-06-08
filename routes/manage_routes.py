@@ -17,6 +17,14 @@ import time
 from typing import Any, Dict
 
 from fastapi import APIRouter, Body, Depends, Query, Request
+
+
+def _strip_think(text: str) -> str:
+    """Strip <think>…</think> reasoning blocks from LLM output."""
+    text = re.sub(r"<think>[\s\S]*?</think>\s*", "", text).strip()
+    if "<think>" in text:
+        text = re.sub(r"<think>[\s\S]*$", "", text).strip()
+    return text
 from fastapi.responses import HTMLResponse
 
 from core.middleware import require_admin
@@ -557,7 +565,7 @@ def setup_manage_routes() -> APIRouter:
                 [{"role": "system", "content": "You are a concise, helpful UI assistant."},
                  {"role": "user", "content": prompt}],
                 headers=headers or {}, max_tokens=600, timeout=90)
-            return {"ok": True, "explanation": (reply or "").strip()}
+            return {"ok": True, "explanation": _strip_think(reply or "")}
         except Exception as e:
             return {"ok": False, "detail": f"AI call failed: {e}"}
 
@@ -598,7 +606,7 @@ def setup_manage_routes() -> APIRouter:
                 [{"role": "system", "content": "You are a concise, helpful operations assistant."},
                  {"role": "user", "content": prompt}],
                 headers=headers or {}, max_tokens=600, timeout=90)
-            return {"ok": True, "explanation": (reply or "").strip()}
+            return {"ok": True, "explanation": _strip_think(reply or "")}
         except Exception as e:
             return {"ok": False, "detail": f"AI call failed: {e}"}
 
@@ -685,7 +693,7 @@ def setup_manage_routes() -> APIRouter:
                 [{"role": "system", "content": "You are a concise, helpful UI assistant."},
                  {"role": "user", "content": prompt}],
                 headers=headers or {}, max_tokens=600, timeout=90)
-            text = (reply or "").strip()
+            text = _strip_think(reply or "")
             return {"ok": True, "explanation": text or _builtin}
         except Exception:
             # Model configured but unreachable → still help, with the built-in text.

@@ -5746,6 +5746,8 @@ export const LEGACY_ALIASES = {
   'sort':        { parent: 'chats', sub: 'sort' },
   'info':        { parent: 'chats', sub: 'info' },
   'clear':       { parent: 'chats', sub: 'clear' },
+  'clean':       { parent: 'chats', sub: 'clear' },
+  'reset':       { parent: 'chats', sub: 'new' },
   'export':      { parent: 'chats', sub: 'export' },
   'web':         { parent: 'toggle', sub: 'web' },
   'bash':        { parent: 'toggle', sub: 'bash' },
