@@ -598,35 +598,40 @@ export async function refreshModels(force = false) {
         else box.insertBefore(bar, box.firstChild);
       }
 
-      // Apply tier filter: hide non-matching rows
+      // Apply tier filter: hide non-matching rows + their groups
       if (activeTier !== 'all') {
-        box.querySelectorAll('.models-row[data-tier]').forEach(row => {
-          const t = row.getAttribute('data-tier');
-          const isLocal = row.closest('.models-group-content.indented')
-            ? false  // indented = inside an endpoint subgroup, check parent
-            : false;
+        const _isLocal = (url) => /localhost|127\.0\.0\.1|::1/.test(url || '');
+        // Hide individual model rows
+        box.querySelectorAll('.models-row').forEach(row => {
+          const t = row.getAttribute('data-tier') || '';
+          const mid = row.getAttribute('data-model-id') || '';
           let match = false;
           if (activeTier === 'local') {
-            // "Local" = models whose category is local (free tier on localhost)
-            const parent = row.closest('[data-category]');
-            match = (parent && parent.getAttribute('data-category') === 'local') || t === 'free';
-            // Narrow: only actual local endpoints
-            const mid = row.getAttribute('data-model-id') || '';
-            const item = (_cachedItems || []).find(it => (it.models || []).includes(mid));
-            match = item && /localhost|127\.0\.0\.1|::1/.test(item.url || '');
+            const item = (_cachedItems || []).find(it => (it.models || []).includes(mid) || (it.models_extra || []).includes(mid));
+            match = item && _isLocal(item.url);
+          } else if (activeTier === 'free') {
+            const item = (_cachedItems || []).find(it => (it.models || []).includes(mid) || (it.models_extra || []).includes(mid));
+            match = t === 'free' && !(item && _isLocal(item.url));
           } else {
             match = (t === activeTier);
           }
-          if (!match) row.style.display = 'none';
+          row.style.display = match ? '' : 'none';
         });
-        // Hide empty group headers (no visible children)
+        // Also hide "Show N more" buttons if all hidden models are filtered out
+        box.querySelectorAll('.models-show-all-btn').forEach(btn => {
+          const target = btn._target || btn.parentElement;
+          if (!target) return;
+          const visibleSiblings = target.querySelectorAll('.models-row:not([style*="display: none"])');
+          if (visibleSiblings.length === 0) btn.style.display = 'none';
+        });
+        // Hide empty group headers
         box.querySelectorAll('.models-group-content').forEach(gc => {
-          const visible = gc.querySelectorAll('.models-row:not([style*="display: none"])');
-          if (visible.length === 0) {
-            gc.style.display = 'none';
-            if (gc.previousElementSibling && gc.previousElementSibling.classList.contains('models-endpoint-label'))
-              gc.previousElementSibling.style.display = 'none';
-          }
+          const vis = gc.querySelectorAll('.models-row:not([style*="display: none"])');
+          const showBtn = gc.querySelector('.models-show-all-btn');
+          const hasVisible = vis.length > 0 || (showBtn && showBtn.style.display !== 'none');
+          gc.style.display = hasVisible ? '' : 'none';
+          if (gc.previousElementSibling && gc.previousElementSibling.classList.contains('models-endpoint-label'))
+            gc.previousElementSibling.style.display = hasVisible ? '' : 'none';
         });
         box.querySelectorAll('.models-category-header').forEach(hdr => {
           let next = hdr.nextElementSibling;
