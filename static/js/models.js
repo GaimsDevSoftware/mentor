@@ -206,6 +206,7 @@ export async function refreshModels(force = false) {
         if (!extraGroups[cat][epName]) extraGroups[cat][epName] = [];
         const displayNames = item.models_display || item.models || [];
         const epModelType = item.model_type || 'llm';
+        const tierList = item.models_tier || [];
         (item.models || []).forEach((mid, i) => {
           groups[cat][epName].push({
             mid, url: item.url,
@@ -213,10 +214,13 @@ export async function refreshModels(force = false) {
             endpointId: item.endpoint_id || null,
             offline: isOffline,
             modelType: epModelType,
+            tier: tierList[i] || (cat === 'local' ? 'free' : 'unknown'),
+            epName: epName,
           });
         });
         // Extra (non-curated) models from server
         const extraDisplayNames = item.models_extra_display || item.models_extra || [];
+        const extraTierList = item.models_extra_tier || [];
         (item.models_extra || []).forEach((mid, i) => {
           extraGroups[cat][epName].push({
             mid, url: item.url,
@@ -224,6 +228,8 @@ export async function refreshModels(force = false) {
             endpointId: item.endpoint_id || null,
             offline: isOffline,
             modelType: epModelType,
+            tier: extraTierList[i] || (cat === 'local' ? 'free' : 'unknown'),
+            epName: epName,
           });
         });
       });
@@ -284,8 +290,10 @@ export async function refreshModels(force = false) {
           const favContainer = document.createElement('div');
           favContainer.className = 'models-group-content';
           favContainer.id = 'models-group-' + (groupIdx++);
-          favModels.forEach(({ mid, url, displayName, endpointId, offline, modelType }) => {
-            favContainer.appendChild(_buildModelRow(mid, url, displayName, endpointId, offline, modelType));
+          favModels.forEach(({ mid, url, displayName, endpointId, offline, modelType, tier }) => {
+            const r = _buildModelRow(mid, url, displayName, endpointId, offline, modelType);
+            if (tier) r.setAttribute('data-tier', tier);
+            favContainer.appendChild(r);
           });
           box.appendChild(favContainer);
         }
@@ -419,8 +427,10 @@ export async function refreshModels(force = false) {
         const overflow = epModels.slice(MAX_VISIBLE);
         const allHidden = [...overflow, ...epExtra];
 
-        visible.forEach(({ mid, url, displayName, endpointId, offline, modelType }) => {
-          target.appendChild(_buildModelRow(mid, url, displayName, endpointId, offline, modelType));
+        visible.forEach(({ mid, url, displayName, endpointId, offline, modelType, tier }) => {
+          const r = _buildModelRow(mid, url, displayName, endpointId, offline, modelType);
+          if (tier) r.setAttribute('data-tier', tier);
+          target.appendChild(r);
         });
 
         if (allHidden.length > 0) {
@@ -431,8 +441,10 @@ export async function refreshModels(force = false) {
           showMoreBtn._target = target;
           showMoreBtn.addEventListener('click', () => {
             showMoreBtn.remove();
-            allHidden.forEach(({ mid, url, displayName, endpointId, offline, modelType }) => {
-              target.appendChild(_buildModelRow(mid, url, displayName, endpointId, offline, modelType));
+            allHidden.forEach(({ mid, url, displayName, endpointId, offline, modelType, tier }) => {
+              const r = _buildModelRow(mid, url, displayName, endpointId, offline, modelType);
+              if (tier) r.setAttribute('data-tier', tier);
+              target.appendChild(r);
             });
           });
           target.appendChild(showMoreBtn);
@@ -538,6 +550,73 @@ export async function refreshModels(force = false) {
         }
       });
       box.insertBefore(searchBox, box.firstChild);
+    }
+
+    // ── Tier filter chips (All | Local | Free | Subscription) ──
+    {
+      const allModels = [];
+      for (const cat of ['local', 'api']) {
+        for (const epModels of Object.values(groups[cat])) {
+          for (const m of epModels) allModels.push(m);
+        }
+        for (const epModels of Object.values(extraGroups[cat])) {
+          for (const m of epModels) allModels.push(m);
+        }
+      }
+      const tierCounts = {};
+      allModels.forEach(m => { const t = m.tier || 'unknown'; tierCounts[t] = (tierCounts[t] || 0) + 1; });
+      const activeTier = Storage.get('odysseus-model-tier-filter', 'all');
+      const chips = [['all', 'All', allModels.length]];
+      if (tierCounts['free']) chips.push(['free', 'Local + Free', (tierCounts['free'] || 0)]);
+      if (tierCounts['subscription']) chips.push(['subscription', 'Subscription', tierCounts['subscription']]);
+      if (tierCounts['paid']) chips.push(['paid', 'Paid API', tierCounts['paid']]);
+
+      if (chips.length > 2) {
+        const bar = document.createElement('div');
+        bar.className = 'model-tier-bar';
+        chips.forEach(([key, label, count]) => {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'model-tier-chip' + (activeTier === key ? ' active' : '');
+          chip.textContent = label + ' ' + count;
+          chip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            Storage.set('odysseus-model-tier-filter', key);
+            refreshModels();
+          });
+          bar.appendChild(chip);
+        });
+        const searchEl = box.querySelector('.model-search-input');
+        if (searchEl) searchEl.insertAdjacentElement('afterend', bar);
+        else box.insertBefore(bar, box.firstChild);
+      }
+
+      // Apply tier filter: hide non-matching rows
+      if (activeTier !== 'all') {
+        box.querySelectorAll('.models-row[data-tier]').forEach(row => {
+          const t = row.getAttribute('data-tier');
+          const match = activeTier === 'free' ? (t === 'free') : (t === activeTier);
+          if (!match) row.style.display = 'none';
+        });
+        // Hide empty group headers (no visible children)
+        box.querySelectorAll('.models-group-content').forEach(gc => {
+          const visible = gc.querySelectorAll('.models-row:not([style*="display: none"])');
+          if (visible.length === 0) {
+            gc.style.display = 'none';
+            if (gc.previousElementSibling && gc.previousElementSibling.classList.contains('models-endpoint-label'))
+              gc.previousElementSibling.style.display = 'none';
+          }
+        });
+        box.querySelectorAll('.models-category-header').forEach(hdr => {
+          let next = hdr.nextElementSibling;
+          let anyVisible = false;
+          while (next && !next.classList.contains('models-category-header')) {
+            if (next.style.display !== 'none') anyVisible = true;
+            next = next.nextElementSibling;
+          }
+          if (!anyVisible) hdr.style.display = 'none';
+        });
+      }
     }
 
     if (!_cachedItems || _cachedItems.length === 0) {

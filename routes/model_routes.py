@@ -840,14 +840,17 @@ def setup_model_routes(model_discovery):
             if model_ids:
                 curated_key = _match_provider_curated(base, None)
                 curated, extra = _curate_models(model_ids, curated_key)
+                from routes.models_catalog_routes import classify as _classify_tier
                 items.append({
                     "host": "custom",
                     "port": 0,
                     "url": chat_url,
                     "models": curated,
                     "models_display": [mid.split("/")[-1] for mid in curated],
+                    "models_tier": [_classify_tier(ep.name, ep.base_url or "", mid)[1] for mid in curated],
                     "models_extra": extra,
                     "models_extra_display": [mid.split("/")[-1] for mid in extra],
+                    "models_extra_tier": [_classify_tier(ep.name, ep.base_url or "", mid)[1] for mid in extra],
                     "endpoint_id": ep.id,
                     "endpoint_name": ep.name,
                     "category": category,
