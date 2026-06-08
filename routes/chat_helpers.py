@@ -792,8 +792,9 @@ def save_assistant_response(
     try:
         from src.plugin_system import apply_post_response_hooks
         _content = apply_post_response_hooks(_content)
-    except Exception:
-        pass
+    except Exception as _pr_err:
+        import logging as _pr_log
+        _pr_log.getLogger(__name__).warning("post_response hook failed: %s", _pr_err, exc_info=True)
 
     sess.add_message(ChatMessage("assistant", _content, metadata=md))
 
