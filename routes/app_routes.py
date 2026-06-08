@@ -589,12 +589,20 @@ $('#rec-btn').addEventListener('click',async()=>{
   const btn=$('#rec-btn'), out=$('#rec');
   const tiers=Array.from(document.querySelectorAll('.rec-tier.on')).map(b=>b.dataset.tier);
   const readyOnly=$('#rec-ready').checked;
-  btn.disabled=true; btn.textContent='Asking AI…';
-  out.innerHTML='<span class="muted" style="font-size:13px">The teacher model is choosing the best model per role within your preferences…</span>';
+  btn.disabled=true;
+  let _elapsed=0;
+  const _timer=setInterval(()=>{ _elapsed++; btn.textContent='Asking AI… '+_elapsed+'s'; },1000);
+  btn.textContent='Asking AI… 0s';
+  const _abort=new AbortController();
+  const _timeout=setTimeout(()=>_abort.abort(),65000);
+  out.innerHTML='<div style="display:flex;align-items:center;gap:8px"><span class="muted" style="font-size:13px">The teacher model is choosing the best model per role…</span><button class="btn mini" id="rec-cancel" type="button">Cancel</button></div>';
+  const _cancelBtn=$('#rec-cancel'); if(_cancelBtn) _cancelBtn.onclick=()=>{ _abort.abort(); };
   try{
     const url='/api/cookbook/recommend?tiers='+encodeURIComponent(tiers.join(','))+'&ready_only='+(readyOnly?'true':'false');
-    const r=await j(url,{method:'POST'});
-    if(!r.ok){ out.innerHTML=`<span class="muted" style="font-size:13px">${esc(r.detail||'No recommendation available.')}</span>`; }
+    const res=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},signal:_abort.signal});
+    clearTimeout(_timeout);
+    const r=await res.json();
+    if(!r.ok){ out.innerHTML=`<span style="color:var(--err);font-size:13px">${esc(r.detail||'Recommendation failed.')}</span><div class="muted" style="font-size:11px;margin-top:4px">Check that teacher_model is set to a working model in Admin → Settings. Try a local model (free, no balance issues) or switch to a subscription model.</div>`; }
     else{
       const recs=r.recommendations||{};
       const rows=Array.isArray(recs)? recs.map(x=>[x.role,x]) : Object.keys(recs).map(k=>[k,recs[k]]);
@@ -625,7 +633,12 @@ $('#rec-btn').addEventListener('click',async()=>{
         out.querySelectorAll('[data-rec-connect]').forEach(b=>b.onclick=()=>{ window.location.href='/manage#connect'; });
       }
     }
-  }catch(e){ out.innerHTML=`<span class="muted" style="font-size:13px">${e===401?'Admin only.':'Recommendation failed.'}</span>`; }
+  }catch(e){
+    clearTimeout(_timeout);
+    if(e.name==='AbortError'){ out.innerHTML='<span style="color:var(--warn);font-size:13px">Cancelled / timed out.</span><div class="muted" style="font-size:11px;margin-top:4px">The teacher model didn\'t respond in time. It may be an OpenCode free model that hit its limit — try switching teacher_model to a local model in Admin → Settings.</div>'; }
+    else { out.innerHTML=`<span style="color:var(--err);font-size:13px">${e===401?'Admin only — sign in as admin.':'Recommendation failed: '+esc(String(e))}</span>`; }
+  }
+  clearInterval(_timer);
   btn.disabled=false; btn.textContent='✨ Recommend roles';
 });
 
@@ -756,13 +769,19 @@ document.addEventListener('click', async (e)=>{
   const next=title.nextElementSibling;
   if(next && next.classList.contains('help-pop')){ next.remove(); return; }
   const pop=document.createElement('div'); pop.className='help-pop card';
-  pop.innerHTML='<div class="muted" style="font-size:12px">AI is explaining…</div>';
+  let _secs=0; const _t=setInterval(()=>{_secs++;pop.querySelector('.ai-wait-t')&&(pop.querySelector('.ai-wait-t').textContent=_secs+'s');},1000);
+  pop.innerHTML='<div class="muted" style="font-size:12px">AI is explaining… <span class="ai-wait-t">0s</span></div>';
   title.parentNode.insertBefore(pop, title.nextSibling);
+  const _ac=new AbortController(); setTimeout(()=>_ac.abort(),45000);
   try{
-    const r=await j('/api/manage/explain-topic',{method:'POST',body:JSON.stringify({topic:b.dataset.topic, context:HW_CONTEXT})});
+    const res=await fetch('/api/manage/explain-topic',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:b.dataset.topic, context:HW_CONTEXT}),signal:_ac.signal});
+    const r=await res.json();
     if(r.ok){ pop.innerHTML='<div class="h">AI guide</div><div class="b"></div>'; pop.querySelector('.b').innerHTML=mdToHtml(r.explanation); }
-    else pop.innerHTML=`<span class="muted" style="font-size:13px">${esc(r.detail||'No explanation available.')}</span>`;
-  }catch(err){ pop.innerHTML=`<span class="muted" style="font-size:13px">${err===401?'Admin only.':'Explanation failed.'}</span>`; }
+    else pop.innerHTML=`<span style="color:var(--err);font-size:13px">${esc(r.detail||'AI could not explain this.')}</span><div class="muted" style="font-size:11px;margin-top:4px">The teacher model may be unreachable. Check Admin → Settings → teacher_model.</div>`;
+  }catch(err){
+    if(err.name==='AbortError') pop.innerHTML='<span style="color:var(--warn);font-size:13px">Timed out (45s).</span><div class="muted" style="font-size:11px;margin-top:4px">The teacher model didn\'t respond. Try switching to a local or subscription model.</div>';
+    else pop.innerHTML=`<span style="color:var(--err);font-size:13px">${err===401?'Admin only.':'Failed: '+esc(String(err))}</span>`;
+  }finally{clearInterval(_t);}
 });
 </script>
 <script src="/static/js/concierge.js"></script>

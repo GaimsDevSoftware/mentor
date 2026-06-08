@@ -145,7 +145,7 @@ async def recommend_roles(scope: Optional[str] = None,
             url, model,
             [{"role": "system", "content": "You are a concise model-selection advisor."},
              {"role": "user", "content": prompt}],
-            headers=headers, max_tokens=1400, timeout=150)
+            headers=headers, max_tokens=1400, timeout=60)
     except Exception as e:
         return {"ok": False, "scope": scope, "detail": f"recommendation call failed: {e}",
                 "candidates": [m.get("model") for m in pool]}
