@@ -1015,6 +1015,8 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
  #assistant-card{animation:setupglow 3.6s ease-in-out infinite}
  @keyframes asstattn{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 0%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 32%,transparent)}}
  #asst-input.attn{border-color:var(--accent)!important;animation:asstattn 1.1s ease-in-out infinite}
+ @keyframes asseturgent{0%,100%{box-shadow:0 0 0 2px var(--warn),0 0 14px color-mix(in srgb,var(--warn) 30%,transparent)}50%{box-shadow:0 0 0 2px var(--warn),0 0 42px color-mix(in srgb,var(--warn) 62%,transparent)}}
+ #assistant-card.urgent{animation:asseturgent .9s ease-in-out infinite!important}
  .provgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
  @media(max-width:560px){.provgrid{grid-template-columns:repeat(2,1fr)}}
  .prov{padding:11px 10px;border:1px solid var(--sep-2);border-radius:10px;background:var(--tint);cursor:pointer;font:500 12.5px/1.2 inherit;color:var(--txt);text-align:center;transition:border-color .15s,background .15s}
@@ -1285,10 +1287,13 @@ async function asstTurn(steps){
     const result=await asstAct(r.action);
     asstNote('result: '+String(result).slice(0,140));
     ASST.push({role:'user',content:'[action result] '+r.action.type+': '+result}); asstSave();
+    if(['auto_roles','set_role','serve_local','setup_free_helper'].includes(r.action.type)) asstUrgentCheck();
     await asstTurn(steps-1);  // let it continue the plan toward "done"
   } else { asstAttn(true); }  // assistant asked / is waiting — glow for the user's turn
 }
 function asstAttn(on){ const i=$('#asst-input'); if(i) i.classList.toggle('attn',!!on); }
+function asstUrgentCheck(){ j('/api/setup/role-status').then(s=>{ const c=$('#assistant-card'); if(c) c.classList.toggle('urgent', !!(s&&s.critical_missing)); }).catch(()=>{}); }
+asstUrgentCheck();
 async function asstKickoff(force){
   if(force){ asstStarted=false; ASST.length=0; const log=$('#asst-log'); if(log) log.innerHTML=''; }
   if(asstStarted||asstBusy) return; asstStarted=true; asstBusy=true; const b=$('#asst-send'); if(b)b.disabled=true;

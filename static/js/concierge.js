@@ -23,6 +23,10 @@
     '#mc-launch{position:fixed;right:18px;bottom:18px;z-index:99998;display:flex;align-items:center;gap:8px;height:46px;padding:0 16px;border-radius:99px;background:var(--accent,#0a84ff);color:#fff;border:none;cursor:pointer;font:600 13px/1 -apple-system,system-ui,sans-serif;box-shadow:0 6px 22px rgba(0,0,0,.45);animation:mc-pulse 2.6s ease-out infinite}',
     '#mc-panel{position:fixed;right:18px;bottom:18px;z-index:99999;width:360px;max-width:92vw;height:480px;max-height:78vh;display:none;flex-direction:column;background:var(--surface,#15171c);color:var(--txt,#eee);border:1px solid var(--sep-2,rgba(255,255,255,.16));border-radius:14px;overflow:hidden;font:13px/1.45 -apple-system,system-ui,sans-serif;backdrop-filter:blur(20px);animation:mc-glow 3.4s ease-in-out infinite}',
     '#mc-panel.mc-working{animation:mc-glow 1.3s ease-in-out infinite}',
+    '@keyframes mc-urgent{0%,100%{box-shadow:0 14px 44px rgba(0,0,0,.55),0 0 0 2px var(--warn,#ffd60a),0 0 14px color-mix(in srgb,var(--warn,#ffd60a) 30%,transparent)}50%{box-shadow:0 14px 44px rgba(0,0,0,.55),0 0 0 2px var(--warn,#ffd60a),0 0 44px color-mix(in srgb,var(--warn,#ffd60a) 65%,transparent)}}',
+    '#mc-panel.mc-urgent{animation:mc-urgent .85s ease-in-out infinite}',
+    '@keyframes mc-launch-urgent{0%,100%{box-shadow:0 6px 22px rgba(0,0,0,.45),0 0 0 0 color-mix(in srgb,var(--warn,#ffd60a) 70%,transparent)}50%{box-shadow:0 6px 22px rgba(0,0,0,.45),0 0 0 12px color-mix(in srgb,var(--warn,#ffd60a) 0%,transparent)}}',
+    '#mc-launch.mc-urgent{background:var(--warn,#ffd60a);color:#000;animation:mc-launch-urgent .85s ease-out infinite}',
     '#mc-head{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface-2,#1c1f26);border-bottom:1px solid var(--sep,rgba(255,255,255,.1));cursor:move;user-select:none}',
     '#mc-head b{flex:1;font-size:13px}',
     '#mc-head button{background:transparent;border:none;color:var(--dim,#aaa);cursor:pointer;font-size:16px;width:26px;height:26px;border-radius:6px;line-height:1}',
@@ -146,6 +150,7 @@
       note('doing: ' + r.action.type + (r.action.args && r.action.args.model ? (' (' + r.action.args.model + ')') : ''));
       var result = await act(r.action); waiting = false;
       note('result: ' + String(result).slice(0, 120));
+      if (['auto_roles', 'set_role', 'serve_local', 'setup_free_helper'].indexOf(r.action.type) >= 0) recheckRoles();
       ASST.push({ role: 'user', content: '[action result] ' + r.action.type + ': ' + result }); save();
       await turn(steps - 1);
     } else {
@@ -154,6 +159,8 @@
   }
   function work(on) { try { panel.classList.toggle('mc-working', !!on); } catch (e) {} }
   function attn(on) { try { inp.classList.toggle('mc-attn', !!on); launch.classList.toggle('mc-attn', !!on); } catch (e) {} }
+  function urgent(on) { try { panel.classList.toggle('mc-urgent', !!on); launch.classList.toggle('mc-urgent', !!on); launch.innerHTML = on ? '⚠ Finish setup' : '💬 Setup help'; } catch (e) {} }
+  function recheckRoles() { J('/api/setup/role-status').then(function (s) { if (s && !s.critical_missing) urgent(false); }).catch(function () {}); }
   async function kickoff() { if (started || busy) return; started = true; busy = true; work(1); try { await turn(6); } finally { busy = false; work(0); } }
   async function send() {
     attn(false);
@@ -171,4 +178,9 @@
   var wasClosed = false; try { wasClosed = localStorage.getItem(CLOSED) === '1'; } catch (e) {}
   launch.style.display = wasClosed ? 'none' : 'flex';
   window.Concierge = { open: openP, minimize: minP, close: closeP };
+  // Proactively raise unfilled important roles (default / vision-for-images): if
+  // any are missing, glow urgently and open so the assistant can ask how to fill.
+  if (!wasClosed) {
+    J('/api/setup/role-status').then(function (s) { if (s && s.critical_missing) { urgent(true); openP(); } }).catch(function () {});
+  }
 })();

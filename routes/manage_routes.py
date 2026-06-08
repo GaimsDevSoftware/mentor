@@ -728,6 +728,9 @@ def setup_manage_routes() -> APIRouter:
             pass
         default_model = (_gs("default_model", "") or "").strip()
         aider_model = (_gs("aider_model", "") or "").strip()
+        vision_model = (_gs("vision_model", "") or "").strip()
+        research_model = (_gs("research_model", "") or "").strip()
+        utility_model = (_gs("utility_model", "") or "").strip()
         try:
             import shutil
             ollama = bool(shutil.which("ollama"))
@@ -743,16 +746,22 @@ def setup_manage_routes() -> APIRouter:
             "\n\nCURRENT SETUP STATE — rely on this; never ask about things already done:\n"
             "- Guide AI (that's you): %s\n"
             "- Connected work-model endpoints: %d%s\n"
-            "- Default work model: %s\n"
+            "- Default / main model: %s\n"
+            "- Vision model (analyze pasted/uploaded images): %s\n"
+            "- Research model: %s\n"
+            "- Utility (quick tasks) model: %s\n"
             "- Coder model: %s\n"
             "- Ollama installed locally: %s\n"
             "- Agents hired: %d\n"
-            "DEFINITION OF DONE: at least one work-model endpoint connected AND a default work model set "
-            "(a hired agent is a nice bonus). When everything's done, emit the `done` action and tell the "
-            "user they can open Mentor from the button you'll show them in the chat (or keep chatting to "
-            "change anything) — do NOT tell them to hunt for a button elsewhere on the page." % (
+            "DEFINITION OF DONE: at least one work-model endpoint connected AND a default model set, AND every "
+            "important role filled (default, vision, research, utility) — a vision model matters because without "
+            "it the user can't paste/upload images for analysis. A hired agent is a nice bonus. When everything's "
+            "done, emit the `done` action and tell the user they can open Mentor from the button you'll show in "
+            "the chat — do NOT tell them to hunt for a button elsewhere." % (
                 spec, len(eps), (": " + "; ".join(eps) if eps else " (none yet)"),
-                (default_model or "NOT set yet"), (aider_model or "not set"), ollama, nagents)
+                (default_model or "NOT set yet"), (vision_model or "NOT set — image analysis won't work"),
+                (research_model or "not set"), (utility_model or "not set"),
+                (aider_model or "not set"), ollama, nagents)
         )
         system = (
             "You are Mentor's setup concierge. Your ONE job: get the user's setup FINISHED — giving advice "
@@ -770,9 +779,12 @@ def setup_manage_routes() -> APIRouter:
             "auto_roles (fill EVERY role automatically from connected models — default, utility, research, "
             "and vision-for-images — and report what got assigned); "
             "open_concierge (scroll user to the key/guide picker); done (setup complete).\n"
-            "Once a work model is connected, OFFER to run auto_roles so chat, research, and image analysis "
-            "all work. If the user will paste/upload images, make sure a vision model is set (auto_roles does "
-            "this if a multimodal model is connected; otherwise tell them to add one). Aim to leave NO role empty.\n"
+            "IMPORTANT — unfilled roles: if any important role is empty (especially the default model or the "
+            "vision model for images), proactively raise it and ASK the user how they'd like to handle it: "
+            "\"Want me to pick the best models for these roles automatically, or shall we choose them together "
+            "(I suggest, you confirm)?\" Do NOT silently auto-pick — wait for their choice, THEN run auto_roles "
+            "(automatic) or set_role one by one (together). If a role can't be filled from connected models "
+            "(e.g. no multimodal model for vision), say so and offer to connect one. Aim to leave NO role empty.\n"
             "RULES: one sentence before an action; at most ONE action per reply, only when ready. NEVER ask "
             "for an API key in chat — use open_concierge. Use the exact model@endpoint specs from the state "
             "when setting roles. Match models to the user's stated goal + their hardware.\n\n"
@@ -1149,6 +1161,18 @@ def setup_manage_routes() -> APIRouter:
                                   "add a multimodal model (a cloud frontier model, or a local VL model) for that.")
         return {"ok": True, "assigned": assigned, "vision": bool(vision), "coder": coder, "note": note}
 
+    @router.get("/api/setup/role-status")
+    async def role_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Which important model roles are still empty — so the UI can urgently
+        prompt the user to fill them (default + vision are critical)."""
+        from src.settings import get_setting as _gs
+        roles = [("default_model", "main model", True), ("vision_model", "image analysis", True),
+                 ("research_model", "deep research", False), ("utility_model", "quick tasks", False)]
+        missing = [{"role": k, "label": lbl, "critical": crit}
+                   for k, lbl, crit in roles if not (_gs(k, "") or "").strip()]
+        return {"ok": not missing, "missing": missing,
+                "critical_missing": any(m["critical"] for m in missing)}
+
     @router.post("/api/setup/codex-login")
     async def codex_login(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         """Start (or report) ChatGPT OAuth login via the codex device-code flow, so
@@ -1401,7 +1425,7 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
    background:var(--tint-2); border:1px solid var(--sep); border-radius:4px; padding:1px 5px }
  .mdbody strong{ font-weight:600 }
  /* iOS-style toggle switch */
- .toggle{ position:relative; display:inline-block; width:44px; height:26px; flex-shrink:0 }
+ .toggle{ position:relative; display:inline-block; width:44px; min-width:44px; height:26px; flex-shrink:0 }
  .toggle input{ opacity:0; width:0; height:0; position:absolute }
  .toggle .slider{ position:absolute; inset:0; background:var(--sep-2); border-radius:99px;
    transition: background .2s ease; cursor:pointer }
