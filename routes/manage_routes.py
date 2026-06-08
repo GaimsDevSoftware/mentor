@@ -767,7 +767,12 @@ def setup_manage_routes() -> APIRouter:
             "Actions: detect_system; install_ollama; setup_free_helper; recommend_local; "
             "serve_local {\"model\":\"<name>\"}; "
             "set_role {\"role\":\"default_model|aider_model|research_model|vision_model\",\"spec\":\"model@endpoint\"}; "
+            "auto_roles (fill EVERY role automatically from connected models — default, utility, research, "
+            "and vision-for-images — and report what got assigned); "
             "open_concierge (scroll user to the key/guide picker); done (setup complete).\n"
+            "Once a work model is connected, OFFER to run auto_roles so chat, research, and image analysis "
+            "all work. If the user will paste/upload images, make sure a vision model is set (auto_roles does "
+            "this if a multimodal model is connected; otherwise tell them to add one). Aim to leave NO role empty.\n"
             "RULES: one sentence before an action; at most ONE action per reply, only when ready. NEVER ask "
             "for an API key in chat — use open_concierge. Use the exact model@endpoint specs from the state "
             "when setting roles. Match models to the user's stated goal + their hardware.\n\n"
@@ -1090,6 +1095,59 @@ def setup_manage_routes() -> APIRouter:
     @router.get("/api/setup/free-helper/status")
     async def free_helper_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         return _helper_state
+
+    @router.post("/api/setup/auto-roles")
+    async def auto_roles(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Fill EVERY model role automatically from the connected models — default,
+        utility (small/fast), research (strong), and vision (image analysis) — so
+        chat, research and pasting/uploading images all work. Picks a coder too."""
+        import json as _json
+        import re as _re
+        from core.database import SessionLocal, ModelEndpoint
+        cands = []
+        db = SessionLocal()
+        try:
+            for e in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+                local = any(h in (e.base_url or "") for h in ("localhost", "127.0.0.1", "11434"))
+                try:
+                    ms = _json.loads(e.cached_models) if e.cached_models else []
+                except Exception:
+                    ms = []
+                for mn in ms:
+                    cands.append({"spec": "%s@%s" % (mn, e.name), "n": str(mn).lower(), "local": local})
+        finally:
+            db.close()
+        if not cands:
+            return {"ok": False, "error": "No models connected yet — connect a model first, then I'll fill the roles."}
+        VIS = r"vision|vl\b|llava|gpt-4o|gpt-4\.|gpt-5|gemini|claude-3|claude-4|claude-opus|claude-sonnet|pixtral|internvl|qwen.*vl|llama-3\.2-(11|90)b"
+        COD = r"coder|code|deepseek|devstral|codestral|qwen2\.5-coder|qwen3-coder"
+        SMALL = r"1b|1\.5b|2b|3b|4b|7b|8b|mini|small|flash|instant|lite"
+        BIG = r"70b|72b|120b|235b|405b|opus|-max|large|gpt-5|sonnet|deepseek-v|qwen3\.|glm-4"
+        def has(p, c):
+            return _re.search(p, c["n"]) is not None
+        def pick(pred, fb=True):
+            for c in cands:
+                if pred(c):
+                    return c["spec"]
+            return cands[0]["spec"] if fb else None
+        default = pick(lambda c: has(BIG, c)) or cands[0]["spec"]
+        utility = pick(lambda c: has(SMALL, c)) or default
+        research = pick(lambda c: has(BIG, c)) or default
+        vision = pick(lambda c: has(VIS, c), fb=False)
+        coder = pick(lambda c: has(COD, c), fb=False)
+        from src.settings import load_settings, save_settings
+        s = load_settings()
+        assigned = {"default_model": default, "utility_model": utility, "research_model": research}
+        s["default_model"] = default
+        s["utility_model"] = utility
+        s["research_model"] = research
+        if vision:
+            s["vision_model"] = vision
+            assigned["vision_model"] = vision
+        save_settings(s)
+        note = "" if vision else (" No vision-capable model is connected, so image analysis won't work yet — "
+                                  "add a multimodal model (a cloud frontier model, or a local VL model) for that.")
+        return {"ok": True, "assigned": assigned, "vision": bool(vision), "coder": coder, "note": note}
 
     @router.post("/api/setup/codex-login")
     async def codex_login(_admin: str = Depends(require_admin)) -> Dict[str, Any]:

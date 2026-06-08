@@ -942,7 +942,8 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
  @media(max-width:560px){.dot .lbl{display:none}.dot .ln{width:10px}}
  .step{display:none} .step.active{display:block}
  .why{color:var(--dim);font-size:13px;margin:0 0 14px;line-height:1.55}
- .nav{display:flex;align-items:center;gap:10px;margin-top:18px}
+ .nav{display:flex;align-items:center;gap:10px;margin-top:18px;position:sticky;bottom:0;padding:12px 0 8px;background:linear-gradient(to top,var(--bg) 70%,transparent);z-index:20}
+ .nav .btn.primary{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent),0 0 16px color-mix(in srgb,var(--accent) 22%,transparent)}
  .nav .grow{flex:1}
  .opt{display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--sep-2);border-radius:11px;background:var(--tint);cursor:pointer;margin-bottom:8px;transition:border-color .15s,background .15s}
  .opt:hover{border-color:var(--brass)}
@@ -1213,6 +1214,7 @@ async function asstAct(a){
     if(t==='serve_local'){ const model=args.model||''; if(!model) return 'no model given'; await j('/api/model/serve',{method:'POST',body:JSON.stringify({repo_id:model,cmd:'ollama run '+String(model).split('/').pop().toLowerCase(),platform:'linux'})});
       return await _poll('/api/cookbook/tasks/status', s=>((s&&s.tasks)||[]).some(x=>['ready','completed'].includes((x.status||'').toLowerCase()))?('serving '+model+' ✓'):undefined, null, 30); }
     if(t==='set_role'){ const role=args.role, spec=args.spec; if(!role||!spec) return 'missing role/spec'; await fetch('/api/manage/setting',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:role,value:spec})}); return 'set '+role+' = '+spec; }
+    if(t==='auto_roles'){ const r=await j('/api/setup/auto-roles',{method:'POST'}); if(!r.ok) return r.error||'could not auto-fill roles'; const a=r.assigned||{}; return 'roles filled — '+Object.keys(a).map(k=>k+'='+a[k]).join(', ')+(r.vision?' · vision ✓':' · no vision model (image analysis off)'); }
     if(t==='open_concierge'){ const el=$('#cg-tiers'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); return 'opened the guide-AI / key picker for the user'; }
     return 'unknown action: '+t;
   }catch(e){ return 'action error: '+e; }
