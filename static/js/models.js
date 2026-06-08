@@ -564,10 +564,17 @@ export async function refreshModels(force = false) {
         }
       }
       const tierCounts = {};
-      allModels.forEach(m => { const t = m.tier || 'unknown'; tierCounts[t] = (tierCounts[t] || 0) + 1; });
+      let localCount = 0;
+      allModels.forEach(m => {
+        const t = m.tier || 'unknown';
+        tierCounts[t] = (tierCounts[t] || 0) + 1;
+        if (m.epName && /localhost|127\.0\.0\.1|::1/i.test(m.url || '')) localCount++;
+      });
+      const cloudFree = (tierCounts['free'] || 0) - localCount;
       const activeTier = Storage.get('odysseus-model-tier-filter', 'all');
       const chips = [['all', 'All', allModels.length]];
-      if (tierCounts['free']) chips.push(['free', 'Local + Free', (tierCounts['free'] || 0)]);
+      if (localCount > 0) chips.push(['local', 'Local', localCount]);
+      if (cloudFree > 0) chips.push(['free', 'Free', cloudFree]);
       if (tierCounts['subscription']) chips.push(['subscription', 'Subscription', tierCounts['subscription']]);
       if (tierCounts['paid']) chips.push(['paid', 'Paid API', tierCounts['paid']]);
 
@@ -595,7 +602,21 @@ export async function refreshModels(force = false) {
       if (activeTier !== 'all') {
         box.querySelectorAll('.models-row[data-tier]').forEach(row => {
           const t = row.getAttribute('data-tier');
-          const match = activeTier === 'free' ? (t === 'free') : (t === activeTier);
+          const isLocal = row.closest('.models-group-content.indented')
+            ? false  // indented = inside an endpoint subgroup, check parent
+            : false;
+          let match = false;
+          if (activeTier === 'local') {
+            // "Local" = models whose category is local (free tier on localhost)
+            const parent = row.closest('[data-category]');
+            match = (parent && parent.getAttribute('data-category') === 'local') || t === 'free';
+            // Narrow: only actual local endpoints
+            const mid = row.getAttribute('data-model-id') || '';
+            const item = (_cachedItems || []).find(it => (it.models || []).includes(mid));
+            match = item && /localhost|127\.0\.0\.1|::1/.test(item.url || '');
+          } else {
+            match = (t === activeTier);
+          }
           if (!match) row.style.display = 'none';
         });
         // Hide empty group headers (no visible children)
