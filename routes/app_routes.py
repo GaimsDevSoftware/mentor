@@ -1770,6 +1770,10 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  .elapsed{color:var(--faint);font-size:11px;font-variant-numeric:tabular-nums;flex-shrink:0}
  .progress{height:2px;background:color-mix(in srgb,var(--brass) 18%,transparent);border-radius:2px;overflow:hidden;margin-top:8px;position:relative}
  .progress::after{content:"";position:absolute;left:-30%;top:0;height:100%;width:30%;background:var(--brass);animation:slide 1.6s ease-in-out infinite}
+ .log-toggle{background:transparent;border:1px solid var(--sep-2);color:var(--dim);border-radius:6px;padding:3px 8px;font:500 10px/1 inherit;cursor:pointer;flex-shrink:0;margin-left:6px;transition:all .15s}
+ .log-toggle:hover{border-color:var(--brass);color:var(--brass)}
+ .log-toggle.on{color:var(--brass);border-color:color-mix(in srgb,var(--brass) 50%,var(--sep))}
+ .live-log{font:11px/1.4 ui-monospace,Menlo,monospace;background:var(--tint);border:1px solid var(--sep);border-radius:8px;padding:8px 10px;max-height:200px;overflow:auto;margin-top:8px;color:var(--dim);white-space:pre-wrap}
  .stop-btn{background:transparent;border:1px solid color-mix(in srgb,var(--err) 50%,var(--sep));color:var(--err);border-radius:6px;padding:3px 10px;font:500 11px/1 inherit;cursor:pointer;flex-shrink:0;margin-left:8px;transition:all .15s}
  .stop-btn:hover{background:color-mix(in srgb,var(--err) 14%,transparent);border-color:var(--err)}
  .rewind-btn{display:block;margin-top:8px;background:transparent;border:none;color:var(--faint);font:400 11px/1 inherit;cursor:pointer;padding:0;opacity:0;transition:opacity .15s}
@@ -2077,10 +2081,12 @@ function renderTurn(t, idx){
     const secs = Math.max(1, Math.round((Date.now() - since) / 1000));
     const elapsed = secs < 60 ? secs+'s' : Math.floor(secs/60)+'m '+(secs%60)+'s';
     const stopBtn = t.jobId ? '<button class="stop-btn" onclick="stopJob(\''+t.jobId+'\')">Stop</button>' : '';
+    const logBtn = t.jobId ? '<button class="log-toggle" onclick="toggleLiveLog(\''+t.jobId+'\')" title="Show/hide live output from Aider">Log</button>' : '';
     return '<div class="turn"><div class="bub ai">'
       +'<div class="lbl">Mentor</div>'
-      +'<div class="pending"><span class="spin"></span><span class="stage">'+esc(stage)+'</span><span class="elapsed" data-since="'+since+'">'+elapsed+'</span>'+stopBtn+'</div>'
+      +'<div class="pending"><span class="spin"></span><span class="stage">'+esc(stage)+'</span><span class="elapsed" data-since="'+since+'">'+elapsed+'</span>'+logBtn+stopBtn+'</div>'
       +'<div class="progress"></div>'
+      +'<pre class="live-log" id="live-log-'+t.jobId+'" style="display:none"></pre>'
       +'</div></div>';
   }
   if(t.kind==='error'){
@@ -2351,6 +2357,20 @@ function rewindTo(idx){
   scrollToBottom();
 }
 
+let liveLogVisible = {};
+function toggleLiveLog(jobId){
+  const el=document.getElementById('live-log-'+jobId); if(!el) return;
+  const btn=el.previousElementSibling?.previousElementSibling?.querySelector('.log-toggle');
+  if(el.style.display==='none'){ el.style.display=''; liveLogVisible[jobId]=true; if(btn)btn.classList.add('on'); }
+  else { el.style.display='none'; delete liveLogVisible[jobId]; if(btn)btn.classList.remove('on'); }
+}
+function updateLiveLog(jobId, lines){
+  if(!liveLogVisible[jobId]) return;
+  const el=document.getElementById('live-log-'+jobId); if(!el) return;
+  const tail=(lines||[]).slice(-80).join('\n');
+  if(el.textContent!==tail){ el.textContent=tail; el.scrollTop=el.scrollHeight; }
+}
+
 async function stopJob(jobId){
   if(!jobId) return;
   try{ await j('/api/code/stop/'+jobId, {method:'POST'}); }catch(e){}
@@ -2370,6 +2390,7 @@ function pollJob(id, pIdx){
     }
     misses=0;
     if(job.stage && turns[pIdx] && turns[pIdx].kind==='pending') updateTurn(pIdx, {stage: job.stage});
+    if(job.live_log) updateLiveLog(id, job.live_log);
     if(job.status==='done' || job.status==='failed'){
       clearInterval(activePoll); activePoll=null; stopElapsed();
       const res=job.result||{};

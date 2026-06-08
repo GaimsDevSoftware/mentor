@@ -33,7 +33,7 @@ def _jobs_path():
 
 def _persist_jobs():
     try:
-        safe = {k: {kk: vv for kk, vv in v.items() if kk != "task"}
+        safe = {k: {kk: vv for kk, vv in v.items() if kk not in ("task", "live_log")}
                 for k, v in _jobs.items() if v.get("status") in ("done", "failed")}
         with open(_jobs_path(), "w") as f:
             json.dump(safe, f)
@@ -152,15 +152,21 @@ def setup_code_routes() -> APIRouter:
         job = _jobs[job_id]
         job["status"] = "running"
         job["stage"] = "starting…"
+        job["live_log"] = []
 
         def _cb(stage):
             job["stage"] = stage
+
+        def _line(text):
+            job["live_log"].append(text)
+            if len(job["live_log"]) > 300:
+                del job["live_log"][:150]
 
         try:
             from src.code_edit import run_edit
             auto_branch = bool(_get("aider_code_auto_branch", True))
             result = await run_edit(instruction, files, project, model,
-                                    auto_branch=auto_branch, progress_cb=_cb)
+                                    auto_branch=auto_branch, progress_cb=_cb, line_cb=_line)
             job["result"] = result
             job["status"] = "done" if result.get("exit_code") == 0 else "failed"
             if result.get("error"):

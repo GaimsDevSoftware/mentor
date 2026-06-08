@@ -116,9 +116,10 @@ async def _guess_files(instruction: str, project: str, model: str) -> list:
 
 
 async def run_edit(instruction: str, files, project: str, model: str,
-                   auto_branch: bool = True, progress_cb=None) -> dict:
+                   auto_branch: bool = True, progress_cb=None, line_cb=None) -> dict:
     """Run one Aider edit. Returns {response, diff, log, branch_created, ...}.
-    progress_cb(stage:str) is called as the run advances (for live UI updates)."""
+    progress_cb(stage:str) is called as the run advances (for live UI updates).
+    line_cb(line:str) is called for every raw stdout line from Aider."""
     def _stage(s):
         if progress_cb:
             try:
@@ -187,6 +188,9 @@ async def run_edit(instruction: str, files, project: str, model: str,
                     break
                 text = line.decode(errors="replace").rstrip()
                 lines.append(text)
+                if line_cb and text:
+                    try: line_cb(text)
+                    except Exception: pass
                 _lwr = text.lower()
                 if "searching" in _lwr or "repo map" in _lwr:
                     _stage("analyzing the repo…")
