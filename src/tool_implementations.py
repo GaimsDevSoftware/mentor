@@ -3816,6 +3816,20 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
     if not engine and (args.get("with_claude") or args.get("claude")):
         engine = "claude"
     if engine == "claude":
+        # Hard kill switch — refuse to invoke the Claude OAuth proxy unless the
+        # user has explicitly enabled it (it can burn a Max subscription fast).
+        try:
+            from src.settings import get_setting as _gs
+            if not bool(_gs("claude_oauth_enabled", False)):
+                return {
+                    "output": ("Claude OAuth use is disabled (settings.claude_oauth_enabled=false). "
+                               "Running the standard deep-research engine instead."),
+                    "exit_code": 0,
+                    "engine": "default",
+                    "fallback": "claude_oauth_disabled",
+                }
+        except Exception:
+            pass
         import asyncio as _asyncio
         from src.claude_research import run_claude_research
         cat = args.get("category") or None

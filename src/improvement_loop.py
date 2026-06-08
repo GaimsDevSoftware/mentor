@@ -80,10 +80,18 @@ def _get(key: str, default: Any) -> Any:
 
 def _teacher_spec() -> str:
     """The model that drives improvement. A dedicated override lets the proactive
-    loop use Claude even if the reactive escalation teacher is something else."""
+    loop use Claude even if the reactive escalation teacher is something else.
+
+    Returns an empty string when the chosen spec points at the Claude OAuth proxy
+    AND claude_oauth_enabled is false — that disables the loop instead of letting
+    it silently burn the subscription."""
     spec = (_get("improve_teacher_model", "") or "").strip()
     if not spec:
         spec = (_get("teacher_model", "") or "").strip()
+    # Block subscription proxies unless explicitly enabled.
+    low = spec.lower()
+    if (("claude" in low or "8750" in low) and not bool(_get("claude_oauth_enabled", False))):
+        return ""
     return spec
 
 
@@ -938,7 +946,12 @@ async def _loop():
             interval = 1800
         interval = max(300, interval)  # floor 5 min to protect rate limits
         try:
-            if _get("improve_loop_enabled", True) and _teacher_spec():
+            # Default OFF now — the loop used to drain a Claude OAuth queue
+            # in the background and could exhaust a Max subscription in days.
+            # _teacher_spec() also returns "" when the configured teacher is
+            # a Claude proxy and claude_oauth_enabled is false, so even if a
+            # user flips this on without changing the teacher, nothing runs.
+            if _get("improve_loop_enabled", False) and _teacher_spec():
                 await run_improvement_cycle(owner=None)
         except Exception as e:
             logger.warning("improvement loop tick failed: %s", e, exc_info=True)

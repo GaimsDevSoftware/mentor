@@ -130,6 +130,15 @@ async def run_claude_research(
     if not topic:
         return {"ok": False, "reason": "empty topic"}
 
+    # HARD KILL SWITCH — fail closed unless the user has explicitly enabled
+    # Claude OAuth use. The Claude Code CLI proxy can burn a Max subscription
+    # very fast (24-turn runs, 15-min timeouts) — we used to default-on and the
+    # improvement loop drained the queue silently in the background. Never again.
+    if not bool(_get("claude_oauth_enabled", False)):
+        return {"ok": False, "reason": "Claude OAuth use is disabled "
+                "(settings.claude_oauth_enabled = false). Enable it deliberately if you "
+                "want Mentor to call Claude via your subscription."}
+
     # Budget gate (automated callers only).
     try:
         from src import claude_budget

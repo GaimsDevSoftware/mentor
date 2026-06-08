@@ -135,10 +135,14 @@ DEFAULT_SETTINGS = {
     # library can grow beyond this; cleanup/retirement is an explicit review flow.
     "skill_max_injected": 3,
     # ── Autonomous self-improvement loop (src/improvement_loop.py) ──
-    # Proactive background engine: Claude (teacher) reviews real turns, fills
+    # Proactive background engine: the teacher model reviews real turns, fills
     # skill-coverage gaps, and prepares for the user's standing interests —
     # writing skills + house rules (regelverk) automatically.
-    "improve_loop_enabled": True,
+    # DEFAULT OFF: this used to fire Claude OAuth research in the background and
+    # could exhaust a Max subscription in days. Enable only with a non-Claude
+    # teacher model, or with claude_oauth_enabled=True if you know what you're
+    # doing.
+    "improve_loop_enabled": False,
     # Seconds between proactive cycles (floored at 300 to protect rate limits).
     "improve_interval_seconds": 1800,
     # Max teacher calls per cycle — the main rate-limit lever.
@@ -212,11 +216,17 @@ DEFAULT_SETTINGS = {
     # never all spent early. Unused allowance does not roll over.
     "improve_coach_per_window": 3,       # teacher coaching/reflection calls
     "improve_coach_window_hours": 2,
-    "claude_research_per_window": 2,     # fresh/immediate web-research runs
+    # MASTER KILL SWITCH for Claude subscription / OAuth use. Default OFF: the
+    # Claude Code CLI proxy + claude_research engine are a fast way to burn a
+    # Max subscription if anything calls them in a loop (the improvement loop
+    # was caught doing exactly that). Set to True only if you explicitly want
+    # Mentor to tap your Claude Code subscription, and watch the budget.
+    "claude_oauth_enabled": False,
+    "claude_research_per_window": 0,     # default 0 — gated by claude_oauth_enabled too
     "claude_research_window_hours": 2,
     # Backlog drain ("free coins") — a SEPARATE allowance so clearing the
     # research queue never spends the normal research budget above.
-    "claude_research_queue_per_window": 2,
+    "claude_research_queue_per_window": 0,
     "claude_research_queue_window_hours": 2,
     # ── Claude web-research engine (src/claude_research.py) ──
     "claude_research_model": "sonnet",   # sonnet | opus | haiku
