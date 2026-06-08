@@ -1,10 +1,12 @@
 #!/bin/bash
-# Odysseus — desktop app launcher (Linux).
+# Mentor — desktop app launcher (Linux).
 #
-# Opens Odysseus in its OWN window (chromeless app window, own taskbar entry),
-# not a browser tab. Ensures the local server is running first.
+# Opens Mentor in its OWN window (chromeless app window, own taskbar entry),
+# not a browser tab. SINGLE-INSTANCE: a second click on the dock icon focuses
+# the existing window instead of spawning a new one (KDE Plasma Wayland via
+# KWin scripting D-Bus; X11 falls back to wmctrl). Ensures the server is up.
 #
-#   scripts/odysseus-app.sh          # start server if needed + open the app window
+#   scripts/odysseus-app.sh          # focus existing window OR open the app
 #   scripts/odysseus-app.sh --check  # print what it WOULD do, don't open a window
 #
 # Server runs as the `odysseus-ui` systemd user service. Port from .env (APP_PORT)
@@ -23,6 +25,8 @@ fi
 URL="http://127.0.0.1:${PORT}/app"
 PROFILE="$HOME/.local/share/odysseus-app"
 WMCLASS="Mentor"
+LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+LOCK_FILE="${LOCK_DIR}/mentor-app.lock"
 
 # --ask "<text>": open the chat seeded with a prompt (used by the KRunner plugin).
 if [ "${1:-}" = "--ask" ] && [ -n "${2:-}" ]; then
@@ -58,19 +62,77 @@ ensure_server() {
   return 0  # open anyway; the page shows its own login/health
 }
 
+# Detect an already-running Mentor app window by the user-data-dir we always pass
+# to Chrome --app. Faster + more accurate than scanning by window class.
+running_pid() {
+  pgrep -f -- "--user-data-dir=${PROFILE}" 2>/dev/null | head -1
+}
+
+# Focus existing Mentor window. KDE Plasma Wayland blocks wmctrl/xdotool, so
+# we use KWin scripting via D-Bus to find a window by WM_CLASS and activate it.
+focus_existing() {
+  # X11 fallback (wmctrl is the simplest, if present).
+  if [ "${XDG_SESSION_TYPE:-x11}" = "x11" ] && command -v wmctrl >/dev/null 2>&1; then
+    wmctrl -x -a "${WMCLASS}.${WMCLASS}" 2>/dev/null && return 0
+    wmctrl -a "$WMCLASS" 2>/dev/null && return 0
+  fi
+  # KDE Plasma path (Wayland + X11): load a tiny KWin script that activates the
+  # matching window. Requires qdbus.
+  local qd=""
+  for c in qdbus-qt6 qdbus6 qdbus; do
+    if command -v "$c" >/dev/null 2>&1; then qd="$c"; break; fi
+  done
+  [ -z "$qd" ] && return 1
+  local script
+  script="$(mktemp "${LOCK_DIR}/mentor-focus.XXXXXX.js")" || return 1
+  cat > "$script" <<'JS'
+// Find the Mentor window by WM_CLASS (resourceClass / resourceName) and activate.
+const wins = (typeof workspace.windowList === 'function') ? workspace.windowList()
+           : (typeof workspace.clientList === 'function' ? workspace.clientList() : []);
+for (const w of wins) {
+  const cls  = (w.resourceClass || '').toString().toLowerCase();
+  const name = (w.resourceName  || '').toString().toLowerCase();
+  if (cls === 'mentor' || name === 'mentor') {
+    if (w.minimized) w.minimized = false;
+    try { workspace.activeWindow = w; } catch (e) {}
+    try { if (typeof w.requestActivate === 'function') w.requestActivate(); } catch (e) {}
+    break;
+  }
+}
+JS
+  local id
+  id="$("$qd" org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$script" "mentor-focus" 2>/dev/null || true)"
+  if [ -n "$id" ]; then
+    "$qd" "org.kde.KWin" "/Scripting/Script${id}" "org.kde.kwin.Script.run"  >/dev/null 2>&1 || true
+    "$qd" "org.kde.KWin" "/Scripting/Script${id}" "org.kde.kwin.Script.stop" >/dev/null 2>&1 || true
+  fi
+  rm -f "$script"
+  return 0
+}
+
 open_app() {
   case "$BROWSER_KIND" in
     chromium)
-      exec "$BROWSER_BIN" --app="$URL" --class="$WMCLASS" \
-        --user-data-dir="$PROFILE" --no-first-run --no-default-browser-check >/dev/null 2>&1 ;;
+      # Detach so this launcher process can exit while Chrome lives on.
+      setsid "$BROWSER_BIN" --app="$URL" --class="$WMCLASS" \
+        --user-data-dir="$PROFILE" --no-first-run --no-default-browser-check \
+        >/dev/null 2>&1 &
+      disown 2>/dev/null || true
+      ;;
     epiphany)
-      exec "$BROWSER_BIN" --application-mode "$URL" >/dev/null 2>&1 ;;
+      setsid "$BROWSER_BIN" --application-mode "$URL" >/dev/null 2>&1 &
+      disown 2>/dev/null || true
+      ;;
     firefox)
       # Dedicated profile window (Firefox has no true app mode, but an isolated
       # profile keeps it separate from normal browsing).
-      exec "$BROWSER_BIN" --no-remote -P odysseus-app --new-window "$URL" >/dev/null 2>&1 ;;
+      setsid "$BROWSER_BIN" --no-remote -P odysseus-app --new-window "$URL" >/dev/null 2>&1 &
+      disown 2>/dev/null || true
+      ;;
     *)
-      exec xdg-open "$URL" >/dev/null 2>&1 ;;
+      setsid xdg-open "$URL" >/dev/null 2>&1 &
+      disown 2>/dev/null || true
+      ;;
   esac
 }
 
@@ -80,8 +142,31 @@ if [ "${1:-}" = "--check" ]; then
   echo "browser: $BROWSER_KIND ($BROWSER_BIN)"
   echo -n "server:  "; (systemctl --user is-active odysseus-ui 2>/dev/null || echo "inactive")
   echo -n "health:  "; curl -s -o /dev/null -w '%{http_code}\n' --max-time 2 "http://127.0.0.1:${PORT}/api/health" 2>/dev/null || echo "unreachable"
+  echo -n "running: "; pid="$(running_pid)"; [ -n "$pid" ] && echo "pid=$pid" || echo "no"
   exit 0
 fi
 
+# ── single-instance gate ────────────────────────────────────────────────────
+# Serialize concurrent launcher invocations (e.g. rapid double-clicks on the
+# dock icon) so two windows can never race past the running-pid check.
+exec 9>"$LOCK_FILE" 2>/dev/null || true
+if command -v flock >/dev/null 2>&1; then
+  flock -w 5 9 || true
+fi
+
 ensure_server
+
+PID="$(running_pid)"
+if [ -n "$PID" ]; then
+  # Already running — focus, don't spawn a 2nd window. (--ask/--path can't
+  # reach the running Chrome --app window's URL bar from outside; the user
+  # navigates manually in-app afterward.)
+  focus_existing || true
+  exit 0
+fi
+
 open_app
+# Best-effort: bring the brand-new window forward.
+sleep 1
+focus_existing || true
+exit 0
