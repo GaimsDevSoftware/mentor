@@ -1864,6 +1864,10 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  .theme-switch button[aria-current="true"]{background:var(--txt);color:var(--bg)}
  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--sep-2);border-radius:5px}
  .model-picker-wrap{position:relative}
+ .mp-selected{display:flex;align-items:center;gap:8px;padding:8px 12px;background:color-mix(in srgb,var(--accent) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--accent) 40%,var(--sep));border-radius:10px;font-size:13px;color:var(--txt);font-weight:500}
+ .mp-selected-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .mp-selected-clear{background:transparent;border:none;color:var(--faint);cursor:pointer;font-size:14px;padding:0 2px;border-radius:4px;line-height:1}
+ .mp-selected-clear:hover{color:var(--err);background:color-mix(in srgb,var(--err) 12%,transparent)}
  .model-dropdown{display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:280px;overflow-y:auto;background:var(--surface-2);border:1px solid var(--sep-2);border-radius:10px;margin-top:4px;box-shadow:0 12px 32px rgba(0,0,0,.4);backdrop-filter:blur(16px)}
  .model-dropdown.mp-open{display:block}
  .mp-group{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);padding:8px 12px 4px;font-weight:600}
@@ -1914,7 +1918,8 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
     </div>
     <label class="lab">Coder model</label>
     <div class="model-picker-wrap" id="model-picker-wrap">
-      <input id="model-search" class="fld" placeholder="Search models…" autocomplete="off">
+      <div class="mp-selected" id="model-selected" style="display:none"><span class="mp-selected-name"></span><button type="button" class="mp-selected-clear" title="Change model">&#x2715;</button></div>
+      <input id="model-search" class="fld" placeholder="Search or pick a model…" autocomplete="off">
       <div id="model-dropdown" class="model-dropdown"></div>
       <input type="hidden" id="model" value="">
     </div>
@@ -2030,12 +2035,35 @@ async function loadProjects(cur){
 async function loadModels(cur){
   let d={}; try{ d=await j('/api/code/models'); }catch(e){}
   MODELS=(d&&d.models)||[]; cur=cur||(d&&d.current)||'';
-  const hidden=$('#model'); hidden.value=cur;
+  const hidden=$('#model');
   const search=$('#model-search');
   const dd=$('#model-dropdown');
-  // Categorize
+  const badge=$('#model-selected');
+  const badgeName=badge.querySelector('.mp-selected-name');
+  const badgeClear=badge.querySelector('.mp-selected-clear');
   const local=[],cloud=[];
   MODELS.forEach(m=>{(m.startsWith('ollama/')?local:cloud).push(m);});
+
+  function selectModel(m){
+    hidden.value=m;
+    badgeName.textContent=m;
+    badge.style.display='';
+    search.style.display='none';
+    search.value='';
+    dd.classList.remove('mp-open');
+    setupSummary();
+  }
+  function clearSelection(){
+    hidden.value='';
+    badge.style.display='none';
+    search.style.display='';
+    search.value='';
+    search.focus();
+    renderList('');
+    dd.classList.add('mp-open');
+  }
+  badgeClear.onclick=clearSelection;
+
   function renderList(filter){
     const q=(filter||'').toLowerCase();
     dd.innerHTML='';
@@ -2045,23 +2073,31 @@ async function loadModels(cur){
       const hdr=document.createElement('div');hdr.className='mp-group';hdr.textContent=label;dd.appendChild(hdr);
       filtered.forEach(m=>{
         const row=document.createElement('div');row.className='mp-item'+(m===hidden.value?' mp-active':'');
-        row.dataset.model=m;row.textContent=m.replace(/^ollama\//,'');
-        row.onclick=()=>{hidden.value=m;search.value=m;dd.classList.remove('mp-open');setupSummary();renderList('');};
+        row.dataset.model=m;row.textContent=m;
+        row.onclick=()=>{selectModel(m);search.blur();};
         dd.appendChild(row);
       });
     }
     addGroup('Local',local);
     addGroup('Cloud / API',cloud);
-    if(!dd.children.length){const e=document.createElement('div');e.className='mp-empty';e.textContent=q?'No matches':'No models available';dd.appendChild(e);}
+    if(!dd.children.length){const e=document.createElement('div');e.className='mp-empty';e.textContent=q?'No matches — type full model spec to use custom':'No models available';dd.appendChild(e);}
   }
   renderList('');
-  search.value=cur||'';
+  if(cur && MODELS.includes(cur)){ selectModel(cur); }
+  else if(cur){ selectModel(cur); }  // custom model from settings
+  else { badge.style.display='none'; search.style.display=''; }
+
   search.onfocus=()=>{dd.classList.add('mp-open');renderList(search.value);};
   search.oninput=()=>{dd.classList.add('mp-open');renderList(search.value);};
   document.addEventListener('click',e=>{if(!e.target.closest('#model-picker-wrap'))dd.classList.remove('mp-open');});
   search.onkeydown=e=>{
     if(e.key==='Escape'){dd.classList.remove('mp-open');search.blur();}
-    if(e.key==='Enter'){e.preventDefault();const first=dd.querySelector('.mp-item');if(first){first.click();search.blur();}}
+    if(e.key==='Enter'){
+      e.preventDefault();
+      const first=dd.querySelector('.mp-item');
+      if(first){first.click();search.blur();}
+      else if(search.value.trim()){selectModel(search.value.trim());search.blur();}  // allow custom model spec
+    }
   };
 }
 function chosenProject(){ const s=$('#proj'); if(!s) return ''; return s.value==='__other__'?($('#proj-path').value||'').trim():s.value; }
