@@ -785,6 +785,18 @@ def setup_manage_routes() -> APIRouter:
             "(I suggest, you confirm)?\" Do NOT silently auto-pick — wait for their choice, THEN run auto_roles "
             "(automatic) or set_role one by one (together). If a role can't be filled from connected models "
             "(e.g. no multimodal model for vision), say so and offer to connect one. Aim to leave NO role empty.\n"
+            "FREE-CLOUD STRATEGY — multiple sources: free cloud providers have daily/per-minute limits AND can "
+            "be unreliable. If the user wants to stay free in the cloud, urge them to connect at least TWO "
+            "different free sources (e.g. Groq + Google Gemini + OpenRouter :free + Cerebras + Mistral) — auto_roles "
+            "uses models from DIFFERENT endpoints as fallbacks, so when one source rate-limits or fails, the next "
+            "one picks up. With only one source there is no safety net. If auto_roles reports source_count<2 or its "
+            "note mentions only one source, tell the user clearly and offer open_concierge so they can add another.\n"
+            "LOCAL POWER-USER — node networks: if the user wants serious local power (multiple bigger models running "
+            "at the same time, more than one machine's VRAM can hold), tell them they can ADD MORE MACHINES as Ollama "
+            "nodes — each computer on their network runs ollama and the app routes work across them. Pointer: the "
+            "Cookbook's fleet view + /manage settings cover node setup; the Local plugin's catalog stores nodes. "
+            "You can't configure nodes via your actions (that's a hands-on networking step), so EXPLAIN and POINT, "
+            "don't try to do it for them.\n"
             "RULES: one sentence before an action; at most ONE action per reply, only when ready. NEVER ask "
             "for an API key in chat — use open_concierge. Use the exact model@endpoint specs from the state "
             "when setting roles. Match models to the user's stated goal + their hardware.\n\n"
@@ -807,8 +819,11 @@ def setup_manage_routes() -> APIRouter:
         if not any(c["role"] != "system" for c in chat):
             chat.append({"role": "user", "content":
                          "I just opened setup. Greet me in ONE short line, then — using the setup state — "
-                         "tell me the single next thing to finish setup and offer to do it (or ask my goal "
-                         "if nothing is set up yet)."})
+                         "do EITHER (a) tell me the single next thing to finish setup and offer to do it, OR "
+                         "(b) if nothing meaningful is set up yet, ask me the foundational question first: "
+                         "\"Do you want this fully PRIVATE on your own machine (slower / smaller models, "
+                         "expandable later by adding more computers as Ollama nodes), or a FREE/CHEAP CLOUD setup "
+                         "(stronger, instant, but uses free-tier limits — you'll want 2+ providers as fallbacks)?\""})
         try:
             from src.ai_interaction import _resolve_model
             from src.llm_core import complete_with_continuation
@@ -1110,13 +1125,16 @@ def setup_manage_routes() -> APIRouter:
 
     @router.post("/api/setup/auto-roles")
     async def auto_roles(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
-        """Fill EVERY model role automatically from the connected models — default,
-        utility (small/fast), research (strong), and vision (image analysis) — so
-        chat, research and pasting/uploading images all work. Picks a coder too."""
+        """Fill EVERY model role from the connected models — default, utility, research,
+        vision — AND a smart fallback chain per role using models from DIFFERENT endpoints
+        (different usage pools), so when a free cloud source hits its limit the next
+        attempt doesn't hit the same wall. Picks a coder too. Warns if only one source
+        is available so the user can connect a second free source."""
         import json as _json
         import re as _re
         from core.database import SessionLocal, ModelEndpoint
         cands = []
+        endpoints = set()
         db = SessionLocal()
         try:
             for e in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
@@ -1125,41 +1143,99 @@ def setup_manage_routes() -> APIRouter:
                     ms = _json.loads(e.cached_models) if e.cached_models else []
                 except Exception:
                     ms = []
+                if ms:
+                    endpoints.add(e.name)
                 for mn in ms:
-                    cands.append({"spec": "%s@%s" % (mn, e.name), "n": str(mn).lower(), "local": local})
+                    cands.append({"spec": "%s@%s" % (mn, e.name), "ep": e.name,
+                                  "n": str(mn).lower(), "local": local})
         finally:
             db.close()
         if not cands:
             return {"ok": False, "error": "No models connected yet — connect a model first, then I'll fill the roles."}
+
         VIS = r"vision|vl\b|llava|gpt-4o|gpt-4\.|gpt-5|gemini|claude-3|claude-4|claude-opus|claude-sonnet|pixtral|internvl|qwen.*vl|llama-3\.2-(11|90)b"
         COD = r"coder|code|deepseek|devstral|codestral|qwen2\.5-coder|qwen3-coder"
         SMALL = r"1b|1\.5b|2b|3b|4b|7b|8b|mini|small|flash|instant|lite"
         BIG = r"70b|72b|120b|235b|405b|opus|-max|large|gpt-5|sonnet|deepseek-v|qwen3\.|glm-4"
+
         def has(p, c):
             return _re.search(p, c["n"]) is not None
-        def pick(pred, fb=True):
+
+        def pick_primary(pred):
+            """Best match anywhere; cands sort-order (local first) decides ties."""
             for c in cands:
                 if pred(c):
-                    return c["spec"]
-            return cands[0]["spec"] if fb else None
-        default = pick(lambda c: has(BIG, c)) or cands[0]["spec"]
-        utility = pick(lambda c: has(SMALL, c)) or default
-        research = pick(lambda c: has(BIG, c)) or default
-        vision = pick(lambda c: has(VIS, c), fb=False)
-        coder = pick(lambda c: has(COD, c), fb=False)
+                    return c
+            return None
+
+        def pick_fallbacks(pred, primary):
+            """Up to 3 fallbacks from DIFFERENT endpoints than the primary, so a
+            shared usage pool / down provider doesn't take both the primary and its
+            backup at once."""
+            if not primary:
+                return []
+            used_eps = {primary["ep"]}
+            out = []
+            # First pass: same role-fit (preferred) from other endpoints
+            for c in cands:
+                if c["spec"] == primary["spec"] or c["ep"] in used_eps:
+                    continue
+                if pred(c):
+                    out.append(c["spec"])
+                    used_eps.add(c["ep"])
+                    if len(out) >= 3:
+                        return out
+            # Second pass: ANY model from yet-unused endpoints (degraded but better than nothing)
+            for c in cands:
+                if c["ep"] in used_eps:
+                    continue
+                out.append(c["spec"])
+                used_eps.add(c["ep"])
+                if len(out) >= 3:
+                    break
+            return out
+
+        default_c = pick_primary(lambda c: has(BIG, c)) or cands[0]
+        utility_c = pick_primary(lambda c: has(SMALL, c)) or default_c
+        research_c = pick_primary(lambda c: has(BIG, c)) or default_c
+        vision_c = pick_primary(lambda c: has(VIS, c))
+        coder_c = pick_primary(lambda c: has(COD, c))
+
+        default = default_c["spec"]
+        utility = utility_c["spec"]
+        research = research_c["spec"]
+        vision = vision_c["spec"] if vision_c else None
+        coder = coder_c["spec"] if coder_c else None
+
+        default_fb = pick_fallbacks(lambda c: has(BIG, c), default_c)
+        utility_fb = pick_fallbacks(lambda c: has(SMALL, c), utility_c)
+        vision_fb = pick_fallbacks(lambda c: has(VIS, c), vision_c) if vision_c else []
+
         from src.settings import load_settings, save_settings
         s = load_settings()
-        assigned = {"default_model": default, "utility_model": utility, "research_model": research}
         s["default_model"] = default
         s["utility_model"] = utility
         s["research_model"] = research
+        s["default_model_fallbacks"] = default_fb
+        s["utility_model_fallbacks"] = utility_fb
+        assigned = {"default_model": default, "utility_model": utility, "research_model": research}
         if vision:
             s["vision_model"] = vision
+            s["vision_model_fallbacks"] = vision_fb
             assigned["vision_model"] = vision
         save_settings(s)
-        note = "" if vision else (" No vision-capable model is connected, so image analysis won't work yet — "
-                                  "add a multimodal model (a cloud frontier model, or a local VL model) for that.")
-        return {"ok": True, "assigned": assigned, "vision": bool(vision), "coder": coder, "note": note}
+
+        nsrc = len(endpoints)
+        warn = ""
+        if nsrc < 2:
+            warn = (" Only ONE source is connected, so I couldn't set a real fallback for any role — "
+                    "if that source hits a usage limit or goes down, requests will fail. Connect a SECOND free "
+                    "source (e.g. Groq + Google Gemini, or OpenRouter + Cerebras) so I can route around outages.")
+        vis_note = "" if vision else (" No vision-capable model is connected, so image analysis won't work yet — "
+                                      "add a multimodal model (a cloud frontier model, or a local VL model) for that.")
+        return {"ok": True, "assigned": assigned, "vision": bool(vision), "coder": coder,
+                "fallbacks": {"default_model": default_fb, "utility_model": utility_fb, "vision_model": vision_fb},
+                "sources": sorted(endpoints), "source_count": nsrc, "note": (warn + vis_note).strip()}
 
     @router.get("/api/setup/role-status")
     async def role_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
