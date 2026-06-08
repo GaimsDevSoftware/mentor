@@ -2347,9 +2347,10 @@ import createResearchSynapse from './researchSynapse.js';
                     _pwBtn.textContent = 'Submitting…';
                     try {
                       const _sid = window.location.hash.replace('#', '');
-                      await fetch('/api/chat/sudo/' + _sid, { method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: pw}) });
+                      const _res = await fetch('/api/chat/sudo/' + _sid, { method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: pw}) });
+                      if (!_res.ok) { const _err = await _res.json().catch(() => ({})); throw new Error(_err.error || _err.detail || 'Server error ' + _res.status); }
                       _sudoDiv.innerHTML = '<div style="font-size:11px;color:var(--fg-dim,#888);padding:4px 0">🔓 Password submitted — the command will retry with sudo.</div>';
-                    } catch(e) { _pwBtn.textContent = 'Failed'; _pwBtn.disabled = false; }
+                    } catch(e) { _pwBtn.textContent = 'Failed — ' + (e.message || 'network error'); _pwBtn.disabled = false; }
                   };
                   _pwBtn.onclick = _submitSudo;
                   _pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') _submitSudo(); });
