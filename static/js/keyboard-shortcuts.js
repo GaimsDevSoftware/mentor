@@ -107,6 +107,7 @@ export function initKeyboardShortcuts(modules) {
     'cookbook-modal':         'tool-cookbook-btn',
     'compare-model-overlay':  'tool-compare-btn',
     'calendar-modal':         'tool-calendar-btn',
+    'selfcoder-modal':        'tool-selfcoder-btn',
     'email-lib-modal':        'email-section-title',
   };
   let _lastWindow = 'settings-modal';
