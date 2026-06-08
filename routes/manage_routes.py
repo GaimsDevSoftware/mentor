@@ -1715,31 +1715,60 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="users" class="panel"></div>
 <div id="toolsdata" class="panel"></div>
 <div id="telegram" class="panel"></div>
-<div id="selfcoder" class="panel"><div class="card">
-  <b>Autonomous self-improvement (code)</b> <span id="sc-st" class="muted">…</span>
-  <div class="sub">Describe a change in plain language. The app makes it on a branch with Aider, verifies it (compile + boot + optional tests), and presents the result here. Core changes need your approval; small plugin-only changes can auto-merge. Canary deploy auto-reverts if the new build doesn't come up.</div>
-  <div class="row"><input id="sc-instr" placeholder="e.g. add input validation to plugins/caveman/plugin.py" style="min-width:380px"></div>
-  <div class="row"><input id="sc-files" placeholder="files (space-separated, optional)" style="min-width:380px"><button class="go" data-act="scPropose">Propose</button><span id="sc-prog" class="muted"></span></div>
-  <div id="sc-list" class="out" style="margin-top:12px"></div>
+<div id="selfcoder" class="panel">
+<style>
+.sc-chat{display:flex;flex-direction:column;gap:10px;min-height:200px;max-height:520px;overflow:auto;padding:8px 0}
+.sc-bub{max-width:85%;padding:10px 13px;border-radius:12px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-wrap:break-word;border:1px solid var(--sep)}
+.sc-bub.user{align-self:flex-end;background:color-mix(in srgb,var(--cyan) 14%,transparent);border-color:color-mix(in srgb,var(--cyan) 30%,transparent);border-radius:12px 12px 4px 12px}
+.sc-bub.ai{align-self:flex-start;background:var(--tint);border-radius:12px 12px 12px 4px}
+.sc-bub .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin-bottom:3px;font-weight:600}
+.sc-bub.user .lbl{color:var(--cyan)}
+.sc-bub.ai .lbl{color:var(--brass,var(--accent))}
+.sc-bub.err{border-color:color-mix(in srgb,var(--err,red) 40%,transparent)}
+.sc-bub.err .lbl{color:var(--err,red)}
+.sc-narr{align-self:center;font-size:11px;color:var(--faint);font-style:italic;text-align:center;padding:2px 6px}
+.sc-pend{display:flex;align-items:center;gap:8px}
+.sc-spin{width:12px;height:12px;border:2px solid var(--sep-2);border-top-color:var(--brass,var(--accent));border-radius:50%;display:inline-block;animation:_scspin .7s linear infinite;flex-shrink:0}
+@keyframes _scspin{to{transform:rotate(360deg)}}
+.sc-elapsed{color:var(--faint);font-size:11px;font-variant-numeric:tabular-nums}
+.sc-comp{display:flex;gap:6px;align-items:flex-end;border-top:1px solid var(--sep);padding-top:10px;margin-top:6px}
+.sc-comp textarea{flex:1;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:8px;padding:8px 10px;font:13px/1.4 inherit;outline:none;resize:none;min-height:24px;max-height:140px}
+.sc-comp textarea:focus{border-color:var(--brass,var(--accent))}
+.sc-comp button{background:var(--brass,var(--accent));color:#0b0b0d;border:none;border-radius:8px;padding:8px 14px;font:600 12px/1 inherit;cursor:pointer;flex-shrink:0}
+.sc-comp button:disabled{opacity:.45;cursor:default}
+.sc-det{margin-top:8px;border-top:1px solid var(--sep);padding-top:6px}
+.sc-det summary{cursor:pointer;color:var(--dim);font-size:11px;list-style:none;display:inline-flex;align-items:center;gap:5px;user-select:none;font-weight:500}
+.sc-det summary::-webkit-details-marker{display:none}
+.sc-det summary::before{content:"▸";color:var(--faint);font-size:9px;transition:transform .15s;display:inline-block;width:8px}
+.sc-det[open] summary::before{transform:rotate(90deg)}
+.sc-diff{white-space:pre-wrap;font:12px/1.4 ui-monospace,Menlo,monospace;background:var(--tint);border:1px solid var(--sep);border-radius:8px;padding:10px;max-height:300px;overflow:auto;margin-top:6px}
+</style>
+<div class="card">
+  <div class="row" style="margin-bottom:8px"><b>Self-coder</b><span id="sc-st" class="muted" style="font-size:12px;margin-left:8px">…</span></div>
+  <div class="sub" style="margin-bottom:8px">Describe a change — the app makes it on a safe branch, verifies it, and presents the result. You approve before anything lands.</div>
+  <div id="sc-chat" class="sc-chat"></div>
+  <div class="sc-comp">
+    <textarea id="sc-instr" rows="1" placeholder="Describe the change…  (Enter to send)"></textarea>
+    <button id="sc-send" type="button">Send</button>
+  </div>
 </div></div>
-<div id="code" class="panel"><div class="card"><b>Vibe-coding with Aider</b> <span id="aider-st" class="muted">…</span>
-  <div class="sub">Aider lets Odysseus make real, git-tracked code edits from plain language, using a local coder model. The installer detects your Python and picks the right isolated approach — never touches the app's venv.</div>
+
+<div id="code" class="panel">
+<div class="card">
+  <div class="row" style="margin-bottom:8px"><b>Vibe-code</b><span id="aider-st" class="muted" style="font-size:12px;margin-left:8px">…</span></div>
+  <div class="sub" style="margin-bottom:4px">Aider edits real code from plain language on a safe branch. Nothing is committed — you review the diff first.</div>
   <div id="aider-plan" class="sub" style="color:var(--cyan)"></div>
-  <div class="row"><button class="go" id="aider-install-btn" data-act="installAider">Install Aider</button><span id="aider-prog" class="muted"></span></div>
-  <div id="aider-help"></div>
-  <div id="aider-log" class="out"></div>
-  <div class="sub" style="margin-top:10px">Once installed: configure the <b>aider_code</b> plugin (Plugins tab) — set its project path + Aider model — then vibe-code below.</div></div>
-<div class="card"><b>Vibe-code a change</b>
-  <div class="sub">Describe a function or change to make in the configured project. Aider edits the files on a feature branch (off main) and returns the git diff — nothing is committed yet, you review first.</div>
-  <textarea id="vc-instr" placeholder="e.g. add a /api/health endpoint that returns {ok:true, version: ...}" rows="3" style="width:100%;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:8px;padding:9px 11px;font-family:inherit"></textarea>
-  <div class="row" style="margin-top:6px"><input id="vc-files" placeholder="files to focus on (optional — leave blank and AI picks them)" style="flex:1"><button class="go" data-act="vibeCode">Vibe-code</button><span id="vc-prog" class="muted"></span></div>
-  <div id="vc-out" style="display:none;margin-top:10px">
-    <div class="sub">Result</div><div id="vc-msg" class="out"></div>
-    <div class="sub" style="margin-top:8px">Git diff</div>
-    <pre id="vc-diff" class="out" style="max-height:340px;overflow:auto"></pre>
-    <details style="margin-top:8px"><summary class="muted" style="cursor:pointer">Aider log</summary>
-      <pre id="vc-log" class="out" style="max-height:200px;overflow:auto"></pre></details>
-  </div></div></div>
+  <div id="aider-setup" style="margin-bottom:8px">
+    <div class="row"><button class="go" id="aider-install-btn" data-act="installAider">Install Aider</button><span id="aider-prog" class="muted"></span></div>
+    <div id="aider-help"></div>
+    <div id="aider-log" class="out"></div>
+  </div>
+  <div id="vc-chat" class="sc-chat"></div>
+  <div class="sc-comp">
+    <textarea id="vc-instr" rows="1" placeholder="Describe the change…  (Enter to send)"></textarea>
+    <button id="vc-send" type="button">Send</button>
+  </div>
+</div></div>
 <div id="forge" class="panel"><div class="card">
   <b>New plugin — guided</b>
   <div class="sub">Describe what you want in plain language. The AI asks a couple of questions, then generates a small plugin for your app, verifies it loads, and leaves it as a <b>disabled draft</b> for you to review and enable. Plugins can add a tool the AI can call, a health check, an HTTP route, or a model source.</div>
@@ -2026,156 +2055,108 @@ async function loadToolsData(){
     try{ const data=JSON.parse(await f.text()); const res=await fetch('/api/import',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}); const r=await res.json().catch(()=>({})); if(res.ok&&r.ok){ m.textContent=r.message||'Imported ✓'; m.style.color='var(--ok)'; } else { m.textContent=r.message||r.detail||'Import failed.'; m.style.color='var(--err)'; } }
     catch(e){ m.textContent='Import failed: '+e.message; m.style.color='var(--err)'; } };
 }
-let scPollTimer=null;
+// ── Chat helpers shared by Self-coder + Vibe-code ──
+function _chatBub(log,role,html,cls){const b=document.createElement('div');b.className='sc-bub '+(cls||role);
+  b.innerHTML='<div class="lbl">'+(role==='user'?'You':'Mentor')+'</div>'+html;log.appendChild(b);log.scrollTop=log.scrollHeight;return b;}
+function _chatNarr(log,html){const n=document.createElement('div');n.className='sc-narr';n.innerHTML=html;log.appendChild(n);log.scrollTop=log.scrollHeight;}
+function _chatPending(log){const b=document.createElement('div');b.className='sc-bub ai';
+  b.innerHTML='<div class="lbl">Mentor</div><div class="sc-pend"><span class="sc-spin"></span><span class="sc-stage">starting…</span><span class="sc-elapsed" data-since="'+Date.now()+'">0s</span></div>';
+  log.appendChild(b);log.scrollTop=log.scrollHeight;return b;}
+function _chatStage(bub,stage){const el=bub.querySelector('.sc-stage');if(el)el.textContent=stage;}
+function _colorDiff(diff){return String(diff||'').split('\n').map(l=>{
+  let c='var(--dim)';if(l.startsWith('+++')||l.startsWith('---'))c='var(--faint)';
+  else if(l.startsWith('@@'))c='var(--cyan)';else if(l[0]==='+')c='var(--ok,#30d158)';else if(l[0]==='-')c='var(--err,#ff453a)';
+  return '<span style="color:'+c+'">'+esc(l)+'</span>';}).join('\n');}
+let _chatTimer=null;
+function _startTimer(){if(_chatTimer)return;_chatTimer=setInterval(()=>{
+  document.querySelectorAll('.sc-elapsed[data-since]').forEach(el=>{const s=Math.max(1,Math.round((Date.now()-parseInt(el.dataset.since||'0',10))/1000));
+    el.textContent=s<60?s+'s':Math.floor(s/60)+'m '+(s%60)+'s';});},1000);}
+function _stopTimer(){if(_chatTimer){clearInterval(_chatTimer);_chatTimer=null;}}
+
+// ── Self-coder (chat) ──
 const SC_STEP_LABEL={branch_created:'created branch',aider_starting:'asking Aider to edit',
   aider_done:'Aider finished',no_changes:'no changes made',committed_on_branch:'committed on branch',
-  verify_starting:'verifying…',verify_py_compile:'compile check',verify_import_app:'boot check (import app)',
+  verify_starting:'verifying…',verify_py_compile:'compile check',verify_import_app:'boot check',
   verify_pytest:'running tests',decided:'decision',error:'error'};
+let scBusy=false;
 async function scLoad(){try{const d=await j('/api/plugins/self_coder/proposals');
-  const el=$('#sc-list'); const props=(d.proposals||[]); $('#sc-st').textContent=props.length+' proposal(s)'; el.innerHTML='';
-  let anyRunning=false;
-  for(const p of props){
-    const running=p.status==='building'; if(running)anyRunning=true;
-    const dec=(p.decision||{}); const cls=p.status==='verified'?'ok':p.status==='failed'?'err':running?'warn':'muted';
-    const c=document.createElement('div'); c.className='card'; c.style.margin='8px 0'; c.id='sc-card-'+p.id;
-    c.innerHTML=`<div class="row"><span class="pill ${cls}">${p.status}${running?' …':''}</span>
-      <b class="grow">${(p.instruction||'').slice(0,90)}</b>
-      <span class="muted mono">${(p.changed||[]).length||(p.files||[]).length} files</span></div>
-      ${dec.action?`<div class="muted">${dec.action} — ${dec.why||''}</div>`:''}
-      <div class="row" style="margin-top:8px">
-        <button data-act="scToggle" data-args="${p.id}|live">${running?'Watch live':'View progress'}</button>
-        <button data-act="scToggle" data-args="${p.id}|diff">View diff</button>
-        ${p.status==='verified'?`<button class="go" data-act="scApply" data-args="${p.id}">Apply (merge + canary)</button>`:''}
-        <button class="fix" data-act="scDiscard" data-args="${p.id}">Discard</button></div>
-      <div id="sc-detail-${p.id}" style="display:${running?'block':'none'};margin-top:10px"></div>`;
-    el.appendChild(c);
-    if(running)await scRenderDetail(p.id,'live');
-  }
-  if(!props.length)el.textContent='No proposals yet. Describe a change above to start one.';
-  if(scPollTimer){clearInterval(scPollTimer);scPollTimer=null;}
-  if(anyRunning)scPollTimer=setInterval(scPollRunning,2000);
-}catch(e){$('#sc-list').textContent='self_coder is disabled — enable it in Plugins.';}}
-async function scPollRunning(){
-  const d=await j('/api/plugins/self_coder/proposals'); let any=false;
-  for(const p of (d.proposals||[])){
-    if(p.status==='building'){any=true;await scRenderDetail(p.id,'live');}
-    else{const det=document.getElementById('sc-detail-'+p.id);
-      const card=document.getElementById('sc-card-'+p.id);
-      if(card){const pill=card.querySelector('.pill'); if(pill){
-        const cls=p.status==='verified'?'ok':p.status==='failed'?'err':'muted';
-        pill.className='pill '+cls; pill.textContent=p.status;}}}
-  }
-  if(!any){clearInterval(scPollTimer);scPollTimer=null; scLoad();}
+  const n=(d.proposals||[]).length; $('#sc-st').textContent=n+' proposal(s)';
+}catch(e){$('#sc-st').textContent='disabled';}}
+async function scSend(){
+  if(scBusy)return;const text=($('#sc-instr').value||'').trim();if(!text)return;
+  $('#sc-instr').value='';scBusy=true;$('#sc-send').disabled=true;
+  const log=$('#sc-chat');
+  _chatBub(log,'user',esc(text));
+  _chatNarr(log,'Creating a safe branch and running the change…');
+  const pend=_chatPending(log);_startTimer();
+  let r;try{r=await j('/api/plugins/self_coder/propose',{method:'POST',body:JSON.stringify({instruction:text,files:[]})});
+  }catch(e){_stopTimer();pend.remove();_chatBub(log,'ai','Could not start: '+esc(String(e)),'ai err');scBusy=false;$('#sc-send').disabled=false;return;}
+  if(!r.ok){_stopTimer();pend.remove();_chatBub(log,'ai',esc(r.detail||'Failed to start.'),'ai err');scBusy=false;$('#sc-send').disabled=false;return;}
+  const id=r.id||r.proposal_id;
+  const poll=setInterval(async()=>{
+    let p;try{p=await j('/api/plugins/self_coder/proposals/'+id);}catch(e){return;}
+    const prog=p.progress||[];const last=prog[prog.length-1];
+    if(last)_chatStage(pend,SC_STEP_LABEL[last.step]||last.step);
+    if(p.status!=='building'){
+      clearInterval(poll);_stopTimer();pend.remove();
+      const dec=p.decision||{};
+      let summary=dec.action?(dec.action+' — '+(dec.why||'')):(p.status==='verified'?'Change verified and ready to apply.':'The change did not pass verification.');
+      let html='<div class="lbl">Mentor</div>'+esc(summary);
+      if(p.diff&&p.diff.trim()){html+='<details class="sc-det"><summary>See the diff</summary><pre class="sc-diff">'+_colorDiff(p.diff)+'</pre></details>';}
+      if(p.aider_log){html+='<details class="sc-det"><summary>Aider log</summary><pre class="sc-diff" style="max-height:200px">'+esc(p.aider_log.slice(-3000))+'</pre></details>';}
+      const progHtml=prog.map(s=>{const lbl=SC_STEP_LABEL[s.step]||s.step;const ok=s.ok===false?' color:var(--err)':s.ok===true?' color:var(--ok)':'';
+        return '<span style="font-size:11px;'+ok+'">'+esc(lbl)+'</span>';}).join(' → ');
+      if(progHtml)html+='<details class="sc-det"><summary>Steps</summary><div style="margin-top:4px;line-height:1.8">'+progHtml+'</div></details>';
+      if(p.status==='verified')html+='<div style="margin-top:8px"><button class="go" data-act="scApply" data-args="'+id+'">Apply (merge + canary)</button> <button class="fix" data-act="scDiscard" data-args="'+id+'">Discard</button></div>';
+      else html+='<div style="margin-top:8px"><button class="fix" data-act="scDiscard" data-args="'+id+'">Discard</button></div>';
+      _chatBub(log,'ai',html,p.status==='failed'?'ai err':'ai');
+      scBusy=false;$('#sc-send').disabled=false;scLoad();
+    }
+  },2000);
 }
-function _fmtAgo(ts0,ts){if(!ts0||!ts)return''; const s=Math.max(0,Math.round(ts-ts0)); return s+'s';}
-function _scIcon(s){return s==='done'?'<span class="ok" style="font-size:15px">✓</span>':
-  s==='failed'?'<span class="err" style="font-size:15px">✗</span>':
-  s==='active'?'<span class="warn" style="font-size:15px">⟳</span>':
-  '<span class="muted" style="font-size:15px">○</span>';}
-function _scPhases(progress){
-  // Map the raw events to four user-friendly phases (goal → done).
-  const ev={}; (progress||[]).forEach(p=>ev[p.step]=p);
-  const failedV=Object.keys(ev).some(k=>k.startsWith('verify_')&&ev[k].ok===false);
-  const aiderActive=ev['aider_starting']&&!ev['aider_done'];
-  const verifyActive=ev['verify_starting']&&!ev['decided']&&!failedV;
-  const noChanges=!!ev['no_changes'];
-  const started=(progress||[]).length>0;
-  return [
-    {label:'Set up a safe workspace',
-     desc:'Make an isolated branch so the change can be reviewed before it lands.',
-     state: ev['branch_created']?'done': started?'active':'pending'},
-    {label:'Make the change with AI',
-     desc:'Aider edits your code based on the instruction.',
-     state: noChanges?'failed': ev['aider_done']?'done': aiderActive?'active':'pending'},
-    {label:'Check the change is safe',
-     desc:'The new code compiles cleanly, the app still starts, and tests pass.',
-     state: failedV?'failed': ev['decided']?'done': verifyActive?'active':'pending',
-     sub:[{label:'Code compiles',state: ev['verify_py_compile']?(ev['verify_py_compile'].ok?'done':'failed'):'pending'},
-          {label:'App still boots',state: ev['verify_import_app']?(ev['verify_import_app'].ok?'done':'failed'):'pending'},
-          {label:'Tests pass',state: ev['verify_pytest']?(ev['verify_pytest'].ok?'done':'failed'):'pending', optional:true}]},
-    {label:'Decide what to do',
-     desc:'Auto-merge if safe + scoped + small, otherwise ask you to approve.',
-     state: ev['decided']?'done':'pending', extra: ev['decided']?ev['decided'].action:''},
-  ];}
-async function scRenderDetail(id,kind){
-  const p=await j('/api/plugins/self_coder/proposals/'+id);
-  const el=document.getElementById('sc-detail-'+id); if(!el||!p)return;
-  if(kind==='diff'){el.innerHTML=`<pre class="out" style="max-height:340px;overflow:auto">${(p.diff||'(no diff)').replace(/</g,'&lt;')}</pre>`;return;}
-  const phases=_scPhases(p.progress);
-  const phaseHTML=phases.map(ph=>{
-    const sub=(ph.sub||[]).filter(s=>!s.optional||s.state!=='pending').map(s=>
-      `<div class="row" style="padding-left:36px;font-size:12px;color:var(--dim)">${_scIcon(s.state)}<span>${s.label}</span></div>`).join('');
-    return `<div style="padding:6px 0;border-left:2px solid var(--line);padding-left:12px;margin-left:6px">
-      <div class="row" style="align-items:flex-start">
-        <span style="min-width:26px">${_scIcon(ph.state)}</span>
-        <div class="grow"><b>${ph.label}</b>${ph.extra?` <span class="muted">— ${ph.extra}</span>`:''}
-        <div class="muted" style="font-size:12px">${ph.desc}</div></div></div>${sub}</div>`;}).join('');
-  const prog=p.progress||[]; const t0=prog[0]?.ts;
-  const techTimeline=prog.map(s=>{const lbl=SC_STEP_LABEL[s.step]||s.step;
-    const ok=s.ok===false?' err':s.ok===true?' ok':'';
-    return `<div class="row"><span class="pill${ok}" style="min-width:60px">${_fmtAgo(t0,s.ts)}</span><span class="mono" style="font-size:12px">${lbl}</span></div>`;}).join('');
-  const log=(p.aider_log||'').slice(-3500);
-  el.innerHTML=`
-    <div class="sub" style="color:var(--cyan)">Goal</div>
-    <div style="background:var(--raised);padding:10px;border-radius:6px;margin-bottom:12px;font-style:italic">${(p.instruction||'').replace(/</g,'&lt;')}</div>
-    <div class="sub">Progress</div>
-    <div>${phaseHTML}</div>
-    <div class="row" style="margin-top:10px">
-      <button id="sc-tech-btn-${id}" data-act="scToggleTech" data-args="${id}">Show what the AI is doing (code &amp; scripting)</button>
-    </div>
-    <div id="sc-tech-${id}" style="display:none;margin-top:10px">
-      <div class="sub">Raw timeline</div><div>${techTimeline||'<span class="muted">starting…</span>'}</div>
-      <div class="sub" style="margin-top:10px">Aider output</div>
-      <pre class="out" style="max-height:260px;overflow:auto">${(log||'(waiting for output)').replace(/</g,'&lt;')}</pre>
-    </div>`;}
-function scToggleTech(id){const el=document.getElementById('sc-tech-'+id),btn=document.getElementById('sc-tech-btn-'+id);
-  const open=el.style.display!=='none'; el.style.display=open?'none':'block';
-  btn.textContent=open?'Show what the AI is doing (code & scripting)':'Hide technical details';}
-async function scToggle(id,kind){const el=document.getElementById('sc-detail-'+id);
-  if(el.style.display==='block'&&el.dataset.kind===kind){el.style.display='none';return;}
-  el.style.display='block'; el.dataset.kind=kind; await scRenderDetail(id,kind);}
-async function scPropose(){const i=$('#sc-instr').value.trim(),f=$('#sc-files').value.trim().split(/\s+/).filter(Boolean);
-  if(!i){alert('Need an instruction');return;} $('#sc-prog').textContent='starting…';
-  const r=await j('/api/plugins/self_coder/propose',{method:'POST',body:JSON.stringify({instruction:i,files:f})});
-  $('#sc-prog').textContent=r.ok?'started — watch live below':('failed — '+(r.detail||'')); scLoad();}
 async function scApply(id){if(!confirm('Merge + restart with canary auto-rollback?'))return;
-  const r=await j('/api/plugins/self_coder/proposals/'+id+'/apply',{method:'POST'});alert(r.detail||JSON.stringify(r));scLoad();}
-async function scDiscard(id){if(!confirm('Discard this proposal? (deletes the branch)'))return;
-  const r=await j('/api/plugins/self_coder/proposals/'+id+'/discard',{method:'POST'});alert(r.detail);scLoad();}
-async function vibeCode(){
-  const instr=$('#vc-instr').value.trim(); if(!instr){alert('Describe the change first');return;}
-  const files=$('#vc-files').value.trim();
-  $('#vc-prog').textContent='starting…';
-  $('#vc-out').style.display='block';
-  $('#vc-msg').textContent='AI is picking files and editing. With a local 30B model this takes 2–5 minutes.';
-  $('#vc-diff').textContent=''; $('#vc-log').textContent='';
-  try{
-    const r=await j('/api/plugins/aider_code/edit',{method:'POST',body:JSON.stringify({instruction:instr,files:files})});
-    if(!r.ok){throw new Error(r.error||'failed to start');}
-    const id=r.job_id;
-    const t0=Date.now();
-    const poll=setInterval(async()=>{
-      try{
-        const job=await j('/api/plugins/aider_code/jobs/'+id);
-        const el=Math.floor((Date.now()-t0)/1000);
-        if(job.status==='running'||job.status==='queued'){
-          $('#vc-prog').textContent='working… '+el+'s';
-          if(job.stage)$('#vc-msg').textContent=job.stage;
-          return;
-        }
-        clearInterval(poll);
-        const result=job.result||{};
-        $('#vc-prog').textContent=job.status==='done'?'done ✓ ('+el+'s)':'failed ('+el+'s)';
-        let msg=result.response||result.error||job.error||'(no message)';
-        if(result.auto_picked&&result.auto_picked.length){msg+='\n\nAI chose these files for you: '+result.auto_picked.join(', ');}
-        else if(result.files_used&&result.files_used.length){msg+='\n\nFiles edited: '+result.files_used.join(', ');}
-        $('#vc-msg').textContent=msg;
-        $('#vc-diff').textContent=result.diff||'(no diff)';
-        $('#vc-log').textContent=result.log||'';
-      }catch(e){clearInterval(poll);$('#vc-prog').textContent='lost poll: '+e;}
-    },3000);
-  }catch(e){$('#vc-prog').textContent='request failed: '+e;}
+  const r=await j('/api/plugins/self_coder/proposals/'+id+'/apply',{method:'POST'});
+  const log=$('#sc-chat');_chatNarr(log,esc(r.detail||JSON.stringify(r)));scLoad();}
+async function scDiscard(id){if(!confirm('Discard this proposal?'))return;
+  const r=await j('/api/plugins/self_coder/proposals/'+id+'/discard',{method:'POST'});
+  const log=$('#sc-chat');_chatNarr(log,esc(r.detail||'Discarded.'));scLoad();}
+$('#sc-send').onclick=scSend;
+$('#sc-instr').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();scSend();}});
+
+// ── Vibe-code (chat) ──
+let vcBusy=false;
+async function vcSend(){
+  if(vcBusy)return;const text=($('#vc-instr').value||'').trim();if(!text)return;
+  $('#vc-instr').value='';vcBusy=true;$('#vc-send').disabled=true;
+  const log=$('#vc-chat');
+  _chatBub(log,'user',esc(text));
+  _chatNarr(log,'Aider is picking files and editing on a safe branch…');
+  const pend=_chatPending(log);_startTimer();
+  let r;try{r=await j('/api/plugins/aider_code/edit',{method:'POST',body:JSON.stringify({instruction:text,files:''})});
+  }catch(e){_stopTimer();pend.remove();_chatBub(log,'ai','Could not start: '+esc(String(e)),'ai err');vcBusy=false;$('#vc-send').disabled=false;return;}
+  if(!r.ok){_stopTimer();pend.remove();_chatBub(log,'ai',esc(r.error||'Failed.'),'ai err');vcBusy=false;$('#vc-send').disabled=false;return;}
+  const id=r.job_id;
+  const poll=setInterval(async()=>{
+    let job;try{job=await j('/api/plugins/aider_code/jobs/'+id);}catch(e){return;}
+    if(job.stage)_chatStage(pend,job.stage);
+    if(job.status==='done'||job.status==='failed'){
+      clearInterval(poll);_stopTimer();pend.remove();
+      const res=job.result||{};
+      if(job.status==='failed'||res.error){
+        _chatBub(log,'ai',esc(res.error||'The edit failed.')+(res.log?'<details class="sc-det"><summary>Aider log</summary><pre class="sc-diff" style="max-height:200px">'+esc(res.log)+'</pre></details>':''),'ai err');
+      }else{
+        let html=esc(res.response||'Done — review the diff below.');
+        if(res.files_used&&res.files_used.length)html+='<div style="margin-top:6px;font-size:11px;color:var(--dim)">Files: '+res.files_used.map(esc).join(', ')+'</div>';
+        if(res.diff&&res.diff.trim())html+='<details class="sc-det"><summary>See the diff</summary><pre class="sc-diff">'+_colorDiff(res.diff)+'</pre></details>';
+        if(res.log)html+='<details class="sc-det"><summary>Aider log</summary><pre class="sc-diff" style="max-height:200px">'+esc(res.log)+'</pre></details>';
+        _chatBub(log,'ai',html);
+      }
+      vcBusy=false;$('#vc-send').disabled=false;
+    }
+  },2000);
 }
+$('#vc-send').onclick=vcSend;
+$('#vc-instr').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();vcSend();}});
 // CSP-safe event delegation: HTML data-act/data-args + a single click listener
 document.addEventListener('click',function(e){const t=e.target.closest('[data-act]');if(!t)return;
   const fn=window[t.dataset.act]; if(typeof fn!=='function')return;
