@@ -530,18 +530,32 @@ function renderTasks(d){
   if(!tasks.length){ el.innerHTML='<span class="muted" style="font-size:13px">Nothing serving or downloading right now.</span>'; return; }
   el.innerHTML=tasks.map(t=>{
     const st=(t.status||'').toLowerCase();
-    const bcls=st==='ready'||st==='completed'?'ok':st==='error'?'err':'run';
+    const bcls=st==='ready'||st==='completed'?'ok':st==='error'||st==='stopped'||st==='crashed'?'err':'run';
     const pct=Math.max(0,Math.min(100,parseInt(t.progress||'0',10)||0));
     const phase=t.phase||t.status||'';
     const showBar=st==='running'||st==='downloading';
+    const stopped=st==='stopped'||st==='error'||st==='crashed';
+    const sid=t.session_id||'';
     return `<div class="item"><span class="badge ${bcls}">${esc(t.type||'task')}</span>`
-      +`<span class="grow"><div class="name">${esc(t.model||t.session_id||'job')}</div>`
+      +`<span class="grow"><div class="name">${esc(t.model||sid||'job')}</div>`
       +`<div class="meta">${esc(phase)}${t.tps?` · ${esc(t.tps)} tok/s`:''}${t.reqs?` · ${esc(t.reqs)} reqs`:''}${t.remote&&t.remote!=='local'?` · ${esc(t.remote)}`:''}</div>`
       +(showBar?`<div class="bar"><i style="width:${pct}%"></i></div>`:'')
       +(st==='error'&&t.error?`<div class="meta" style="color:var(--err)">${esc(t.error)}</div>`:'')
-      +`</span><span class="badge ${bcls}">${esc(t.status||'')}</span></div>`;
+      +`</span>`
+      +(stopped?`<span class="task-actions" style="display:flex;gap:4px;flex-shrink:0">`
+        +`<button class="btn mini" onclick="restartTask('${esc(sid)}')">Restart</button>`
+        +`<button class="btn mini" style="opacity:.6" onclick="clearTask('${esc(sid)}')">Remove</button></span>`
+        :`<span class="badge ${bcls}">${esc(t.status||'')}</span>`)
+      +`</div>`;
   }).join('');
 }
+async function restartTask(sid){ if(!sid)return;
+  try{ await j('/api/cookbook/tasks/'+encodeURIComponent(sid)+'/restart',{method:'POST'}); }
+  catch(e){ try{ await j('/api/model/serve',{method:'POST',body:JSON.stringify({session_id:sid})}); }catch(e2){} }
+  pollTasks(); }
+async function clearTask(sid){ if(!sid||!confirm('Remove this task from the list?'))return;
+  try{ await j('/api/cookbook/tasks/'+encodeURIComponent(sid),{method:'DELETE'}); }catch(e){}
+  pollTasks(); }
 function pollTasks(){ j('/api/cookbook/tasks/status').then(renderTasks)
   .catch(e=>{ if(e===401) $('#tasks').innerHTML=adminNote; }); }
 pollTasks(); setInterval(pollTasks,3000);
