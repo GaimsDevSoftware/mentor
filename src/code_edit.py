@@ -179,14 +179,34 @@ async def run_edit(instruction: str, files, project: str, model: str,
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=project,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
-        out_s = (out or b"").decode(errors="replace")
-    except asyncio.TimeoutError:
+        lines = []
         try:
-            proc.kill()
-        except Exception:
-            pass
-        return {"error": "Aider timed out (10 min).", "exit_code": 1}
+            while True:
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=600)
+                if not line:
+                    break
+                text = line.decode(errors="replace").rstrip()
+                lines.append(text)
+                _lwr = text.lower()
+                if "searching" in _lwr or "repo map" in _lwr:
+                    _stage("analyzing the repo…")
+                elif "sending" in _lwr or "request" in _lwr:
+                    _stage("sending to model…")
+                elif "writing" in _lwr or "applied" in _lwr or "wrote" in _lwr:
+                    fname = text.split()[-1] if text.split() else ""
+                    _stage(f"writing changes{(' to ' + fname) if fname else ''}…")
+                elif "tokens" in _lwr and ("/" in text or "cost" in _lwr):
+                    _stage("model is thinking…")
+                elif "edit" in _lwr and ("file" in _lwr or ".py" in _lwr or ".js" in _lwr):
+                    _stage(f"editing: {text[:60]}…")
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return {"error": "Aider timed out (10 min).", "exit_code": 1}
+        await proc.wait()
+        out_s = "\n".join(lines)
     except Exception as e:
         return {"error": f"Aider run failed: {e}", "exit_code": 1}
 
