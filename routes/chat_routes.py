@@ -1086,6 +1086,19 @@ def setup_chat_routes(
         stopped = agent_runs.stop(session_id)
         return {"stopped": stopped}
 
+    @router.post("/api/chat/sudo/{session_id}")
+    async def chat_sudo(request: Request, session_id: str,
+                        payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Submit a sudo password for a pending command. The password is stored
+        in memory, consumed once by the next bash tool call, and never persisted."""
+        _verify_session_owner(request, session_id)
+        password = str(payload.get("password", ""))
+        if not password:
+            return {"ok": False, "error": "no password provided"}
+        from src.tool_execution import set_sudo_password
+        set_sudo_password(session_id, password)
+        return {"ok": True, "message": "Password received — the command will retry with sudo."}
+
     # ------------------------------------------------------------------ #
     # GET /api/chat/stream_status — check if a stream is active for a session
     # ------------------------------------------------------------------ #

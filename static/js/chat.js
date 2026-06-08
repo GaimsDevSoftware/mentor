@@ -2174,6 +2174,36 @@ import createResearchSynapse from './researchSynapse.js';
                     contentEl.appendChild(details);
                   }
                 }
+                // --- Sudo password prompt ---
+                if (json.needs_sudo_password && currentToolBubble) {
+                  const _sudoDiv = document.createElement('div');
+                  _sudoDiv.className = 'sudo-prompt';
+                  _sudoDiv.innerHTML = '<div style="padding:10px;background:color-mix(in srgb,var(--warn,#ffd60a) 10%,var(--bg-2,#1c1c1e));border:1px solid color-mix(in srgb,var(--warn,#ffd60a) 35%,var(--border,#333));border-radius:8px;margin:8px 0">'
+                    + '<div style="font-size:12px;color:var(--warn,#ffd60a);font-weight:600;margin-bottom:6px">🔒 Password required</div>'
+                    + '<div style="font-size:12px;color:var(--fg-dim,#aaa);margin-bottom:8px">' + (json.sudo_message || 'This command needs sudo.') + '</div>'
+                    + '<div style="display:flex;gap:6px"><input type="password" class="sudo-pw-input" placeholder="Enter your password…" style="flex:1;padding:6px 8px;background:var(--bg,#111);color:var(--fg,#eee);border:1px solid var(--border,#333);border-radius:6px;font:inherit;font-size:12px;outline:none">'
+                    + '<button class="sudo-pw-submit" style="padding:6px 12px;background:var(--warn,#ffd60a);color:#000;border:none;border-radius:6px;font:600 12px/1 inherit;cursor:pointer">Submit</button></div>'
+                    + '</div>';
+                  const chatBox = document.getElementById('chat-history');
+                  if (chatBox) chatBox.appendChild(_sudoDiv);
+                  const _pwInput = _sudoDiv.querySelector('.sudo-pw-input');
+                  const _pwBtn = _sudoDiv.querySelector('.sudo-pw-submit');
+                  const _submitSudo = async () => {
+                    const pw = _pwInput.value;
+                    if (!pw) return;
+                    _pwBtn.disabled = true;
+                    _pwBtn.textContent = 'Submitting…';
+                    try {
+                      const _sid = window.location.hash.replace('#', '');
+                      await fetch('/api/chat/sudo/' + _sid, { method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: pw}) });
+                      _sudoDiv.innerHTML = '<div style="font-size:11px;color:var(--fg-dim,#888);padding:4px 0">🔓 Password submitted — the command will retry with sudo.</div>';
+                    } catch(e) { _pwBtn.textContent = 'Failed'; _pwBtn.disabled = false; }
+                  };
+                  _pwBtn.onclick = _submitSudo;
+                  _pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') _submitSudo(); });
+                  _pwInput.focus();
+                  uiModule.scrollHistory();
+                }
                 // --- Reload sessions after manage_session tool (delete, rename, etc.) ---
                 // Debounce so bulk deletes don't fire loadSessions per call
                 if (json.tool === 'manage_session' && sessionModule) {

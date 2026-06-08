@@ -171,6 +171,14 @@ def _resolve_tool_path(raw_path: str) -> str:
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
 DEFAULT_PYTHON_TIMEOUT = 60 * 60
 
+# Temporary sudo password store — session_id → password. Each password is
+# consumed on first use (popped from the dict). Never written to disk.
+_sudo_passwords: dict = {}
+
+def set_sudo_password(session_id: str, password: str):
+    """Store a password for the next sudo command in this session."""
+    _sudo_passwords[session_id] = password
+
 # How often to push a progress event while a long-running subprocess
 # is still in flight. The frontend cares about "alive" more than
 # "every-byte" — 2s is the sweet spot.
@@ -465,12 +473,24 @@ async def _direct_fallback(
 
     try:
         if tool == "bash":
+            # Check if a sudo password was provided for this command
+            sudo_pass = _sudo_passwords.pop(session_id, None) if session_id else None
+            stdin_data = None
+            cmd = content
+            if sudo_pass and ("sudo " in content or content.startswith("sudo")):
+                cmd = content.replace("sudo ", "sudo -S ", 1)
+                stdin_data = (sudo_pass + "\n").encode()
+
             proc = await asyncio.create_subprocess_shell(
-                content,
+                cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE if stdin_data else None,
                 env=_subproc_env,
             )
+            if stdin_data:
+                proc.stdin.write(stdin_data)
+                proc.stdin.close()
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
                 timeout=DEFAULT_BASH_TIMEOUT,
@@ -482,6 +502,14 @@ async def _direct_fallback(
             err = stderr.rstrip()
             if err:
                 output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
+            # Detect sudo password prompt failure
+            _sudo_markers = ("sudo: a password is required", "sudo: du må oppgi et passord",
+                             "sudo: a terminal is required", "sudo: du trenger en ekte terminal")
+            if rc != 0 and any(m in (output or "") for m in _sudo_markers):
+                return {"output": output, "exit_code": rc,
+                        "needs_sudo_password": True,
+                        "command": content,
+                        "message": "This command needs your password to run with sudo. Type your password below — it will be used once and not stored."}
             output = _truncate(output, MAX_OUTPUT_CHARS)
             return {"output": output or "(no output)", "exit_code": rc or 0}
 

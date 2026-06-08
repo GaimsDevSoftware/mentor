@@ -2410,6 +2410,11 @@ async def stream_agent_loop(
             if result.get("images"):
                 img = result["images"][0]
                 tool_output_data["screenshot"] = f"data:{img['mimeType']};base64,{img['data']}"
+            # Forward sudo password prompt
+            if result.get("needs_sudo_password"):
+                tool_output_data["needs_sudo_password"] = True
+                tool_output_data["sudo_command"] = result.get("command", "")
+                tool_output_data["sudo_message"] = result.get("message", "This command needs your password.")
             yield f'data: {json.dumps(tool_output_data)}\n\n'
 
             # Native document tools open in the editor + carry the REAL doc id.
