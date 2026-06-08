@@ -746,6 +746,9 @@ _OFFICE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div class="top"><div class="mark">Office</div><span id="cap" class="pill">checking capacity…</span></div>
 <div class="tag">Your team of AI agents — hire employees with a role &amp; personality, then put them to work.</div>
 
+<div class="sec-title">The office</div>
+<div class="card" style="padding:0;overflow:hidden;background:var(--bg-2)"><canvas id="office" style="display:block;width:100%;height:200px;image-rendering:pixelated"></canvas></div>
+
 <div class="sec-title">The team</div>
 <div id="team" class="muted">loading…</div>
 
@@ -824,7 +827,52 @@ j('/api/agents/models').then(d=>{const sel=$('#f-model');
 
 // team list
 function statusCls(s){return s==='thinking'?'thinking':s==='done'?'done':'idle';}
+// ── Pixel-art office: a tiny animated room, one desk + character per agent ──
+(function(){ const oc=$('#office'); if(!oc) return; const cx=oc.getContext('2d'); let OAG=[], raf=0;
+  function cssv(n,f){ const v=getComputedStyle(document.documentElement).getPropertyValue(n).trim(); return v||f; }
+  function fit(){ const w=oc.clientWidth||600,h=oc.clientHeight||200,d=Math.min(2,window.devicePixelRatio||1); oc.width=w*d; oc.height=h*d; cx.setTransform(d,0,0,d,0,0); cx.imageSmoothingEnabled=false; }
+  function draw(t){
+    const W=oc.clientWidth||600,H=oc.clientHeight||200;
+    const wall=cssv('--bg-2','#0a0a0c'),floor=cssv('--surface-2','#1c1c1e'),brass=cssv('--brass','#e0a95e'),cyan=cssv('--cyan','#64d2ff'),line=cssv('--sep-2','#333'),ink=cssv('--txt','#eee'),ok=cssv('--ok','#30d158'),warn=cssv('--warn','#ffd60a');
+    cx.clearRect(0,0,W,H);
+    const fy=Math.round(H*0.62);
+    cx.fillStyle=wall; cx.fillRect(0,0,W,fy);
+    cx.fillStyle=floor; cx.fillRect(0,fy,W,H-fy);
+    cx.fillStyle=line; cx.fillRect(0,fy,W,1);
+    // window with twinkling stars + brass guide-star (the Mentor motif)
+    const wx=Math.round(W*0.05),wy=Math.round(H*0.12),ww=Math.round(W*0.24),wh=Math.round(H*0.34);
+    cx.fillStyle=line; cx.fillRect(wx-2,wy-2,ww+4,wh+4); cx.fillStyle='#05070d'; cx.fillRect(wx,wy,ww,wh);
+    for(let i=0;i<16;i++){ const sx=wx+((i*53)%ww),sy=wy+((i*89)%wh),tw=(Math.sin(t/600+i)+1)/2; cx.fillStyle='rgba(255,255,255,'+(0.2+0.6*tw)+')'; cx.fillRect(sx,sy,1,1); }
+    const gx=wx+Math.round(ww*0.68),gy=wy+Math.round(wh*0.4); cx.fillStyle=brass; cx.fillRect(gx-1,gy,3,1); cx.fillRect(gx,gy-1,1,3);
+    const agents=OAG.length?OAG:[{color:brass,status:'idle',ghost:1},{color:cyan,status:'idle',ghost:1}];
+    const n=Math.min(agents.length,7),slot=W/(n+0.3);
+    for(let i=0;i<n;i++){
+      const a=agents[i],col=a.color||brass,bx=Math.round(slot*(i+0.55)),deskY=fy-2;
+      const work=/work|think|busy|run/i.test(a.status||''),needs=/input|wait|ask/i.test(a.status||'');
+      const bob=Math.round(Math.sin(t/430+i*1.3)*1.3*(work?1.8:1));
+      const chx=bx,chy=fy-Math.round(H*0.30)+bob;
+      cx.fillStyle=col; cx.fillRect(chx-4,chy+6,9,10);                                  // body
+      const arm=work?Math.round(Math.sin(t/110+i)*1.5):0;
+      cx.fillRect(chx-6,chy+8+arm,2,5); cx.fillRect(chx+5,chy+8-arm,2,5);               // arms
+      cx.fillStyle='#e8c39e'; cx.fillRect(chx-3,chy,7,7);                               // head
+      cx.fillStyle='#3a2d22'; cx.fillRect(chx-3,chy-1,7,2);                             // hair
+      const blink=((t/1000+i)%4)<0.12; cx.fillStyle=blink?'#e8c39e':'#222'; cx.fillRect(chx-1,chy+3,1,1); cx.fillRect(chx+2,chy+3,1,1);
+      const dw=Math.round(slot*0.6); cx.fillStyle=line; cx.fillRect(bx-Math.round(dw/2),deskY,dw,Math.round(H*0.10)); // desk
+      const mw=Math.round(dw*0.5),mh=Math.round(H*0.12),mx=bx-Math.round(mw/2),my=deskY-mh-1;
+      cx.fillStyle='#0a0c10'; cx.fillRect(mx-1,my-1,mw+2,mh+2);
+      const mc=needs?warn:work?ok:cyan, g=work?(0.5+0.5*Math.abs(Math.sin(t/200+i))):needs?(0.5+0.5*Math.abs(Math.sin(t/350+i))):0.5;
+      cx.fillStyle=mc; cx.globalAlpha=0.3+0.55*g; cx.fillRect(mx,my,mw,mh); cx.globalAlpha=1;
+      cx.fillStyle=line; cx.fillRect(bx-1,my+mh,2,2);                                    // stand
+      if(a.name && !a.ghost){ cx.fillStyle=ink; cx.font='9px ui-monospace,monospace'; cx.textAlign='center'; cx.fillText((a.name[0]||'').toUpperCase(),bx,chy-3); }
+    }
+    raf=requestAnimationFrame(draw);
+  }
+  window.addEventListener('resize',fit);
+  window.__office=function(agents){ OAG=agents||[]; fit(); if(!raf) raf=requestAnimationFrame(draw); };
+  fit(); raf=requestAnimationFrame(draw);
+})();
 function loadTeam(){ j('/api/agents').then(d=>{const el=$('#team');const a=d.agents||[];
+  if(window.__office) window.__office(a);
   if(!a.length){el.innerHTML='<span class="muted" style="font-size:13px">No agents yet — hire your first employee below.</span>';return;}
   el.className='grid'; el.innerHTML=a.map(x=>`<div class="emp"><div class="ava" style="background:${esc(x.color||'#e0a95e')}">${esc((x.name||'?').slice(0,1).toUpperCase())}</div>
     <div class="grow"><div class="row"><span class="nm grow">${esc(x.name)}</span><span class="badge ${statusCls(x.status)}">${esc(x.status||'idle')}</span></div>
