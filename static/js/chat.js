@@ -2328,34 +2328,53 @@ import createResearchSynapse from './researchSynapse.js';
                 }
                 // --- Sudo password prompt ---
                 if (json.needs_sudo_password && currentToolBubble) {
-                  const _sudoDiv = document.createElement('div');
-                  _sudoDiv.className = 'sudo-prompt';
-                  _sudoDiv.innerHTML = '<div style="padding:10px;background:color-mix(in srgb,var(--warn,#ffd60a) 10%,var(--bg-2,#1c1c1e));border:1px solid color-mix(in srgb,var(--warn,#ffd60a) 35%,var(--border,#333));border-radius:8px;margin:8px 0">'
-                    + '<div style="font-size:12px;color:var(--warn,#ffd60a);font-weight:600;margin-bottom:6px">🔒 Password required</div>'
-                    + '<div style="font-size:12px;color:var(--fg-dim,#aaa);margin-bottom:8px">' + (json.sudo_message || 'This command needs sudo.') + '</div>'
-                    + '<div style="display:flex;gap:6px"><input type="password" class="sudo-pw-input" placeholder="Enter your password…" style="flex:1;padding:6px 8px;background:var(--bg,#111);color:var(--fg,#eee);border:1px solid var(--border,#333);border-radius:6px;font:inherit;font-size:12px;outline:none">'
-                    + '<button class="sudo-pw-submit" style="padding:6px 12px;background:var(--warn,#ffd60a);color:#000;border:none;border-radius:6px;font:600 12px/1 inherit;cursor:pointer">Submit</button></div>'
-                    + '</div>';
-                  const chatBox = document.getElementById('chat-history');
-                  if (chatBox) chatBox.appendChild(_sudoDiv);
-                  const _pwInput = _sudoDiv.querySelector('.sudo-pw-input');
-                  const _pwBtn = _sudoDiv.querySelector('.sudo-pw-submit');
+                  // Full-screen centered modal with pulsing border
+                  const _overlay = document.createElement('div');
+                  _overlay.className = 'sudo-overlay';
+                  const _cmdPreview = esc(json.sudo_command || '').slice(0, 120);
+                  _overlay.innerHTML = `<div class="sudo-modal">
+                    <div class="sudo-modal-icon">🔒</div>
+                    <div class="sudo-modal-title">Password required</div>
+                    <div class="sudo-modal-msg">${esc(json.sudo_message || 'This command needs your password to run with sudo.')}</div>
+                    ${_cmdPreview ? `<pre class="sudo-modal-cmd">${_cmdPreview}</pre>` : ''}
+                    <div class="sudo-modal-form">
+                      <input type="password" class="sudo-pw-input" placeholder="Password" autofocus>
+                      <button class="sudo-pw-submit" type="button">Authorize</button>
+                    </div>
+                    <div class="sudo-modal-hint">Press Enter to submit · Esc to cancel</div>
+                  </div>`;
+                  document.body.appendChild(_overlay);
+                  requestAnimationFrame(() => _overlay.classList.add('sudo-visible'));
+                  const _pwInput = _overlay.querySelector('.sudo-pw-input');
+                  const _pwBtn = _overlay.querySelector('.sudo-pw-submit');
+                  const _dismiss = () => {
+                    _overlay.classList.remove('sudo-visible');
+                    setTimeout(() => _overlay.remove(), 200);
+                  };
                   const _submitSudo = async () => {
                     const pw = _pwInput.value;
-                    if (!pw) return;
+                    if (!pw) { _pwInput.classList.add('sudo-shake'); setTimeout(() => _pwInput.classList.remove('sudo-shake'), 400); return; }
                     _pwBtn.disabled = true;
-                    _pwBtn.textContent = 'Submitting…';
+                    _pwBtn.textContent = 'Authorizing…';
                     try {
                       const _sid = window.location.hash.replace('#', '');
                       const _res = await fetch('/api/chat/sudo/' + _sid, { method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: pw}) });
                       if (!_res.ok) { const _err = await _res.json().catch(() => ({})); throw new Error(_err.error || _err.detail || 'Server error ' + _res.status); }
-                      _sudoDiv.innerHTML = '<div style="font-size:11px;color:var(--fg-dim,#888);padding:4px 0">🔓 Password submitted — the command will retry with sudo.</div>';
-                    } catch(e) { _pwBtn.textContent = 'Failed — ' + (e.message || 'network error'); _pwBtn.disabled = false; }
+                      _dismiss();
+                    } catch(e) {
+                      _pwBtn.textContent = 'Failed — ' + (e.message || 'network error');
+                      _pwBtn.disabled = false;
+                      _pwInput.classList.add('sudo-shake');
+                      setTimeout(() => _pwInput.classList.remove('sudo-shake'), 400);
+                    }
                   };
                   _pwBtn.onclick = _submitSudo;
-                  _pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') _submitSudo(); });
-                  _pwInput.focus();
-                  uiModule.scrollHistory();
+                  _pwInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') _submitSudo();
+                    if (e.key === 'Escape') _dismiss();
+                  });
+                  _overlay.addEventListener('click', (e) => { if (e.target === _overlay) _dismiss(); });
+                  setTimeout(() => _pwInput.focus(), 50);
                 }
                 // --- Reload sessions after manage_session tool (delete, rename, etc.) ---
                 // Debounce so bulk deletes don't fire loadSessions per call

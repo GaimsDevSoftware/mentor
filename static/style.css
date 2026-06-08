@@ -8912,6 +8912,133 @@ body.hide-thinking .thinking-section { display: none !important; }
   line-height: 1.5;
 }
 
+/* ===== SUDO PASSWORD MODAL ===== */
+@keyframes sudo-border-pulse {
+  0%, 100% { border-color: color-mix(in srgb, var(--warn, #ffd60a) 70%, transparent);
+             box-shadow: 0 0 20px color-mix(in srgb, var(--warn, #ffd60a) 20%, transparent),
+                         0 0 60px color-mix(in srgb, var(--warn, #ffd60a) 8%, transparent),
+                         0 24px 60px rgba(0,0,0,.5); }
+  50% { border-color: var(--warn, #ffd60a);
+        box-shadow: 0 0 30px color-mix(in srgb, var(--warn, #ffd60a) 45%, transparent),
+                    0 0 80px color-mix(in srgb, var(--warn, #ffd60a) 18%, transparent),
+                    0 24px 60px rgba(0,0,0,.5); }
+}
+@keyframes sudo-icon-pulse {
+  0%, 100% { transform: scale(1); opacity: .9; }
+  50% { transform: scale(1.1); opacity: 1; }
+}
+@keyframes sudo-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
+@keyframes sudo-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes sudo-modal-in {
+  from { opacity: 0; transform: scale(.92) translateY(10px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.sudo-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity .2s ease;
+}
+.sudo-overlay.sudo-visible {
+  opacity: 1;
+}
+.sudo-modal {
+  width: 380px;
+  max-width: 90vw;
+  padding: 28px 28px 22px;
+  border-radius: 16px;
+  border: 2px solid var(--warn, #ffd60a);
+  background: var(--surface, var(--bg, #15171c));
+  text-align: center;
+  animation: sudo-modal-in .25s ease-out, sudo-border-pulse 1.6s ease-in-out infinite;
+}
+.sudo-visible .sudo-modal {
+  animation: sudo-modal-in .25s ease-out, sudo-border-pulse 1.6s ease-in-out infinite;
+}
+.sudo-modal-icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+  animation: sudo-icon-pulse 1.6s ease-in-out infinite;
+}
+.sudo-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--warn, #ffd60a);
+  margin-bottom: 6px;
+}
+.sudo-modal-msg {
+  font-size: 13px;
+  color: var(--dim, #aaa);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.sudo-modal-cmd {
+  font: 11px/1.4 ui-monospace, Menlo, monospace;
+  background: rgba(0,0,0,.3);
+  border: 1px solid var(--sep, rgba(255,255,255,.1));
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 14px;
+  text-align: left;
+  color: var(--fg, #eee);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 60px;
+  overflow: hidden;
+}
+.sudo-modal-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.sudo-modal-form .sudo-pw-input {
+  flex: 1;
+  padding: 10px 12px;
+  background: rgba(0,0,0,.3);
+  color: var(--fg, #eee);
+  border: 2px solid color-mix(in srgb, var(--warn, #ffd60a) 40%, transparent);
+  border-radius: 8px;
+  font: 14px/1 inherit;
+  outline: none;
+  transition: border-color .2s;
+}
+.sudo-modal-form .sudo-pw-input:focus {
+  border-color: var(--warn, #ffd60a);
+}
+.sudo-modal-form .sudo-pw-submit {
+  padding: 10px 18px;
+  background: var(--warn, #ffd60a);
+  color: #000;
+  border: none;
+  border-radius: 8px;
+  font: 600 14px/1 inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: filter .15s;
+}
+.sudo-modal-form .sudo-pw-submit:hover { filter: brightness(1.1); }
+.sudo-modal-form .sudo-pw-submit:disabled { opacity: .5; cursor: default; }
+.sudo-modal-hint {
+  font-size: 11px;
+  color: var(--faint, #666);
+}
+.sudo-shake {
+  animation: sudo-shake .3s ease !important;
+}
+
 /* ===== CHAT MESSAGE QUEUE BAR ===== */
 .chat-queue-bar {
   display: none;
