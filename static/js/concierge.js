@@ -50,7 +50,7 @@
   launch.innerHTML = '💬 Setup help';
   var panel = document.createElement('div');
   panel.id = 'mc-panel';
-  panel.innerHTML = '<div id="mc-head"><b>✦ Setup assistant</b><button id="mc-min" title="Minimize">—</button><button id="mc-close" title="Close">✕</button></div>'
+  panel.innerHTML = '<div id="mc-head"><b>✦ Setup assistant</b><span id="mc-ready" style="display:none;font-size:10px;color:var(--ok,#30d158);background:color-mix(in srgb,var(--ok,#30d158) 12%,transparent);border:1px solid color-mix(in srgb,var(--ok,#30d158) 30%,transparent);border-radius:99px;padding:2px 7px;margin-left:6px" title="Open Mentor">● Mentor is ready</span><button id="mc-min" title="Minimize">—</button><button id="mc-close" title="Close">✕</button></div>'
     + '<div id="mc-log"></div>'
     + '<div id="mc-foot"><input id="mc-in" placeholder="Tell me what you want…"><button id="mc-send">Send</button></div>';
   document.body.appendChild(launch);
@@ -76,7 +76,19 @@
       }
     });
   }
-  function openP() { panel.style.display = 'flex'; launch.style.display = 'none'; try { localStorage.removeItem(CLOSED); } catch (e) {} render(); offerScreenContext(); if (!started && !busy) kickoff(); }
+  function openP() {
+    panel.style.display = 'flex'; launch.style.display = 'none';
+    try { localStorage.removeItem(CLOSED); } catch (e) {}
+    // Re-surface the ready badge if we've already announced once this session.
+    try {
+      if (sessionStorage.getItem('mc-ready-shown') === '1') {
+        var b = panel.querySelector('#mc-ready');
+        if (b) { b.style.display = 'inline-block'; b.style.cursor = 'pointer'; b.onclick = function(){ window.location.href = '/'; }; }
+      }
+    } catch (e) {}
+    render(); offerScreenContext();
+    if (!started && !busy) kickoff();
+  }
   function minP() { panel.style.display = 'none'; launch.style.display = 'flex'; }
   function closeP() { panel.style.display = 'none'; launch.style.display = 'none'; try { localStorage.setItem(CLOSED, '1'); } catch (e) {} }
   panel.querySelector('#mc-min').onclick = minP;
@@ -211,10 +223,27 @@
     if (!r || !r.ok) { bubble('assistant', (r && r.detail) || 'Something went wrong — let\'s try again.'); return; }
     if (r.reply) { ASST.push({ role: 'assistant', content: r.reply }); bubble('assistant', r.reply); save(); }
     if (r.action && r.action.type) {
-      if (r.action.type === 'done') { note('✓ Setup complete'); bubble('assistant', 'You\'re all set 🎉 — open Mentor below, or keep chatting if you want to change anything.');
-        var w = document.createElement('div'); w.className = 'mc-b mc-a'; w.style.padding = '8px';
-        w.innerHTML = '<a href="/" style="display:inline-block;background:var(--accent,#0a84ff);color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none;font-weight:600">Open Mentor →</a>';
-        log.appendChild(w); log.scrollTop = log.scrollHeight; save(); return; }
+      if (r.action.type === 'done') {
+        // Only announce ready ONCE per session — after that, just a tiny header
+        // badge so the chat doesn't fill with repeated 'You're all set' bubbles.
+        var alreadyShown = false;
+        try { alreadyShown = sessionStorage.getItem('mc-ready-shown') === '1'; } catch (e) {}
+        var badge = panel.querySelector('#mc-ready');
+        if (badge) {
+          badge.style.display = 'inline-block';
+          badge.style.cursor = 'pointer';
+          badge.onclick = function () { window.location.href = '/'; };
+        }
+        if (!alreadyShown) {
+          note('✓ Setup complete');
+          bubble('assistant', 'You\'re all set 🎉 — open Mentor below, or keep chatting if you want to change anything.');
+          var w = document.createElement('div'); w.className = 'mc-b mc-a'; w.style.padding = '8px';
+          w.innerHTML = '<a href="/" style="display:inline-block;background:var(--accent,#0a84ff);color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none;font-weight:600">Open Mentor →</a>';
+          log.appendChild(w); log.scrollTop = log.scrollHeight;
+          try { sessionStorage.setItem('mc-ready-shown', '1'); } catch (e) {}
+        }
+        save(); return;
+      }
       note('doing: ' + r.action.type + (r.action.args && r.action.args.model ? (' (' + r.action.args.model + ')') : ''));
       var result = await act(r.action); waiting = false;
       note('result: ' + String(result).slice(0, 120));

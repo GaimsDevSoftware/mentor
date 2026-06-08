@@ -1117,7 +1117,10 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
 
     <!-- Active assistant — the guide AI does setup for you (powered by the concierge above). -->
     <div id="assistant-card" style="border:1px solid var(--sep-2);border-radius:11px;padding:14px;margin:0 0 16px">
-      <div style="font-weight:600;margin-bottom:3px">💬 Or let the assistant set it up for you</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+        <span style="font-weight:600">💬 Or let the assistant set it up for you</span>
+        <a id="asst-ready" href="/" title="Open Mentor" style="display:none;font-size:10px;color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);border:1px solid color-mix(in srgb,var(--ok) 30%,transparent);border-radius:99px;padding:2px 7px;text-decoration:none">● Mentor is ready</a>
+      </div>
       <div class="why" style="margin:0 0 8px;font-size:13px">Pick your guide AI above, then just tell it what you want — it can install, download, connect and configure things for you, and you watch it happen.</div>
       <div id="asst-log" style="max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:8px"></div>
       <div class="row" style="gap:8px"><input id="asst-input" class="fld" style="flex:1" placeholder="e.g. set me up for private local coding"><button class="btn primary" id="asst-send" type="button">Send</button></div>
@@ -1340,10 +1343,20 @@ async function asstTurn(steps){
   if(!r || !r.ok){ asstBubble('assistant', (r&&r.detail)||'Something went wrong — let\'s try that again.'); return; }
   if(r.reply){ ASST.push({role:'assistant',content:r.reply}); asstBubble('assistant', r.reply); asstSave(); }
   if(r.action && r.action.type){
-    if(r.action.type==='done'){ asstNote('✓ Setup complete'); asstBubble('assistant','You\'re all set 🎉 — open Mentor below, or keep chatting if you want to change anything.');
-      const log=$('#asst-log'); if(log){ const w=document.createElement('div'); w.style.cssText='align-self:flex-start;display:flex;gap:8px;flex-wrap:wrap;margin-top:2px';
-        w.innerHTML='<a class="btn primary" href="/" style="text-decoration:none">Open Mentor →</a><a class="btn" href="/app/office" style="text-decoration:none">Meet your agents</a>';
-        log.appendChild(w); log.scrollTop=log.scrollHeight; } return; }
+    if(r.action.type==='done'){
+      // Announce once; after that just keep the small badge so we don't spam.
+      const badge=$('#asst-ready'); if(badge) badge.style.display='inline-block';
+      let shown=false; try{ shown=sessionStorage.getItem('asst-ready-shown')==='1'; }catch(e){}
+      if(!shown){
+        asstNote('✓ Setup complete');
+        asstBubble('assistant','You\'re all set 🎉 — open Mentor below, or keep chatting if you want to change anything.');
+        const log=$('#asst-log'); if(log){ const w=document.createElement('div'); w.style.cssText='align-self:flex-start;display:flex;gap:8px;flex-wrap:wrap;margin-top:2px';
+          w.innerHTML='<a class="btn primary" href="/" style="text-decoration:none">Open Mentor →</a><a class="btn" href="/app/office" style="text-decoration:none">Meet your agents</a>';
+          log.appendChild(w); log.scrollTop=log.scrollHeight; }
+        try{ sessionStorage.setItem('asst-ready-shown','1'); }catch(e){}
+      }
+      return;
+    }
     asstNote('doing: '+r.action.type+(r.action.args&&r.action.args.model?(' ('+r.action.args.model+')'):''));
     const result=await asstAct(r.action);
     asstNote('result: '+String(result).slice(0,140));
@@ -1353,6 +1366,8 @@ async function asstTurn(steps){
   } else { asstAttn(true); }  // assistant asked / is waiting — glow for the user's turn
 }
 function asstAttn(on){ const i=$('#asst-input'); if(i) i.classList.toggle('attn',!!on); }
+// Surface the ready badge on reload if we've already announced this session.
+(function(){ try{ if(sessionStorage.getItem('asst-ready-shown')==='1'){ const b=$('#asst-ready'); if(b) b.style.display='inline-block'; } }catch(e){} })();
 function asstUrgentCheck(){ j('/api/setup/role-status').then(s=>{ const c=$('#assistant-card'); if(c) c.classList.toggle('urgent', !!(s&&s.critical_missing)); }).catch(()=>{}); }
 asstUrgentCheck();
 async function asstKickoff(force){
