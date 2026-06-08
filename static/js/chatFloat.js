@@ -188,6 +188,7 @@ function _appendPopoutMsg(container, role, content, model) {
   const bodyHtml = isUser ? esc(content) : markdownModule.mdToHtml(content || '');
   div.innerHTML = `<div class="popout-msg-label">${esc(labelText)}</div><div class="popout-msg-body">${bodyHtml}</div>`;
   container.appendChild(div);
+  if (!isUser && window.hljs) div.querySelectorAll('pre code').forEach(b => window.hljs.highlightElement(b));
   return div;
 }
 
@@ -258,6 +259,7 @@ async function _popoutSend(sessionId, input, sendBtn) {
     // Finalize
     bodyEl.classList.remove('popout-streaming');
     bodyEl.innerHTML = markdownModule.mdToHtml(accum) || '<span style="opacity:.5">(empty response)</span>';
+    if (window.hljs) bodyEl.querySelectorAll('pre code').forEach(b => window.hljs.highlightElement(b));
     // Update label with model name from response
     const labelEl = aiDiv.querySelector('.popout-msg-label');
     if (labelEl && accum) {

@@ -55,6 +55,7 @@ function _bub(role, html, cls) {
   b.className = 'sc-bub ' + (cls || role);
   b.innerHTML = `<div class="sc-lbl">${role === 'user' ? 'You' : 'Mentor'}</div>${html}`;
   log.appendChild(b);
+  if (window.hljs) b.querySelectorAll('pre code').forEach(el => window.hljs.highlightElement(el));
   log.scrollTop = log.scrollHeight;
   return b;
 }
