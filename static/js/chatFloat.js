@@ -35,9 +35,6 @@ function _injectStyle() {
   height: 70vh;
   min-height: 320px;
   min-width: 320px;
-  top: 60px;
-  right: 60px;
-  left: auto !important;
   margin: 0 !important;
   padding: 0 !important;
   border-radius: 14px;
@@ -106,8 +103,11 @@ function doFloat() {
   const ph = _createPlaceholder();
   container.parentElement.insertBefore(ph, container);
 
-  // Float
+  // Float — set initial position via inline style so drag can override freely
   container.classList.add('chat-floated');
+  container.style.top = '60px';
+  container.style.left = (window.innerWidth - 560) + 'px';
+  container.style.right = '';
 
   // Make draggable via the top bar
   if (topBar) {
