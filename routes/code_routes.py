@@ -87,7 +87,44 @@ def setup_code_routes() -> APIRouter:
     @router.get("/api/code/models")
     async def models(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         from src.code_edit import list_local_models
-        return {"models": await list_local_models(), "current": _get("aider_model", "")}
+        out = await list_local_models()
+        # Include cloud/subscription models from configured endpoints
+        try:
+            from core.database import ModelEndpoint, SessionLocal
+            import json as _json
+            db = SessionLocal()
+            try:
+                for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+                    cached = _json.loads(ep.cached_models or "[]") if ep.cached_models else []
+                    pinned = _json.loads(ep.pinned_models or "[]") if ep.pinned_models else []
+                    for mid in cached + pinned:
+                        if mid and mid not in out:
+                            out.append(mid)
+            finally:
+                db.close()
+        except Exception:
+            pass
+        # Include models from cookbook providers (OpenRouter, OpenCode, etc.)
+        try:
+            from src import plugin_system
+            for prov in plugin_system.get_cookbook_providers():
+                try:
+                    cat = prov.catalog() if hasattr(prov, "catalog") else []
+                except Exception:
+                    cat = []
+                for m in cat:
+                    if not isinstance(m, dict) or not m.get("remote"):
+                        continue
+                    mid = m.get("model", "")
+                    if not mid:
+                        continue
+                    src = (m.get("source") or m.get("endpoint") or "").lower().replace(" ", "")
+                    label = f"openrouter/{mid}" if "openrouter" in src else (f"opencode/{mid}" if "opencode" in src or "zen" in src else mid)
+                    if label not in out:
+                        out.append(label)
+        except Exception:
+            pass
+        return {"models": out, "current": _get("aider_model", "")}
 
     @router.post("/api/code/new-project")
     async def new_project(payload: Dict[str, Any] = Body(...), _admin: str = Depends(require_admin)) -> Dict[str, Any]:

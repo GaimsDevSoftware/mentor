@@ -176,9 +176,41 @@ async def run_edit(instruction: str, files, project: str, model: str,
     _stage("Aider is editing the code…")
     cmd = [_bin, "--model", model, "--yes-always", "--no-auto-commits",
            "--no-show-model-warnings", "--message", instruction] + safe_files
+
+    # Inject API keys from configured endpoints so Aider/litellm can
+    # reach cloud models (OpenRouter, OpenAI-compat, OpenCode, etc.)
+    env = dict(os.environ)
+    try:
+        from core.database import ModelEndpoint, SessionLocal
+        import json as _json
+        db = SessionLocal()
+        try:
+            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+                if not ep.api_key:
+                    continue
+                url = (ep.base_url or "").lower()
+                cached = _json.loads(ep.cached_models or "[]") if ep.cached_models else []
+                pinned = _json.loads(ep.pinned_models or "[]") if ep.pinned_models else []
+                has_model = model in cached or model in pinned or any(model.split("/", 1)[-1] in m for m in cached + pinned)
+                if not has_model:
+                    continue
+                if "openrouter" in url:
+                    env["OPENROUTER_API_KEY"] = ep.api_key
+                elif "openai.com" in url:
+                    env["OPENAI_API_KEY"] = ep.api_key
+                elif "anthropic" in url:
+                    env["ANTHROPIC_API_KEY"] = ep.api_key
+                else:
+                    env["OPENAI_API_KEY"] = ep.api_key
+                    env["OPENAI_API_BASE"] = ep.base_url
+        finally:
+            db.close()
+    except Exception:
+        pass
+
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, cwd=project,
+            *cmd, cwd=project, env=env,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         lines = []
         try:
