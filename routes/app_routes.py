@@ -446,7 +446,7 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
     <div id="rec-tiers" class="row" style="gap:6px;flex-wrap:wrap">
       <button class="btn mini rec-tier on" data-tier="local" type="button" title="Private — runs on your machine">🖥 Local (private)</button>
       <button class="btn mini rec-tier on" data-tier="free" type="button" title="Free cloud tier (gratis nivå)">💚 Free cloud</button>
-      <button class="btn mini rec-tier" data-tier="subscription" type="button" title="ChatGPT / Claude / OpenCode Zen subscription">★ Subscription</button>
+      <button class="btn mini rec-tier on" data-tier="subscription" type="button" title="OpenCode Go / ChatGPT Plus / Claude Max subscription">★ Subscription</button>
       <button class="btn mini rec-tier" data-tier="paid" type="button" title="Per-request paid API (costs money)">$ Paid API</button>
     </div>
   </div>
