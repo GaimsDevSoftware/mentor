@@ -153,8 +153,11 @@ def _diagnostic():
     c = _STATS["compressed_chars"]
     saved = o - c
     pct = (saved / o * 100) if o else 0
+    ai = _BY_TOOL.get("ai_response", {})
+    ai_saved = ai.get("orig", 0) - ai.get("comp", 0)
+    ai_part = f", AI responses: ~{cc.est_tokens(ai_saved):,} tok" if ai_saved > 0 else ""
     detail = (f"{_STATS['calls']} compressions, ~{cc.est_tokens(saved):,} tokens saved "
-              f"({pct:.0f}% on {o:,} chars), level={_level()}")
+              f"({pct:.0f}% on {o:,} chars), level={_level()}{ai_part}")
     status = "ok" if _enabled() else "warn"
     hint = "" if _enabled() else "caveman_enabled is false — no compression happening"
     return {"name": "savings", "status": status, "detail": detail, "hint": hint}
