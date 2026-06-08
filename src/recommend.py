@@ -29,9 +29,9 @@ def _get(key: str, default: Any) -> Any:
 def _tier_of(m: Dict[str, Any]) -> str:
     """Classify a candidate's billing tier: local/free/subscription/paid.
     Mirrors routes.models_catalog_routes.classify so the UI filter and the AI's
-    candidate pool agree on what each tier means. OpenCode is split: Zen-free
-    pool → free, Go subscription pool (GLM/Kimi/Qwen3.x/DeepSeek/MiniMax/MiMo)
-    → subscription, Claude/GPT/Gemini/Grok via Zen → paid."""
+    candidate pool agree. OpenCode split: Zen-free → free, Go pool → subscription,
+    Claude/GPT/Gemini/Grok via Zen → paid. Free-key providers (Groq/Cerebras/
+    Gemini/Mistral) → free. Codex/Claude proxies → subscription."""
     if not m.get("remote"):
         return "local"
     src = str(m.get("source") or m.get("endpoint") or "").lower()
@@ -43,9 +43,13 @@ def _tier_of(m: Dict[str, Any]) -> str:
                                      "minimax", "deepseek")):
             return "subscription"
         return "free"
-    if any(k in src for k in ("codex", "claude", "chatgpt")):
+    if any(k in src for k in ("codex", "claude", "chatgpt")) or "ollama.com" in src:
         return "subscription"
-    if model.endswith(":free") or ("openrouter" in src and ":free" in model):
+    if any(k in src for k in ("groq", "cerebras", "mistral")) or "gemini" in src or "generativelanguage" in src:
+        return "free"
+    if "openrouter" in src:
+        return "free" if model.endswith(":free") or ":free" in model else "paid"
+    if model.endswith(":free"):
         return "free"
     return "paid"
 

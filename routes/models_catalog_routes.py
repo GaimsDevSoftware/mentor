@@ -25,6 +25,12 @@ def classify(name: str, base: str, model_id: str):
     n = (name or "").lower()
     b = (base or "").lower()
     m = (model_id or "").lower()
+    # Subscription proxies (Codex/Claude) bind to localhost but route to a real
+    # paid account — check BEFORE the local-host shortcut so we don't mislabel
+    # them as a local-free model on your machine.
+    if (any(k in n for k in ("chatgpt", "codex", "claude code (oauth)", "claude-code"))
+            or "8750" in b or "8775" in b):
+        return "cloud", "subscription"
     local = any(h in b for h in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1"))
     if local:
         return "local", "free"
@@ -36,11 +42,21 @@ def classify(name: str, base: str, model_id: str):
                                  "minimax", "deepseek")):
             return "cloud", "subscription"   # OpenCode Go
         return "cloud", "free"               # Zen free tier
-    # ChatGPT / Codex / Claude proxies are personal-subscription channels.
-    if (any(k in n for k in ("chatgpt", "codex", "claude"))
-            or "ollama.com" in b):
+    # Ollama Cloud is a subscription/pay-as-you-go service.
+    if "ollama.com" in b:
         return "cloud", "subscription"
-    if m.endswith(":free") or ("openrouter" in b and ":free" in m):
+    # Free-key tier providers — the user mints a free key (no card), usage-limited.
+    # We default these to "free" because that's how Mentor's setup wizard advertises
+    # them; if a user uses a paid plan on one of these, they can hide it manually.
+    if any(k in n for k in ("groq", "cerebras")):
+        return "cloud", "free"
+    if "openrouter" in b or "openrouter" in n:
+        return "cloud", "free" if m.endswith(":free") or ":free" in m else "paid"
+    if "google gemini" in n or "generativelanguage.googleapis" in b or "gemini" in n:
+        return "cloud", "free"
+    if "mistral" in n and "api.mistral.ai" in b:
+        return "cloud", "free"
+    if m.endswith(":free"):
         return "cloud", "free"
     return "cloud", "paid"
 
