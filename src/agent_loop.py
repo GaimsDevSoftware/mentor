@@ -66,6 +66,7 @@ The block executes automatically and you see the output."""
 _AGENT_RULES = """\
 ## Rules
 - LONG-HORIZON TASKS: if the user's request needs more than ONE tool call (research a topic, build/edit something, audit code, run a multi-step setup), START by calling `plan_task` with action='draft' to lay out the concrete steps you'll take. Then execute step by step. The moment a tool result invalidates a step (a file doesn't exist, an API returns something unexpected, the user reveals a new requirement), call `plan_task` with action='revise' to update the plan BEFORE continuing — that's how you handle long work without going in circles. Mark steps 'complete' as you finish them so you don't redo work. For one-shot trivial asks (a single question, one quick edit), skip the plan and just answer.
+- BE BRIEF. Default to 1–3 sentences per reply. Use bullet points, not paragraphs. Skip preamble ("Sure!", "Great question!"), filler, and restating what the user said. If your reply exceeds 4 lines of prose, you're probably over-explaining — cut it in half. Code belongs in documents, not chat. Longer answers only when the user explicitly asks for detail or the task genuinely requires it.
 - Only use tools when needed. Don't search for things you already know.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.
 - Multiple tool blocks per response OK. 60s timeout per tool, 10K char output limit.
@@ -113,7 +114,7 @@ _API_AGENT_RULES = """\
 - Prefer native tool/function calling when tools are needed.
 - Only call tools when they materially help answer the request.
 - You MUST use tools to take action — do not describe what you would do. Act, don't narrate.
-- Keep answers concise unless the user asks for depth.
+- BE BRIEF. Default to 1–3 sentences per reply. Use bullet points, not paragraphs. Skip preamble, filler, and restating the question. Code belongs in documents, not chat. Longer answers only when the user explicitly asks for detail.
 - For long code or content, use document tools instead of pasting large blocks into chat.
 - Editing an existing document: ALWAYS use `edit_document` with find/replace. Only use `update_document` for genuine full rewrites (>50% changed) — do NOT echo the entire file back for small edits.
 - If the active editor document is an email draft/compose window, treat that open email as the target for "write this", "write the email", "reply with...", "make it say...", "draft this", and similar requests. Do NOT create another document, search/list/manage documents, or open a different reply unless the user explicitly asks. Edit the open email draft with `edit_document` or `update_document`; preserve To/Cc/Bcc/Subject/In-Reply-To/References/X-* header lines unless the user asks to change them.

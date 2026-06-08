@@ -48,6 +48,16 @@ _FILLER = [
     (re.compile(r"\bwith (?:regard|respect) to\b", re.I), "about"),
     (re.compile(r"\bin conclusion,?\b", re.I), ""),
     (re.compile(r"\bneedless to say,?\b", re.I), ""),
+    # AI-typical filler
+    (re.compile(r"\b(?:I'd be |I am |I'm )?happy to help(?: you)?(?: with that)?[.!]?\s*", re.I), ""),
+    (re.compile(r"\b(?:Sure|Of course|Absolutely|Certainly|Great|Perfect)[,!]?\s+(?:I (?:can|will|'ll)|[Ll]et me)\b", re.I), ""),
+    (re.compile(r"\b(?:Here(?:'s| is) (?:a |the |my )?(?:summary|breakdown|overview|explanation|answer|response|result)(?:\s+(?:of|for) (?:that|this|you))?)\s*[:—–-]?\s*", re.I), ""),
+    (re.compile(r"\bI hope (?:this|that) helps[.!]?\s*", re.I), ""),
+    (re.compile(r"\b(?:Let me know|Feel free to (?:ask|reach out|let me know)) if you (?:have|need) (?:any )?(?:more |further |other )?questions[.!]?\s*", re.I), ""),
+    (re.compile(r"\bAs (?:an AI|a language model|an assistant)\b[^.]*\.\s*", re.I), ""),
+    (re.compile(r"\bTo (?:summarize|sum up|recap)[,:]?\s*", re.I), ""),
+    (re.compile(r"\b(?:It'?s? )?(?:also )?worth (?:noting|mentioning|pointing out) that\b", re.I), ""),
+    (re.compile(r"\b(?:Basically|Essentially|Fundamentally|In essence),?\s+", re.I), ""),
 ]
 # Whole-line web boilerplate (nav / cookie / footer cruft).
 _WEB_CRUFT = re.compile(

@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 # Permission strings ↔ surfaces. A plugin may only call register_* for surfaces
 # it declared in manifest["permissions"].
 _VALID_PERMISSIONS = {"tools", "hooks", "cookbook", "services", "routes"}
-_VALID_HOOK_EVENTS = {"pre_tool", "post_tool", "build_prompt", "diagnostic", "stats"}
+_VALID_HOOK_EVENTS = {"pre_tool", "post_tool", "build_prompt", "post_response", "diagnostic", "stats"}
 
 
 # ── registry state ───────────────────────────────────────────────────────────
@@ -120,6 +120,8 @@ class PluginAPI:
           • pre_tool(tool, content, owner) -> None | dict   (dict result = veto/block)
           • post_tool(tool, content, result) -> None
           • build_prompt(prompt, context) -> str | None     (return modifies prompt)
+          • post_response(content) -> str | None            (compress/transform AI response
+              before it enters the history context window; return modifies content)
           • diagnostic() -> dict | list[dict]               (self-check for the debugger:
               {name, status: ok|warn|error, detail, hint})
         """
@@ -445,6 +447,19 @@ def run_diagnostics() -> List[Dict[str, Any]]:
                         "status": "error", "detail": f"diagnostic hook raised: {e}",
                         "hint": "fix the plugin's diagnostic() function"})
     return out
+
+
+def apply_post_response_hooks(content: str) -> str:
+    """Chain post_response hooks; each may return compressed/transformed content.
+    Used to compress verbose AI responses before they enter the context window."""
+    for h in _HOOKS.get("post_response", []):
+        try:
+            out = h["fn"](content)
+            if isinstance(out, str) and out:
+                content = out
+        except Exception as e:
+            logger.debug("plugin %s post_response hook error: %s", h["plugin"], e)
+    return content
 
 
 def apply_prompt_hooks(prompt: str, context: Optional[Dict[str, Any]] = None) -> str:

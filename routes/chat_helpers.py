@@ -786,6 +786,15 @@ def save_assistant_response(
         _content = _think_info["reply"]
     else:
         _content = full_response
+    # Run post_response hooks (compression, etc.) on the content that enters
+    # the context window. The original full_response was already streamed to
+    # the user; this only affects what future turns see in history.
+    try:
+        from src.plugin_system import apply_post_response_hooks
+        _content = apply_post_response_hooks(_content)
+    except Exception:
+        pass
+
     sess.add_message(ChatMessage("assistant", _content, metadata=md))
 
     if not incognito:

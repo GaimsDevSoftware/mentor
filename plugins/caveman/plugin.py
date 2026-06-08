@@ -118,6 +118,25 @@ def _post_tool(tool, content, result):
                 _record(o, c, tool=tool)
 
 
+def _post_response(content):
+    """Compress verbose AI responses before they enter the session history.
+
+    The user sees the full original (already streamed). This only affects
+    what future turns see in the context window, saving tokens on every
+    subsequent round. Protected: code blocks, URLs, inline code.
+    """
+    if not _enabled():
+        return content
+    if not isinstance(content, str) or len(content) < _min_chars():
+        return content
+    level = _level()
+    comp, o, c = cc.compress(content, level)
+    if c < o:
+        _record(o, c, tool="ai_response")
+        return comp
+    return content
+
+
 def _prompt_hook(prompt, context):
     """Opt-in, SAFE minimal compression of the system prompt (whitespace only)."""
     if not _enabled() or not _api.get_setting("caveman_compress_system_prompt", False):
@@ -218,6 +237,7 @@ def register(api):
     _load_stats()
 
     api.register_hook("post_tool", _post_tool)
+    api.register_hook("post_response", _post_response)
     api.register_hook("build_prompt", _prompt_hook)
     api.register_hook("diagnostic", _diagnostic)
     api.register_hook("stats", _stats)
