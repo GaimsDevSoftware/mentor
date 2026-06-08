@@ -335,6 +335,7 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
  .btn:hover{ background:var(--tint-2); border-color:var(--brass); transform:translateY(-1px) }
  .btn:disabled{ opacity:.5; cursor:default; transform:none }
  .btn.mini{ padding:5px 10px; font-size:12px; border-radius:8px }
+ .btn.mini.rec-tier{ opacity:.55 } .btn.mini.rec-tier.on{ opacity:1; border-color:var(--brass); color:var(--brass); background:color-mix(in srgb,var(--brass) 8%,transparent) }
  input.fld, textarea.fld{ width:100%; background:var(--tint); color:var(--txt); border:1px solid var(--sep-2);
    border-radius:9px; padding:9px 11px; font:13px/1.4 inherit; outline:none; transition:border-color .15s }
  input.fld:focus, textarea.fld:focus{ border-color:var(--brass) }
@@ -437,10 +438,23 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
   </details>
 </div>
 
-<div class="sec-title">Recommended roles <button class="help-btn" data-topic="The 'Recommended roles' feature — the teacher model assigns the best available model to each role (coder, planner, vision, …)">?</button></div>
+<div class="sec-title">Recommended roles <button class="help-btn" data-topic="The 'Recommended roles' feature — the teacher model assigns the best available model to each role (coder, planner, vision, …) within the tiers you allow, and gives you one-click actions to download/connect/assign each one.">?</button></div>
 <div class="card">
-  <div class="row"><span class="grow muted" style="font-size:13px">Let the teacher model pick the best model for each role (coder, planner, vision…) from what you actually have.</span>
-    <button class="btn" id="rec-btn">Recommend roles</button></div>
+  <div class="muted" style="font-size:13px;margin-bottom:8px">Tell me what kind of models you want considered, and I'll pick the best one per role from those — with one-click actions to make each one ready.</div>
+  <div style="margin:6px 0 8px">
+    <div class="faint" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Which tiers to consider</div>
+    <div id="rec-tiers" class="row" style="gap:6px;flex-wrap:wrap">
+      <button class="btn mini rec-tier on" data-tier="local" type="button" title="Private — runs on your machine">🖥 Local (private)</button>
+      <button class="btn mini rec-tier on" data-tier="free" type="button" title="Free cloud tier (gratis nivå)">💚 Free cloud</button>
+      <button class="btn mini rec-tier" data-tier="subscription" type="button" title="ChatGPT / Claude / OpenCode Zen subscription">★ Subscription</button>
+      <button class="btn mini rec-tier" data-tier="paid" type="button" title="Per-request paid API (costs money)">$ Paid API</button>
+    </div>
+  </div>
+  <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="rec-ready"> Only models that work right now (no extra setup)</label>
+    <span style="flex:1"></span>
+    <button class="btn" id="rec-btn">✨ Recommend roles</button>
+  </div>
   <div id="rec" style="margin-top:10px"></div>
 </div>
 
@@ -533,25 +547,72 @@ function pollTasks(){ j('/api/cookbook/tasks/status').then(renderTasks)
 pollTasks(); setInterval(pollTasks,3000);
 
 // 3) Recommend roles (on demand)
+// Tier picker — toggles the chips on/off (multi-select). At least one must be on.
+document.querySelectorAll('.rec-tier').forEach(b=>b.addEventListener('click',()=>{
+  b.classList.toggle('on');
+  if(!document.querySelectorAll('.rec-tier.on').length) b.classList.add('on'); // never zero
+}));
+// Map a "role" label from the AI to an actual Mentor role-setting key, so the
+// "Assign as <role>" button writes to the right place.
+const REC_ROLE_KEY={
+  coder:'aider_model', planner:'default_model', vision:'vision_model',
+  cheap_utility:'utility_model', chat_generalist:'default_model',
+  embeddings:'', // not a chat-model setting; skip "assign"
+};
+async function _assignRole(role, model, endpoint, btn){
+  const key=REC_ROLE_KEY[role]; if(!key){ btn.textContent='—'; return; }
+  const spec=endpoint && endpoint!=='local' ? (model+'@'+endpoint) : model;
+  btn.disabled=true; btn.textContent='Assigning…';
+  try{ await j('/api/manage/setting',{method:'POST',body:JSON.stringify({key:key,value:spec})}); btn.textContent='Assigned ✓'; }
+  catch(e){ btn.textContent='failed'; btn.disabled=false; }
+}
+async function _downloadAndAssign(role, model, btn){
+  btn.disabled=true; btn.textContent='Downloading…';
+  try{ await j('/api/model/download',{method:'POST',body:JSON.stringify({repo_id:model, platform:'linux'})}); btn.textContent='Started — see Running now ↑'; setTimeout(()=>{ pollTasks(); _assignRole(role, model, 'local', btn); }, 2000); }
+  catch(e){ btn.textContent='download failed'; btn.disabled=false; }
+}
 $('#rec-btn').addEventListener('click',async()=>{
-  const btn=$('#rec-btn'), out=$('#rec'); btn.disabled=true; btn.textContent='Asking AI…';
-  out.innerHTML='<span class="muted" style="font-size:13px">The teacher model is choosing the best model per role…</span>';
+  const btn=$('#rec-btn'), out=$('#rec');
+  const tiers=Array.from(document.querySelectorAll('.rec-tier.on')).map(b=>b.dataset.tier);
+  const readyOnly=$('#rec-ready').checked;
+  btn.disabled=true; btn.textContent='Asking AI…';
+  out.innerHTML='<span class="muted" style="font-size:13px">The teacher model is choosing the best model per role within your preferences…</span>';
   try{
-    const r=await j('/api/cookbook/recommend',{method:'POST'});
+    const url='/api/cookbook/recommend?tiers='+encodeURIComponent(tiers.join(','))+'&ready_only='+(readyOnly?'true':'false');
+    const r=await j(url,{method:'POST'});
     if(!r.ok){ out.innerHTML=`<span class="muted" style="font-size:13px">${esc(r.detail||'No recommendation available.')}</span>`; }
     else{
       const recs=r.recommendations||{};
-      const rows=Array.isArray(recs)
-        ? recs.map(x=>[x.role,x])
-        : Object.keys(recs).map(k=>[k,recs[k]]);
-      out.innerHTML = rows.length? rows.map(([role,x])=>
-        `<div class="rec"><span class="role">${esc(role)}</span> → <b>${esc(x.model||'')}</b>`
-        +`${x.source&&x.source!=='local'?` <span class="badge">${esc(x.source)}</span>`:''}`
-        +`${x.why?`<div class="why">${esc(x.why)}</div>`:''}</div>`).join('')
-        : '<span class="muted" style="font-size:13px">No roles suggested.</span>';
+      const rows=Array.isArray(recs)? recs.map(x=>[x.role,x]) : Object.keys(recs).map(k=>[k,recs[k]]);
+      if(!rows.length){ out.innerHTML='<span class="muted" style="font-size:13px">No roles suggested with these filters — try widening the tier choice or turning off "ready only".</span>'; }
+      else {
+        out.innerHTML=rows.map(([role,x])=>{
+          const remote=!!x.remote, tier=x.tier||(remote?'cloud':'local');
+          const tierC=tier==='free'?'var(--ok)':tier==='subscription'?'var(--cyan)':tier==='paid'?'var(--warn)':'var(--brass)';
+          const tierTag='<span style="font-size:9px;border:1px solid color-mix(in srgb,'+tierC+' 45%,transparent);color:'+tierC+';border-radius:4px;padding:1px 5px;text-transform:uppercase;margin-left:6px">'+esc(tier)+'</span>';
+          const src=x.endpoint||x.source||(remote?'cloud':'local');
+          const ready=x.ready!==false;
+          const canAssign=!!REC_ROLE_KEY[role];
+          const actions=[];
+          if(remote && !ready) actions.push('<button class="btn mini" data-rec-connect="1">Connect '+esc(src)+'</button>');
+          if(!remote && !ready) actions.push('<button class="btn mini" data-rec-dl="'+esc(x.model)+'" data-rec-role="'+esc(role)+'">Download &amp; assign</button>');
+          if(canAssign && ready) actions.push('<button class="btn mini" data-rec-assign="1" data-rec-role="'+esc(role)+'" data-rec-model="'+esc(x.model)+'" data-rec-ep="'+esc(remote?src:'local')+'">Assign as '+esc(role)+'</button>');
+          if(!canAssign) actions.push('<span class="faint" style="font-size:11px">(no direct app role — used internally)</span>');
+          return '<div class="rec" style="border-bottom:1px solid var(--sep);padding:10px 0">'
+            +'<div><span class="role" style="font-weight:600">'+esc(role)+'</span> → <b>'+esc(x.model||'')+'</b>'+tierTag
+            +' <span class="muted" style="font-size:11px">· '+esc(src)+(ready?'':' · needs setup')+'</span></div>'
+            +(x.why?'<div class="why muted" style="font-size:12px;margin-top:3px">'+esc(x.why)+'</div>':'')
+            +'<div class="row" style="gap:6px;margin-top:6px">'+actions.join('')+'</div></div>';
+        }).join('')
+        + '<div class="muted" style="font-size:11px;margin-top:10px">Scope: '+esc(r.scope||'both')+' · considered '+(r.counts?r.counts.considered:0)+' candidates</div>';
+        // wire row buttons
+        out.querySelectorAll('[data-rec-assign]').forEach(b=>b.onclick=()=>_assignRole(b.dataset.recRole, b.dataset.recModel, b.dataset.recEp, b));
+        out.querySelectorAll('[data-rec-dl]').forEach(b=>b.onclick=()=>_downloadAndAssign(b.dataset.recRole, b.dataset.recDl, b));
+        out.querySelectorAll('[data-rec-connect]').forEach(b=>b.onclick=()=>{ window.location.href='/manage#connect'; });
+      }
     }
   }catch(e){ out.innerHTML=`<span class="muted" style="font-size:13px">${e===401?'Admin only.':'Recommendation failed.'}</span>`; }
-  btn.disabled=false; btn.textContent='Recommend roles';
+  btn.disabled=false; btn.textContent='✨ Recommend roles';
 });
 
 // 4) Fits this machine — RESERVE headroom for the OS + browser (they run
@@ -1264,7 +1325,7 @@ async function asstAct(a){
     if(t==='serve_local'){ const model=args.model||''; if(!model) return 'no model given'; await j('/api/model/serve',{method:'POST',body:JSON.stringify({repo_id:model,cmd:'ollama run '+String(model).split('/').pop().toLowerCase(),platform:'linux'})});
       return await _poll('/api/cookbook/tasks/status', s=>((s&&s.tasks)||[]).some(x=>['ready','completed'].includes((x.status||'').toLowerCase()))?('serving '+model+' ✓'):undefined, null, 30); }
     if(t==='set_role'){ const role=args.role, spec=args.spec; if(!role||!spec) return 'missing role/spec'; await fetch('/api/manage/setting',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:role,value:spec})}); return 'set '+role+' = '+spec; }
-    if(t==='auto_roles'){ const r=await j('/api/setup/auto-roles',{method:'POST'}); if(!r.ok) return r.error||'could not auto-fill roles'; const a=r.assigned||{}; const fb=r.fallbacks||{}; const nfb=Object.values(fb).reduce((n,xs)=>n+(xs||[]).length,0); return 'roles filled — '+Object.keys(a).map(k=>k+'='+a[k]).join(', ')+(r.vision?' · vision ✓':' · no vision')+' · '+nfb+' fallbacks across '+(r.source_count||0)+' source(s).'+(r.note?' '+r.note:''); }
+    if(t==='auto_roles'){ const body=JSON.stringify({tiers:(args.tiers||null)}); const r=await j('/api/setup/auto-roles',{method:'POST',body:body}); if(!r.ok) return r.error||'could not auto-fill roles'; const a=r.assigned||{}; const fb=r.fallbacks||{}; const nfb=Object.values(fb).reduce((n,xs)=>n+(xs||[]).length,0); return 'roles filled — '+Object.keys(a).map(k=>k+'='+a[k]).join(', ')+(r.vision?' · vision ✓':' · no vision')+' · '+nfb+' fallbacks across '+(r.source_count||0)+' source(s).'+(r.note?' '+r.note:''); }
     if(t==='open_concierge'){ const el=$('#cg-tiers'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); return 'opened the guide-AI / key picker for the user'; }
     return 'unknown action: '+t;
   }catch(e){ return 'action error: '+e; }

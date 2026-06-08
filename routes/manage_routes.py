@@ -777,7 +777,8 @@ def setup_manage_routes() -> APIRouter:
             "serve_local {\"model\":\"<name>\"}; "
             "set_role {\"role\":\"default_model|aider_model|research_model|vision_model\",\"spec\":\"model@endpoint\"}; "
             "auto_roles (fill EVERY role automatically from connected models — default, utility, research, "
-            "and vision-for-images — and report what got assigned); "
+            "and vision-for-images — and report what got assigned; OPTIONAL args.tiers=[\"local\",\"free\","
+            "\"subscription\",\"paid\"] to honor the user's stated preference, e.g. only-local or no-paid); "
             "open_concierge (scroll user to the key/guide picker); done (setup complete).\n"
             "IMPORTANT — unfilled roles: if any important role is empty (especially the default model or the "
             "vision model for images), proactively raise it and ASK the user how they'd like to handle it: "
@@ -1124,15 +1125,23 @@ def setup_manage_routes() -> APIRouter:
         return _helper_state
 
     @router.post("/api/setup/auto-roles")
-    async def auto_roles(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+    async def auto_roles(payload: Dict[str, Any] = Body(default={}),
+                         _admin: str = Depends(require_admin)) -> Dict[str, Any]:
         """Fill EVERY model role from the connected models — default, utility, research,
         vision — AND a smart fallback chain per role using models from DIFFERENT endpoints
         (different usage pools), so when a free cloud source hits its limit the next
         attempt doesn't hit the same wall. Picks a coder too. Warns if only one source
-        is available so the user can connect a second free source."""
+        is available so the user can connect a second free source.
+
+        Optional tiers filter (the user's preference): a list of any subset of
+        local/free/subscription/paid — only candidates whose classified tier matches
+        will be picked. The concierge AI passes this when the user has stated a
+        preference, so it never assigns a paid model to a 'private only' user."""
         import json as _json
         import re as _re
         from core.database import SessionLocal, ModelEndpoint
+        from routes.models_catalog_routes import classify as _classify_tier
+        tier_set = {str(t).lower() for t in (payload.get("tiers") or []) if t}
         cands = []
         endpoints = set()
         db = SessionLocal()
@@ -1146,11 +1155,16 @@ def setup_manage_routes() -> APIRouter:
                 if ms:
                     endpoints.add(e.name)
                 for mn in ms:
+                    _, tier = _classify_tier(e.name, e.base_url or "", mn)
+                    if tier_set and tier not in tier_set:
+                        continue
                     cands.append({"spec": "%s@%s" % (mn, e.name), "ep": e.name,
-                                  "n": str(mn).lower(), "local": local})
+                                  "n": str(mn).lower(), "local": local, "tier": tier})
         finally:
             db.close()
         if not cands:
+            if tier_set:
+                return {"ok": False, "error": "No connected models match your tier preference (" + ", ".join(sorted(tier_set)) + "). Either widen the tiers or connect a source of that type first."}
             return {"ok": False, "error": "No models connected yet — connect a model first, then I'll fill the roles."}
 
         VIS = r"vision|vl\b|llava|gpt-4o|gpt-4\.|gpt-5|gemini|claude-3|claude-4|claude-opus|claude-sonnet|pixtral|internvl|qwen.*vl|llama-3\.2-(11|90)b"

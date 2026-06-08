@@ -26,6 +26,22 @@ def _get(key: str, default: Any) -> Any:
         return default
 
 
+def _tier_of(m: Dict[str, Any]) -> str:
+    """Classify a candidate's billing tier: local/free/subscription/paid.
+    Same heuristics as routes/models_catalog_routes.classify so the UI filter
+    and the AI's candidate pool agree on what 'Free' / 'Paid' / 'Subscription'
+    actually mean."""
+    if not m.get("remote"):
+        return "local"
+    src = str(m.get("source") or m.get("endpoint") or "").lower()
+    model = str(m.get("model") or "").lower()
+    if any(k in src for k in ("opencode", "zen", "codex", "claude", "chatgpt")):
+        return "subscription"
+    if model.endswith(":free") or ("openrouter" in src and ":free" in model):
+        return "free"
+    return "paid"
+
+
 def _candidates(scope: str):
     from src import plugin_system
     local: List[Dict[str, Any]] = []
@@ -38,6 +54,7 @@ def _candidates(scope: str):
         for m in cat:
             if not isinstance(m, dict) or not m.get("model"):
                 continue
+            m["tier"] = _tier_of(m)
             (remote if m.get("remote") else local).append(m)
     pool: List[Dict[str, Any]] = []
     if scope in ("local", "both"):
@@ -47,33 +64,49 @@ def _candidates(scope: str):
     return pool, len(local), len(remote)
 
 
-async def recommend_roles(scope: Optional[str] = None) -> Dict[str, Any]:
+async def recommend_roles(scope: Optional[str] = None,
+                          tiers: Optional[List[str]] = None,
+                          ready_only: bool = False) -> Dict[str, Any]:
     scope = (scope or _get("recommend_scope", "both") or "both").lower()
     if scope not in ("local", "sources", "both"):
         scope = "both"
     pool, n_local, n_remote = _candidates(scope)
+    # Filter by the user's preference (which tiers they want considered) — so the
+    # AI only sees candidates that match what the user actually wants to pay for.
+    tier_set = {t.lower() for t in (tiers or []) if t}
+    if tier_set:
+        pool = [m for m in pool if m.get("tier") in tier_set]
+    # Ready-only = the candidate is already usable right now (local models that are
+    # cached/served, or cloud endpoints that are signed in / have a key). Providers
+    # mark their entries with `ready=True` when applicable; default True for safety
+    # so providers without the field still surface.
+    if ready_only:
+        pool = [m for m in pool if m.get("ready", True)]
     if not pool:
         return {"ok": False, "scope": scope,
-                "detail": f"no candidate models for scope '{scope}' — download local models "
-                          f"and/or log in to a source (e.g. OpenCode Zen) first."}
+                "detail": ("no candidate models match your filters — try widening the tier choice, "
+                           "turn off 'ready only', or connect a source first.")}
 
     spec = (_get("improve_teacher_model", "") or _get("teacher_model", "") or "").strip()
     if not spec:
         return {"ok": False, "scope": scope, "detail": "no teacher model configured for recommendations",
-                "candidates": [m.get("model") for m in pool]}
+                "candidates": [{"model": m.get("model"), "tier": m.get("tier"),
+                                "source": m.get("source", m.get("endpoint", "?")),
+                                "remote": bool(m.get("remote"))} for m in pool]}
 
     lines = []
     for m in pool:
+        tier = m.get("tier", "?")
         if m.get("remote"):
-            lines.append(f"- {m['model']} [REMOTE/cloud via {m.get('source', m.get('endpoint','?'))} "
-                         f"— quality/escalation tier, no local VRAM]")
+            lines.append(f"- {m['model']} [REMOTE/{tier} via {m.get('source', m.get('endpoint','?'))} "
+                         f"— no local VRAM]")
         else:
             extra = []
             if m.get("target_node"):
                 extra.append(f"node={m['target_node']}")
             if m.get("vram_gb"):
                 extra.append(f"~{m['vram_gb']}GB VRAM")
-            lines.append(f"- {m['model']} [LOCAL {' '.join(extra)}]")
+            lines.append(f"- {m['model']} [LOCAL/{tier} {' '.join(extra)}]")
     try:
         from src import fleet
         machine_note = (
@@ -113,6 +146,17 @@ async def recommend_roles(scope: Optional[str] = None) -> Dict[str, Any]:
         rec = json.loads(m.group(1)) if m else {}
     except Exception:
         rec = {}
+    # Enrich each recommendation with the candidate's tier + ready flag so the UI
+    # can render the right action buttons (Download / Get key / Assign).
+    by_model = {str(m.get("model")): m for m in pool}
+    for role, info in (rec or {}).items():
+        if isinstance(info, dict):
+            m = by_model.get(str(info.get("model"))) or {}
+            info["tier"] = m.get("tier")
+            info["remote"] = bool(m.get("remote"))
+            info["ready"] = bool(m.get("ready", True))
+            info["endpoint"] = m.get("endpoint") or m.get("source")
     return {"ok": True, "scope": scope, "recommendations": rec,
             "counts": {"local": n_local, "remote": n_remote, "considered": len(pool)},
+            "filters": {"tiers": sorted(tier_set) or None, "ready_only": ready_only},
             "raw": (reply or "")[:400] if not rec else None}
