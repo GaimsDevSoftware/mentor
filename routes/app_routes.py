@@ -1786,6 +1786,16 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  .queue-badge{position:absolute;top:-6px;right:-6px;background:var(--warn);color:#0b0b0d;font:600 10px/1 inherit;padding:3px 7px;border-radius:99px;display:none}
  .send-priority{background:transparent;color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:14px;flex-shrink:0;transition:all .15s;line-height:1}
  .send-priority:hover{background:color-mix(in srgb,var(--warn) 16%,transparent);border-color:var(--warn)}
+ .send-interrupt{background:transparent;color:var(--err);border:1px solid color-mix(in srgb,var(--err) 40%,transparent);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:14px;flex-shrink:0;transition:all .15s;line-height:1;display:none}
+ .send-interrupt:hover{background:color-mix(in srgb,var(--err) 16%,transparent);border-color:var(--err)}
+ .attach-btn{background:transparent;border:none;color:var(--faint);font-size:18px;cursor:pointer;padding:4px 6px;flex-shrink:0;line-height:1;transition:color .15s}
+ .attach-btn:hover{color:var(--txt)}
+ .attach-preview{display:flex;gap:6px;flex-wrap:wrap;padding:0 4px}
+ .attach-preview:empty{display:none}
+ .attach-item{display:flex;align-items:center;gap:4px;background:var(--tint);border:1px solid var(--sep);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--dim)}
+ .attach-item img{max-height:32px;max-width:48px;border-radius:3px}
+ .attach-item .rm{background:none;border:none;color:var(--faint);cursor:pointer;font-size:13px;padding:0 2px;line-height:1}
+ .attach-item .rm:hover{color:var(--err)}
  @keyframes slide{50%{left:100%}100%{left:100%}}
 
  /* "Klemmer" — collapsible technical details inside a result bubble */
@@ -1876,10 +1886,14 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
 
 <!-- Composer -->
 <div class="composer-wrap">
+  <div id="attach-preview" class="attach-preview"></div>
   <div class="composer">
-    <textarea id="instr" rows="1" placeholder="Describe what to build or change…  (Enter to send · Shift+Enter for newline)"></textarea>
+    <button class="attach-btn" id="attach-btn" type="button" title="Attach files or images">&#x1F4CE;</button>
+    <input type="file" id="attach-input" multiple accept="image/*,.py,.js,.ts,.html,.css,.json,.md,.txt,.yaml,.yml,.toml,.sh,.rs,.go,.c,.cpp,.h,.java,.rb,.php,.sql,.xml,.csv,.log" style="display:none">
+    <textarea id="instr" rows="1" placeholder="Describe what to build or change…  (Enter to send · Shift+Enter for newline · paste images)"></textarea>
     <button class="send" id="run-btn" type="button">Send</button>
     <button class="send-priority" id="priority-btn" type="button" title="Send to front of queue (runs next)">&#x26A1;</button>
+    <button class="send-interrupt" id="interrupt-btn" type="button" title="Interrupt current task — run this NOW, then resume queue">&#x23F9;</button>
   </div>
   <div class="composer-foot" id="ex-foot"><span class="lbl">Try:</span></div>
 </div>
@@ -2147,8 +2161,83 @@ instrEl.addEventListener('keydown', e=>{
 
 $('#run-btn').onclick=()=>onSend(false);
 $('#priority-btn').onclick=()=>onSend(true);
+$('#interrupt-btn').onclick=()=>onInterrupt();
+
+// Show interrupt button only when busy
+function updateBusyUI(){
+  const ib=$('#interrupt-btn'); if(ib) ib.style.display=busy?'':'none';
+}
+
+// ── Interrupt: stop current + run new message NOW + re-queue interrupted ──
+async function onInterrupt(){
+  const text=(instrEl.value||'').trim(); if(!text) return;
+  if(!busy){ onSend(false); return; }
+  // Find the running job and the instruction it was working on
+  let runningJobId=null, runningInstruction=null;
+  for(let i=turns.length-1;i>=0;i--){
+    if(turns[i].kind==='pending' && turns[i].jobId){ runningJobId=turns[i].jobId; break; }
+    if(turns[i].kind==='user'){ runningInstruction=turns[i].text; break; }
+  }
+  // Stop the current job
+  if(runningJobId){ try{ await j('/api/code/stop/'+runningJobId, {method:'POST'}); }catch(e){} }
+  if(activePoll){clearInterval(activePoll); activePoll=null;} stopElapsed();
+  // Mark the pending turn as interrupted
+  for(let i=turns.length-1;i>=0;i--){
+    if(turns[i].kind==='pending'){
+      turns.splice(i,1,{kind:'narr', html:'<b>Interrupted</b> — will resume after the urgent task.'});
+      break;
+    }
+  }
+  busy=false;
+  // Re-queue the interrupted instruction at front (so it resumes after)
+  if(runningInstruction){
+    const project=chosenProject(), model=chosenModel(), files=($('#files')?$('#files').value:'').trim();
+    msgQueue.unshift({text:runningInstruction, project, model, files});
+    saveQueue();
+    pushTurn({kind:'queued', text:runningInstruction, position:1});
+  }
+  // NOW run the urgent message
+  instrEl.value=''; autoGrow(instrEl);
+  const project=chosenProject(), model=chosenModel(), files=($('#files')?$('#files').value:'').trim();
+  await execEdit(text, project, model, files);
+}
+
+// ── File/image attach + clipboard paste ──
+let attachments=[]; // [{name, type, dataUrl}]
+function renderAttachPreview(){
+  const el=$('#attach-preview'); if(!el) return;
+  el.innerHTML=attachments.map((a,i)=>{
+    const isImg=a.type.startsWith('image/');
+    return '<span class="attach-item">'+(isImg?'<img src="'+a.dataUrl+'">':'')
+      +'<span>'+esc(a.name)+'</span><button class="rm" onclick="removeAttach('+i+')">✕</button></span>';
+  }).join('');
+}
+function removeAttach(i){ attachments.splice(i,1); renderAttachPreview(); }
+$('#attach-btn').onclick=()=>$('#attach-input').click();
+$('#attach-input').onchange=(e)=>{
+  for(const f of e.target.files){
+    const reader=new FileReader();
+    reader.onload=()=>{ attachments.push({name:f.name, type:f.type, dataUrl:reader.result}); renderAttachPreview(); };
+    reader.readAsDataURL(f);
+  }
+  e.target.value='';
+};
+instrEl.addEventListener('paste', (e)=>{
+  const items=e.clipboardData&&e.clipboardData.items;
+  if(!items) return;
+  for(const item of items){
+    if(item.type.startsWith('image/')){
+      e.preventDefault();
+      const blob=item.getAsFile(); if(!blob) continue;
+      const reader=new FileReader();
+      reader.onload=()=>{ attachments.push({name:'pasted-image.png', type:blob.type, dataUrl:reader.result}); renderAttachPreview(); };
+      reader.readAsDataURL(blob);
+    }
+  }
+});
+
 $('#convo-clear').onclick=()=>{
-  if(busy){ if(!confirm('A run is in progress. Cancel it and start a fresh conversation?')) return; if(activePoll){clearInterval(activePoll); activePoll=null;} stopElapsed(); busy=false; }
+  if(busy){ if(!confirm('A run is in progress. Cancel it and start a fresh conversation?')) return; if(activePoll){clearInterval(activePoll); activePoll=null;} stopElapsed(); busy=false; updateBusyUI(); }
   else if(turns.length && !confirm('Start a fresh conversation? Past turns will be cleared.')) return;
   turns=[]; msgQueue=[]; saveTurns(); saveQueue(); renderConvo(); renderQueueBadge();
 };
@@ -2162,21 +2251,34 @@ function renderQueueBadge(){
 }
 
 async function onSend(priority){
-  const text=(instrEl.value||'').trim();
-  if(!text) return;
+  let text=(instrEl.value||'').trim();
+  if(!text && !attachments.length) return;
   if(!aiderReady){ pushTurn({kind:'narr', warn:true, html:'<b>Aider isn\'t installed yet.</b> Open the setup panel above to install it.'}); toggleSetup(true); return; }
   const project=chosenProject(), model=chosenModel();
   if(!project){ pushTurn({kind:'narr', warn:true, html:'<b>No repository picked.</b> Open the setup panel above to choose one.'}); toggleSetup(true); return; }
   if(!model){ pushTurn({kind:'narr', warn:true, html:'<b>No coder model picked.</b> Open the setup panel above to choose one.'}); toggleSetup(true); return; }
   const files=($('#files')?$('#files').value:'').trim();
+  // Append text-file contents to the instruction so Aider has context
+  if(attachments.length){
+    const parts=[];
+    for(const a of attachments){
+      if(a.type.startsWith('image/')){ parts.push('[Attached image: '+a.name+']'); }
+      else {
+        try{ const raw=atob(a.dataUrl.split(',')[1]||''); parts.push('--- '+a.name+' ---\n'+raw.slice(0,8000)); }
+        catch(e){ parts.push('[Attached file: '+a.name+']'); }
+      }
+    }
+    text = text + (text?'\n\n':'') + parts.join('\n\n');
+  }
   instrEl.value=''; autoGrow(instrEl);
+  attachments=[]; renderAttachPreview();
 
   if(busy){
     const entry={text, project, model, files};
     if(priority){ msgQueue.unshift(entry); }
     else { msgQueue.push(entry); }
     saveQueue();
-    pushTurn({kind:'queued', text, position: priority?1:msgQueue.length});
+    pushTurn({kind:'queued', text: text.slice(0,200)+(text.length>200?'…':''), position: priority?1:msgQueue.length});
     renderQueueBadge();
     return;
   }
@@ -2184,7 +2286,7 @@ async function onSend(priority){
 }
 
 async function execEdit(text, project, model, files){
-  busy=true;
+  busy=true; updateBusyUI();
   pushTurn({kind:'user', text});
   pushTurn({kind:'narr', html:'Working in <b>'+esc(shortPath(project))+'</b> with <b>'+esc(shortModel(model))+'</b> on a safe branch.'+(files?' Focusing on <b>'+esc(files)+'</b>.':'')});
   const pIdx = pushTurn({kind:'pending', stage:'starting…', since:Date.now()});
@@ -2196,12 +2298,12 @@ async function execEdit(text, project, model, files){
   } catch(e){
     stopElapsed();
     replaceTurn(pIdx, {kind:'error', text:'Couldn\'t start the edit: '+(e===401?'admin only — sign in as an admin.':String(e))});
-    busy=false; processQueue(); return;
+    busy=false; updateBusyUI(); processQueue(); return;
   }
   if(!r.ok){
     stopElapsed();
     replaceTurn(pIdx, {kind:'error', text:r.error||'Couldn\'t start the edit.'});
-    busy=false; processQueue(); return;
+    busy=false; updateBusyUI(); processQueue(); return;
   }
 
   const id=r.job_id;
@@ -2263,7 +2365,7 @@ function pollJob(id, pIdx){
       misses++;
       if(misses>=2){ clearInterval(activePoll); activePoll=null; stopElapsed();
         replaceTurn(pIdx, {kind:'narr', html:'The job expired (Mentor was probably restarted). Send the same prompt again to retry.'});
-        busy=false; processQueue(); }
+        busy=false; updateBusyUI(); processQueue(); }
       return;
     }
     misses=0;
@@ -2276,7 +2378,7 @@ function pollJob(id, pIdx){
       } else {
         replaceTurn(pIdx, {kind:'ai', result: res});
       }
-      busy=false; processQueue();
+      busy=false; updateBusyUI(); processQueue();
     }
   }, 1500);
 }
