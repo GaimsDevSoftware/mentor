@@ -1679,28 +1679,101 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  [data-theme="light"]{--bg:#fbfbfd;--bg-2:#f2f2f7;--surface:rgba(255,255,255,0.78);--surface-2:rgba(248,248,250,0.92);--sep:rgba(0,0,0,0.08);--sep-2:rgba(0,0,0,0.14);--txt:#1d1d1f;--dim:rgba(60,60,67,0.6);--faint:rgba(60,60,67,0.36);--brass:#b8843a;--cyan:#0a83af;--accent:#0071e3;--ok:#248a3d;--warn:#a04400;--err:#c41e3a;--tint:rgba(0,0,0,0.04);--tint-2:rgba(0,0,0,0.06);--shadow:0 1px 2px rgba(0,0,0,0.04),0 10px 30px rgba(0,0,0,0.06);}
  [data-theme="atlas"]{--bg:#f4ede0;--bg-2:#ebe2cf;--surface:rgba(252,247,236,0.84);--surface-2:rgba(245,238,222,0.94);--sep:rgba(43,58,74,0.12);--sep-2:rgba(43,58,74,0.2);--txt:#1f2d3d;--dim:rgba(31,45,61,0.64);--faint:rgba(31,45,61,0.4);--brass:#9b6826;--cyan:#1f5471;--accent:#9b6826;--ok:#3a7f2b;--warn:#a36a00;--err:#a32d2d;--tint:rgba(43,58,74,0.04);--tint-2:rgba(43,58,74,0.07);--shadow:0 1px 0 rgba(255,255,255,0.5) inset,0 8px 22px rgba(43,58,74,0.08);}
  *{box-sizing:border-box} option{background:var(--bg-2);color:var(--txt)} html,body{margin:0;height:100%}
- body{background:radial-gradient(120% 80% at 50% -10%,var(--bg-2),var(--bg)) fixed;color:var(--txt);font:15px/1.6 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:56px 32px 80px;max-width:1000px;margin:0 auto;letter-spacing:-0.005em}
+ body{background:radial-gradient(120% 80% at 50% -10%,var(--bg-2),var(--bg)) fixed;color:var(--txt);font:15px/1.6 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:56px 32px 32px;max-width:880px;margin:0 auto;letter-spacing:-0.005em}
  a{color:inherit;text-decoration:none}
  .top{display:flex;align-items:baseline;gap:16px;margin-bottom:4px}
  .mark{font:300 38px/1.05 -apple-system,"SF Pro Display",Inter,system-ui,sans-serif;letter-spacing:-0.04em}
- .tag{color:var(--faint);font-size:13px;margin-bottom:24px}
+ .tag{color:var(--faint);font-size:13px;margin-bottom:18px}
  .pill{font:500 11px/1.2 inherit;padding:4px 10px;border-radius:99px;background:var(--tint-2);border:1px solid var(--sep);color:var(--dim);display:inline-flex;align-items:center;gap:5px}
  .pill.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
  .pill.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
- .sec-title{color:var(--faint);font-size:11px;letter-spacing:1.5px;margin:26px 0 10px;text-transform:uppercase;font-weight:600}
- .card{background:var(--surface);border:1px solid var(--sep);border-radius:14px;padding:18px 20px;backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%);box-shadow:var(--shadow);margin-bottom:14px}
  .row{display:flex;align-items:center;gap:10px} .grow{flex:1;min-width:0} .muted{color:var(--dim)} .faint{color:var(--faint)}
+ .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px}
  .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;cursor:pointer;background:var(--surface-2);border:1px solid var(--sep-2);color:var(--txt);font:500 13px/1 inherit;transition:background .15s,border-color .15s,transform .12s}
  .btn:hover{background:var(--tint-2);border-color:var(--brass);transform:translateY(-1px)} .btn:disabled{opacity:.5;cursor:default;transform:none}
- input.fld,textarea.fld{width:100%;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:9px;padding:9px 11px;font:13px/1.4 inherit;outline:none}
- input.fld:focus,textarea.fld:focus{border-color:var(--brass)}
+ .btn.mini{padding:5px 9px;font-size:12px;border-radius:8px}
+ .btn.primary{background:color-mix(in srgb,var(--brass) 22%,var(--surface-2));border-color:color-mix(in srgb,var(--brass) 55%,var(--sep-2))}
+ .btn.primary:hover{background:color-mix(in srgb,var(--brass) 32%,var(--surface-2))}
+ input.fld,textarea.fld,select.fld{width:100%;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:9px;padding:9px 11px;font:13px/1.4 inherit;outline:none}
+ input.fld:focus,textarea.fld:focus,select.fld:focus{border-color:var(--brass)}
  textarea.fld{font-family:inherit;resize:vertical}
  label.lab{display:block;color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:10px 0 4px}
- pre.diff{white-space:pre-wrap;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;background:var(--tint);border:1px solid var(--sep);border-radius:10px;padding:12px 14px;max-height:460px;overflow:auto;margin-top:8px;line-height:1.45}
+ select.fld{cursor:pointer}
+
+ /* Setup bar — collapsed by default, summary chip on top */
+ .setup-bar{margin-bottom:18px}
+ .setup-row{display:flex;align-items:stretch;gap:8px}
+ .setup-toggle{flex:1;background:var(--surface);border:1px solid var(--sep);border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:10px;color:var(--txt);cursor:pointer;text-align:left;font:13px/1.4 inherit;box-shadow:var(--shadow);min-width:0}
+ .setup-toggle:hover{background:var(--tint-2)}
+ .setup-summary{flex:1;display:flex;align-items:center;gap:6px;min-width:0;color:var(--dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .setup-summary b{color:var(--txt);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;display:inline-block;vertical-align:bottom}
+ .setup-summary .dot{width:3px;height:3px;border-radius:50%;background:var(--faint);display:inline-block;flex-shrink:0;margin:0 4px}
+ .setup-chev{transition:transform .18s;color:var(--faint);font-size:10px;flex-shrink:0}
+ .setup-toggle[aria-expanded="true"] .setup-chev{transform:rotate(180deg)}
+ .setup-side{display:flex;align-items:center;gap:6px;flex-shrink:0}
+ .setup-side .btn{background:var(--surface);border:1px solid var(--sep);box-shadow:var(--shadow)}
+ .setup-body{margin-top:10px;padding:14px 16px;background:var(--surface);border:1px solid var(--sep);border-radius:12px;box-shadow:var(--shadow)}
+
+ /* Conversation */
+ .convo{display:flex;flex-direction:column;gap:14px;padding:4px 0 12px;min-height:200px}
+ .empty{color:var(--dim);font-size:14px;text-align:center;padding:36px 16px 24px;line-height:1.65}
+ .empty b{color:var(--txt);font-weight:500}
+
+ /* Bubbles */
+ .turn{display:flex;flex-direction:column;gap:6px;animation:fade .25s ease-out}
+ @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+ .bub{max-width:80%;padding:11px 14px;border-radius:14px;font-size:14px;line-height:1.55;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;border:1px solid var(--sep);box-shadow:var(--shadow)}
+ .bub .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:4px;font-weight:600}
+ .bub.user{align-self:flex-end;background:color-mix(in srgb,var(--brass) 16%,var(--surface));border-color:color-mix(in srgb,var(--brass) 30%,var(--sep));border-radius:14px 14px 4px 14px}
+ .bub.user .lbl{color:color-mix(in srgb,var(--brass) 80%,var(--dim))}
+ .bub.ai{align-self:flex-start;background:var(--surface);border-radius:14px 14px 14px 4px}
+ .bub.ai .lbl{color:var(--brass)}
+ .bub.ai.err{border-color:color-mix(in srgb,var(--err) 40%,var(--sep));background:color-mix(in srgb,var(--err) 8%,var(--surface))}
+ .bub.ai.err .lbl{color:var(--err)}
+
+ /* Narrator line — system messages, no bubble */
+ .narr{align-self:center;max-width:92%;color:var(--faint);font-size:12px;line-height:1.6;font-style:italic;text-align:center;padding:2px 6px}
+ .narr b{color:var(--dim);font-style:normal;font-weight:500}
+ .narr.warn b{color:var(--warn)}
+
+ /* Pending bubble — spinner + stage + elapsed + progress bar */
+ .pending{display:flex;align-items:center;gap:10px;min-width:220px}
  .spin{width:14px;height:14px;border:2px solid var(--sep-2);border-top-color:var(--brass);border-radius:50%;display:inline-block;animation:spin .7s linear infinite;flex-shrink:0}
  @keyframes spin{to{transform:rotate(360deg)}}
- select.fld{width:100%;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:9px;padding:9px 11px;font:13px/1.4 inherit;outline:none;cursor:pointer}
- select.fld:focus{border-color:var(--brass)}
+ .stage{color:var(--dim);font-size:13px;flex:1;min-width:0}
+ .elapsed{color:var(--faint);font-size:11px;font-variant-numeric:tabular-nums;flex-shrink:0}
+ .progress{height:2px;background:color-mix(in srgb,var(--brass) 18%,transparent);border-radius:2px;overflow:hidden;margin-top:8px;position:relative}
+ .progress::after{content:"";position:absolute;left:-30%;top:0;height:100%;width:30%;background:var(--brass);animation:slide 1.6s ease-in-out infinite}
+ @keyframes slide{50%{left:100%}100%{left:100%}}
+
+ /* "Klemmer" — collapsible technical details inside a result bubble */
+ .turn details{margin-top:10px;border-top:1px solid var(--sep);padding-top:8px}
+ .turn details + details{border-top:1px solid var(--sep);margin-top:6px;padding-top:6px}
+ .turn summary{cursor:pointer;color:var(--dim);font-size:12px;list-style:none;display:inline-flex;align-items:center;gap:6px;padding:3px 0;user-select:none;font-weight:500}
+ .turn summary::-webkit-details-marker{display:none}
+ .turn summary::before{content:"▸";color:var(--faint);font-size:10px;transition:transform .15s;display:inline-block;width:8px}
+ .turn details[open] summary::before{transform:rotate(90deg)}
+ .turn summary:hover{color:var(--txt)}
+ pre.diff{white-space:pre-wrap;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;background:var(--tint);border:1px solid var(--sep);border-radius:10px;padding:11px 13px;max-height:420px;overflow:auto;margin:8px 0 0;line-height:1.45}
+ .file-list{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+ .file-list .f{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--dim);background:var(--tint);border:1px solid var(--sep);border-radius:6px;padding:3px 8px}
+ .branch-tag{display:inline-flex;align-items:center;gap:5px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--brass);background:color-mix(in srgb,var(--brass) 10%,transparent);border:1px solid color-mix(in srgb,var(--brass) 30%,transparent);border-radius:6px;padding:2px 7px;margin-right:8px;vertical-align:middle}
+ .stat{color:var(--faint);font-size:12px}
+ .stat .plus{color:var(--ok)} .stat .minus{color:var(--err)}
+
+ /* Composer — sticks to bottom of viewport while scrolling */
+ .composer-wrap{position:sticky;bottom:14px;margin-top:16px;z-index:5}
+ .composer{display:flex;gap:8px;align-items:flex-end;background:var(--surface);border:1px solid var(--sep-2);border-radius:14px;padding:10px;box-shadow:var(--shadow);backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%)}
+ .composer textarea{flex:1;background:transparent;color:var(--txt);border:none;outline:none;resize:none;font:14px/1.5 inherit;padding:6px 8px;max-height:200px;min-height:24px;overflow-y:auto}
+ .composer textarea::placeholder{color:var(--faint)}
+ .composer .send{background:var(--brass);color:#0b0b0d;border:none;border-radius:10px;padding:9px 16px;font:600 13px/1 inherit;cursor:pointer;flex-shrink:0;transition:transform .12s,opacity .15s}
+ .composer .send:hover{transform:translateY(-1px)}
+ .composer .send:disabled{opacity:.45;cursor:default;transform:none}
+ .composer-foot{display:flex;gap:6px;align-items:center;padding:8px 4px 0;font-size:11px;color:var(--faint);flex-wrap:wrap}
+ .composer-foot .lbl{color:var(--faint);font-size:11px;margin-right:2px}
+ .ex{cursor:pointer;color:var(--dim);background:var(--tint);border:1px solid var(--sep);border-radius:99px;padding:4px 10px;font:inherit;font-size:11px}
+ .ex:hover{color:var(--txt);border-color:var(--brass)}
+
  .topbar{position:fixed;top:14px;right:18px;display:flex;gap:8px;align-items:center;z-index:50}
  .jump{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;color:var(--txt);font:500 12px/1 inherit;box-shadow:var(--shadow)}
  .jump:hover{background:var(--tint-2)} .theme-switch{display:flex;gap:2px;background:var(--surface);border:1px solid var(--sep);border-radius:99px;padding:3px;box-shadow:var(--shadow)}
@@ -1712,47 +1785,60 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
 
 <div class="top"><div class="mark">Code</div><span id="aider-pill" class="pill">checking…</span></div>
-<div class="tag">Vibe-code a real repository — describe a change, the AI edits files on a safe branch and shows you the diff. Nothing is committed; you review first. Free &amp; private with a local coder model.</div>
+<div class="tag">Vibe-code a real repository — describe a change, the AI edits files on a safe branch and shows you the diff. Free &amp; private with a local coder model.</div>
 
-<div class="sec-title">Project &amp; engine</div>
-<div class="card" id="setup-card">
-  <div id="inst-row"></div>
-  <label class="lab">Repository</label>
-  <div class="row">
-    <select id="proj" class="fld" style="flex:1"><option>scanning for repos…</option></select>
-    <button class="btn" id="proj-new" title="Start a brand-new app from scratch">＋ New</button>
-    <button class="btn" id="proj-refresh" title="Rescan for git repos">↻</button>
-  </div>
-  <div id="proj-custom" style="display:none;margin-top:8px"><input id="proj-path" class="fld" placeholder="/full/path/to/your/repo"></div>
-  <div id="newproj" style="display:none;margin-top:8px;padding:11px;border:1px solid var(--sep-2);border-radius:9px;background:var(--tint)">
-    <div class="row" style="flex-wrap:wrap;gap:8px">
-      <input id="np-name" class="fld" style="flex:1;min-width:150px" placeholder="project name — e.g. my-notes-app">
-      <select id="np-kind" class="fld" style="flex:0 0 220px">
-        <option value="gtk">Linux desktop app · GTK</option>
-        <option value="qt">Linux desktop app · Qt (PySide6)</option>
-        <option value="flask">Web app · Flask</option>
-        <option value="cli">Command-line tool</option>
-        <option value="empty">Empty project</option>
-      </select>
-      <button class="btn primary" id="np-create">Create</button>
+<!-- Collapsible setup -->
+<div class="setup-bar">
+  <div class="setup-row">
+    <button class="setup-toggle" id="setup-toggle" aria-expanded="false" type="button">
+      <span class="setup-summary" id="setup-summary">loading setup…</span>
+      <span class="setup-chev">▾</span>
+    </button>
+    <div class="setup-side">
+      <button class="btn mini" id="convo-clear" type="button" title="Start a fresh conversation">New chat</button>
     </div>
-    <div id="np-msg" class="faint" style="font-size:12px;margin-top:6px">Mentor scaffolds a runnable starter app + git repo under <span class="mono">~/mentor-projects</span>, then you describe what to build below.</div>
   </div>
-  <label class="lab">Coder model</label>
-  <select id="model" class="fld"><option>loading models…</option></select>
-  <div class="faint" style="font-size:11px;margin-top:8px">Edits run on a feature branch (never main) and are <b>not committed</b> — you review the diff, then commit what you like. Choices are remembered.</div>
+  <div class="setup-body" id="setup-body" style="display:none">
+    <div id="inst-row"></div>
+    <label class="lab">Repository</label>
+    <div class="row">
+      <select id="proj" class="fld" style="flex:1"><option>scanning for repos…</option></select>
+      <button class="btn" id="proj-new" type="button" title="Start a brand-new app from scratch">＋ New</button>
+      <button class="btn" id="proj-refresh" type="button" title="Rescan for git repos">↻</button>
+    </div>
+    <div id="proj-custom" style="display:none;margin-top:8px"><input id="proj-path" class="fld" placeholder="/full/path/to/your/repo"></div>
+    <div id="newproj" style="display:none;margin-top:8px;padding:11px;border:1px solid var(--sep-2);border-radius:9px;background:var(--tint)">
+      <div class="row" style="flex-wrap:wrap;gap:8px">
+        <input id="np-name" class="fld" style="flex:1;min-width:150px" placeholder="project name — e.g. my-notes-app">
+        <select id="np-kind" class="fld" style="flex:0 0 220px">
+          <option value="gtk">Linux desktop app · GTK</option>
+          <option value="qt">Linux desktop app · Qt (PySide6)</option>
+          <option value="flask">Web app · Flask</option>
+          <option value="cli">Command-line tool</option>
+          <option value="empty">Empty project</option>
+        </select>
+        <button class="btn primary" id="np-create" type="button">Create</button>
+      </div>
+      <div id="np-msg" class="faint" style="font-size:12px;margin-top:6px">Mentor scaffolds a runnable starter app + git repo under <span class="mono">~/mentor-projects</span>, then you describe what to build below.</div>
+    </div>
+    <label class="lab">Coder model</label>
+    <select id="model" class="fld"><option>loading models…</option></select>
+    <label class="lab">Files to focus on (optional)</label>
+    <input id="files" class="fld" placeholder="leave blank — the AI picks the files itself">
+    <div class="faint" style="font-size:11px;margin-top:10px">Edits run on a feature branch (never main) and are <b>not committed</b> — you review the diff, then commit what you like.</div>
+  </div>
 </div>
 
-<div class="sec-title">Describe what to build</div>
-<div class="card">
-  <label class="lab">What should Mentor build or change? Think big — a whole app, a feature, a redesign.</label>
-  <textarea id="instr" class="fld" rows="3" placeholder="e.g. Build a GTK desktop app: a window with a sidebar list of notes and a + button that adds one, saved to ~/.mentor-notes.json. Clean, modern look."></textarea>
-  <div class="row" id="ex-chips" style="flex-wrap:wrap;gap:6px;margin-top:8px"></div>
-  <label class="lab">Files to focus on (optional — leave blank and the AI picks)</label>
-  <input id="files" class="fld" placeholder="leave blank — the AI picks the files itself">
-  <div class="row" style="margin-top:10px"><button class="btn" id="run-btn">Vibe-code it</button><span id="run-msg" class="muted" style="font-size:12px"></span></div>
-  <div id="prog" style="margin-top:10px"></div>
-  <div id="result"></div>
+<!-- Conversation -->
+<div id="convo" class="convo"></div>
+
+<!-- Composer -->
+<div class="composer-wrap">
+  <div class="composer">
+    <textarea id="instr" rows="1" placeholder="Describe what to build or change…  (Enter to send · Shift+Enter for newline)"></textarea>
+    <button class="send" id="run-btn" type="button">Send</button>
+  </div>
+  <div class="composer-foot" id="ex-foot"><span class="lbl">Try:</span></div>
 </div>
 
 <script nonce="{{CSP_NONCE}}">
@@ -1763,18 +1849,62 @@ const $=s=>document.querySelector(s);
 const j=(u,o)=>fetch(u,Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},o)).then(r=>{if(!r.ok)throw r.status;return r.json();});
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+const STORE='mentor-code-convo-v1';
 let aiderReady=false, PROJECTS=[], MODELS=[];
+// turns[i] = {kind:'user'|'narr'|'ai'|'pending'|'error', text?, stage?, since?, result?, log?, warn?}
+let turns=[];
+let busy=false;
+let elapsedTimer=null;
+let activePoll=null;
+
+const EXAMPLES=[
+  'Build a GTK desktop app: a window with a sidebar list of notes and a + button that adds one, saved to ~/.mentor-notes.json. Clean, modern look.',
+  'Make a Qt (PySide6) Pomodoro timer with start/pause/reset, a big countdown, and a system-tray icon.',
+  'Build a Flask web dashboard showing live CPU, RAM and disk usage with small charts, auto-refreshing every 2 seconds.',
+  'Create a command-line tool that watches a folder and converts every new image to WebP, printing a summary.',
+  'Add a Settings dialog with a dark-mode toggle that persists between launches.',
+];
+
+function loadTurns(){ try{ const v=JSON.parse(localStorage.getItem(STORE)||'[]'); return Array.isArray(v)?v.filter(t=>t&&t.kind&&t.kind!=='pending'):[]; }catch(e){ return []; } }
+function saveTurns(){ try{ localStorage.setItem(STORE,JSON.stringify(turns.filter(t=>t.kind!=='pending'))); }catch(e){} }
+
+function shortPath(p){ if(!p) return '—'; return p.replace(/^\/home\/[^\/]+/,'~').replace(/^\/Users\/[^\/]+/,'~'); }
+function shortModel(m){ return m? m.replace(/^ollama\//,'') : '—'; }
+
+// ── Setup panel ───────────────────────────────────────────────────────────
+
+function setupSummary(){
+  const proj=chosenProject(), model=chosenModel();
+  const s=$('#setup-summary');
+  if(!aiderReady){ s.innerHTML='<span style="color:var(--warn)">⚠ Aider not installed</span><span class="dot"></span><span>tap to set up</span>'; return; }
+  if(!proj){ s.innerHTML='<span style="color:var(--warn)">No project picked</span><span class="dot"></span><span>tap to choose</span>'; return; }
+  if(!model){ s.innerHTML='<span style="color:var(--warn)">No coder model</span><span class="dot"></span><span>tap to choose</span>'; return; }
+  s.innerHTML='repo <b>'+esc(shortPath(proj))+'</b><span class="dot"></span>model <b>'+esc(shortModel(model))+'</b>';
+}
+
+function toggleSetup(force){
+  const t=$('#setup-toggle'), b=$('#setup-body');
+  const open = (force===undefined) ? (t.getAttribute('aria-expanded')!=='true') : !!force;
+  t.setAttribute('aria-expanded', open?'true':'false');
+  b.style.display = open?'':'none';
+}
 
 async function load(){
   let st={};
-  try{ st=await j('/api/code/status'); }catch(e){ $('#setup-card').innerHTML='<div class="muted">'+(e===401?'Admin only — sign in as an admin.':'Could not load the Code workspace.')+'</div>'; return; }
+  try{ st=await j('/api/code/status'); }
+  catch(e){
+    $('#setup-summary').textContent = e===401 ? 'Admin only — sign in as an admin.' : 'Could not load the Code workspace.';
+    return;
+  }
   aiderReady=!!st.aider_installed;
   $('#aider-pill').textContent=aiderReady?'Aider ready':'Aider not installed';
   $('#aider-pill').className='pill '+(aiderReady?'ok':'warn');
   $('#inst-row').innerHTML = aiderReady ? '' :
-    '<div class="row" style="margin-bottom:12px"><span class="pill warn">setup</span><span class="grow" style="font-size:13px">Aider (the editor engine) isn\'t installed yet. It installs isolated — it never touches Mentor\'s own environment.</span><button class="btn" id="inst-btn">Install Aider</button></div><div id="inst-msg" class="muted" style="font-size:12px;margin-bottom:10px"></div>';
+    '<div class="row" style="margin-bottom:12px"><span class="pill warn">setup</span><span class="grow" style="font-size:13px">Aider (the editor engine) isn\'t installed yet. It installs isolated — it never touches Mentor\'s own environment.</span><button class="btn" id="inst-btn" type="button">Install Aider</button></div><div id="inst-msg" class="muted" style="font-size:12px;margin-bottom:10px"></div>';
   const ib=$('#inst-btn'); if(ib) ib.onclick=installAider;
   await Promise.all([loadProjects(st.project), loadModels(st.model)]);
+  setupSummary();
+  if(!aiderReady || !chosenProject() || !chosenModel()) toggleSetup(true);
 }
 
 async function loadProjects(cur){
@@ -1785,7 +1915,8 @@ async function loadProjects(cur){
   PROJECTS.forEach(p=>{const o=document.createElement('option');o.value=p;o.textContent=p;if(p===cur)o.selected=true;sel.appendChild(o);});
   const oth=document.createElement('option');oth.value='__other__';oth.textContent='Other folder…';sel.appendChild(oth);
   if(cur && PROJECTS.indexOf(cur)<0){ oth.selected=true; $('#proj-custom').style.display=''; $('#proj-path').value=cur; }
-  sel.onchange=()=>{ $('#proj-custom').style.display = sel.value==='__other__'?'':'none'; };
+  sel.onchange=()=>{ $('#proj-custom').style.display = sel.value==='__other__'?'':'none'; setupSummary(); };
+  $('#proj-path').addEventListener('input', setupSummary);
 }
 
 async function loadModels(cur){
@@ -1796,21 +1927,21 @@ async function loadModels(cur){
   MODELS.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;if(m===cur)o.selected=true;sel.appendChild(o);});
   const oth=document.createElement('option');oth.value='__other__';oth.textContent='Other / custom…';sel.appendChild(oth);
   if(cur && MODELS.indexOf(cur)<0){ oth.selected=true; showModelCustom(cur); }
-  sel.onchange=()=>{ if(sel.value==='__other__') showModelCustom(''); else hideModelCustom(); };
+  sel.onchange=()=>{ if(sel.value==='__other__') showModelCustom(''); else hideModelCustom(); setupSummary(); };
 }
-function showModelCustom(v){ let el=$('#model-custom'); if(!el){ el=document.createElement('input'); el.id='model-custom'; el.className='fld'; el.placeholder='e.g. ollama/qwen2.5-coder:7b'; el.style.marginTop='8px'; $('#model').insertAdjacentElement('afterend',el); } el.value=v||''; el.style.display=''; }
+function showModelCustom(v){ let el=$('#model-custom'); if(!el){ el=document.createElement('input'); el.id='model-custom'; el.className='fld'; el.placeholder='e.g. ollama/qwen2.5-coder:7b'; el.style.marginTop='8px'; $('#model').insertAdjacentElement('afterend',el); el.addEventListener('input', setupSummary); } el.value=v||''; el.style.display=''; }
 function hideModelCustom(){ const el=$('#model-custom'); if(el) el.style.display='none'; }
-function chosenProject(){ const s=$('#proj'); return s.value==='__other__'?$('#proj-path').value.trim():s.value; }
-function chosenModel(){ const s=$('#model'); return s.value==='__other__'?(($('#model-custom')||{}).value||'').trim():s.value; }
+function chosenProject(){ const s=$('#proj'); if(!s) return ''; return s.value==='__other__'?($('#proj-path').value||'').trim():s.value; }
+function chosenModel(){ const s=$('#model'); if(!s) return ''; return s.value==='__other__'?(($('#model-custom')||{}).value||'').trim():s.value; }
 
 async function installAider(){
   const msg=$('#inst-msg'); const b=$('#inst-btn'); if(b)b.disabled=true; msg.textContent='Installing (isolated — can take a few minutes)…';
   try{ await j('/api/manage/install-aider',{method:'POST'}); }catch(e){ msg.textContent='could not start install: '+e; if(b)b.disabled=false; return; }
   const poll=setInterval(async()=>{ try{ const s=await j('/api/code/status'); if(s.aider_installed){ clearInterval(poll); msg.textContent='Installed ✓'; load(); } }catch(e){} }, 3000);
 }
-$('#proj-refresh').onclick=()=>loadProjects();
 
-// New project — scaffold a runnable starter app + git repo, then select it.
+$('#setup-toggle').addEventListener('click', ()=>toggleSetup());
+$('#proj-refresh').onclick=()=>loadProjects();
 $('#proj-new').onclick=()=>{ const n=$('#newproj'); n.style.display = n.style.display==='none'?'':'none'; if(n.style.display==='')$('#np-name').focus(); };
 $('#np-create').onclick=async()=>{
   const name=($('#np-name').value||'').trim(); const kind=$('#np-kind').value; const m=$('#np-msg');
@@ -1818,27 +1949,26 @@ $('#np-create').onclick=async()=>{
   m.textContent='Creating…'; m.style.color='var(--dim)'; $('#np-create').disabled=true;
   try{ const r=await j('/api/code/new-project',{method:'POST',body:JSON.stringify({name,kind})});
     if(r.ok){ m.textContent='Created ✓ — now describe what to build below.'; m.style.color='var(--ok)';
-      await loadProjects(r.path); $('#newproj').style.display='none'; $('#np-name').value=''; }
+      await loadProjects(r.path); $('#newproj').style.display='none'; $('#np-name').value=''; setupSummary(); }
     else { m.textContent=r.error||'Could not create.'; m.style.color='var(--err)'; }
   }catch(e){ m.textContent=e===401?'Admin only.':'Could not create.'; m.style.color='var(--err)'; }
   $('#np-create').disabled=false;
 };
 
-// Ambitious example prompts — click to fill the box. Sets the bar: whole apps.
-const EXAMPLES=[
-  'Build a GTK desktop app: a window with a sidebar list of notes and a + button that adds one, saved to ~/.mentor-notes.json. Clean, modern look.',
-  'Make a Qt (PySide6) Pomodoro timer with start/pause/reset, a big countdown, and a system-tray icon.',
-  'Build a Flask web dashboard showing live CPU, RAM and disk usage with small charts, auto-refreshing every 2 seconds.',
-  'Create a command-line tool that watches a folder and converts every new image to WebP, printing a summary.',
-  'Add a Settings dialog with a dark-mode toggle that persists between launches.',
-];
-(function(){ const c=$('#ex-chips'); if(!c) return;
-  c.innerHTML='<span class="faint" style="font-size:11px;align-self:center">Try:</span>'+
-    EXAMPLES.map((e,i)=>'<button class="btn mini ex-chip" data-i="'+i+'" type="button">'+esc(e.split(':')[0].split(' ').slice(0,4).join(' '))+'…</button>').join('');
-  c.querySelectorAll('.ex-chip').forEach(b=>b.onclick=()=>{ $('#instr').value=EXAMPLES[+b.dataset.i]; $('#instr').focus(); });
+// Example chips under the composer
+(function(){ const c=$('#ex-foot'); if(!c) return;
+  EXAMPLES.forEach((e)=>{
+    const b=document.createElement('button');
+    b.type='button'; b.className='ex';
+    b.textContent=e.split(':')[0].split(' ').slice(0,4).join(' ')+'…';
+    b.title=e;
+    b.onclick=()=>{ $('#instr').value=e; $('#instr').focus(); autoGrow($('#instr')); };
+    c.appendChild(b);
+  });
 })();
 
-function stageHtml(s){ return '<div class="row"><span class="spin"></span><span class="muted" style="font-size:13px">'+esc(s)+'</span></div>'; }
+// ── Rendering ─────────────────────────────────────────────────────────────
+
 function colorDiff(diff){
   const lines=String(diff).split('\n').map(l=>{
     let col='var(--dim)';
@@ -1850,40 +1980,161 @@ function colorDiff(diff){
   }).join('\n');
   return '<pre class="diff">'+lines+'</pre>';
 }
-function resultHtml(res){
-  let h='';
-  if(res.branch_created) h+='<div class="faint" style="font-size:12px;margin:8px 0 2px">On branch <b style="color:var(--brass)">'+esc(res.branch_created)+'</b> · not committed</div>';
-  if(res.files_used&&res.files_used.length) h+='<div class="faint" style="font-size:12px;margin-bottom:4px">Files edited: '+res.files_used.map(esc).join(', ')+'</div>';
-  h+='<div class="sec-title">Diff (review &amp; commit yourself)</div>'+colorDiff(res.diff||'(no changes)');
-  if(res.log) h+='<details style="margin-top:8px"><summary class="faint" style="font-size:12px;cursor:pointer">Aider log</summary><pre class="diff" style="max-height:240px">'+esc(res.log)+'</pre></details>';
-  return h;
+
+function diffStats(diff){
+  if(!diff) return null;
+  let plus=0,minus=0;
+  String(diff).split('\n').forEach(l=>{
+    if(l.startsWith('+++')||l.startsWith('---')) return;
+    if(l[0]==='+') plus++; else if(l[0]==='-') minus++;
+  });
+  return {plus,minus};
 }
 
-$('#run-btn').onclick=async()=>{
-  const instr=$('#instr').value.trim();
-  const project=chosenProject(), model=chosenModel();
-  const files=$('#files').value.trim();
-  const msg=$('#run-msg'), prog=$('#prog'), out=$('#result');
-  if(!aiderReady){ msg.textContent='Install Aider first (above).'; return; }
-  if(!instr){ msg.textContent='Describe the change first.'; return; }
-  if(!project){ msg.textContent='Pick a repository.'; return; }
-  if(!model){ msg.textContent='Pick a coder model.'; return; }
-  msg.textContent=''; out.innerHTML=''; prog.innerHTML=stageHtml('Starting…'); $('#run-btn').disabled=true;
-  let r; try{ r=await j('/api/code/edit',{method:'POST',body:JSON.stringify({instruction:instr,files:files,project:project,model:model})}); }
-  catch(e){ prog.innerHTML=''; msg.textContent='failed: '+e; $('#run-btn').disabled=false; return; }
-  if(!r.ok){ prog.innerHTML=''; msg.textContent=r.error||'failed'; $('#run-btn').disabled=false; return; }
-  const id=r.job_id;
-  const poll=setInterval(async()=>{
-    let job; try{ job=await j('/api/code/jobs/'+id); }catch(e){ return; }
-    if(job.stage) prog.innerHTML=stageHtml(job.stage);
-    if(job.status==='done'||job.status==='failed'){ clearInterval(poll); $('#run-btn').disabled=false; prog.innerHTML='';
-      const res=job.result||{};
-      if(job.status==='failed'||res.error){ msg.textContent=res.error||'Edit failed.'; if(res.log) out.innerHTML='<pre class="diff" style="max-height:240px">'+esc(res.log)+'</pre>'; return; }
-      msg.textContent=res.response||'Done — review the diff (nothing committed).';
-      out.innerHTML=resultHtml(res);
+function renderTurn(t){
+  if(t.kind==='user'){
+    return '<div class="turn"><div class="bub user"><div class="lbl">You</div>'+esc(t.text)+'</div></div>';
+  }
+  if(t.kind==='narr'){
+    return '<div class="turn"><div class="narr'+(t.warn?' warn':'')+'">'+(t.html||esc(t.text||''))+'</div></div>';
+  }
+  if(t.kind==='pending'){
+    const stage = t.stage || 'starting…';
+    return '<div class="turn"><div class="bub ai">'
+      +'<div class="lbl">Mentor</div>'
+      +'<div class="pending"><span class="spin"></span><span class="stage">'+esc(stage)+'</span><span class="elapsed" data-since="'+(t.since||Date.now())+'">0s</span></div>'
+      +'<div class="progress"></div>'
+      +'</div></div>';
+  }
+  if(t.kind==='error'){
+    let h='<div class="turn"><div class="bub ai err"><div class="lbl">Mentor</div>'+esc(t.text||'Something went wrong.');
+    if(t.log){ h+='<details><summary>What Aider reported</summary><pre class="diff" style="max-height:240px">'+esc(t.log)+'</pre></details>'; }
+    h+='</div></div>';
+    return h;
+  }
+  if(t.kind==='ai'){
+    const r=t.result||{};
+    const stats=diffStats(r.diff);
+    const summary = r.response && r.response.trim() ? r.response.trim() : 'Done — review the diff below. Nothing has been committed.';
+    let h='<div class="turn"><div class="bub ai"><div class="lbl">Mentor</div>'+esc(summary);
+    let meta='';
+    if(r.branch_created) meta+='<span class="branch-tag">'+esc(r.branch_created)+'</span>';
+    if(stats) meta+='<span class="stat"><span class="plus">+'+stats.plus+'</span> / <span class="minus">−'+stats.minus+'</span>'+(r.files_used&&r.files_used.length?(' across '+r.files_used.length+' file'+(r.files_used.length===1?'':'s')):'')+'</span>';
+    if(meta) h+='<div style="margin-top:10px">'+meta+'</div>';
+    if(r.diff && r.diff.trim()){
+      h+='<details><summary>See the diff</summary>'+colorDiff(r.diff)+'</details>';
     }
-  }, 2000);
+    if(r.files_used && r.files_used.length){
+      h+='<details><summary>Files edited ('+r.files_used.length+')</summary><div class="file-list">'+r.files_used.map(f=>'<span class="f">'+esc(f)+'</span>').join('')+'</div></details>';
+    }
+    if(r.log){
+      h+='<details><summary>Aider\'s raw log</summary><pre class="diff" style="max-height:240px">'+esc(r.log)+'</pre></details>';
+    }
+    h+='</div></div>';
+    return h;
+  }
+  return '';
+}
+
+function emptyState(){
+  return '<div class="empty"><b>Vibe-code a real repo.</b><br>Describe what to build below — a feature, a redesign, or a whole new app.<br>Mentor edits files on a safe branch and shows you the diff. Nothing is committed.</div>';
+}
+
+function renderConvo(){
+  const el=$('#convo');
+  if(!turns.length){ el.innerHTML=emptyState(); return; }
+  el.innerHTML = turns.map(renderTurn).join('');
+}
+
+function scrollToBottom(){
+  requestAnimationFrame(()=>{ window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); });
+}
+
+function pushTurn(t){ turns.push(t); saveTurns(); renderConvo(); scrollToBottom(); return turns.length-1; }
+function updateTurn(i, patch){ if(i<0||i>=turns.length) return; turns[i]=Object.assign({},turns[i],patch); saveTurns(); renderConvo(); }
+function replaceTurn(i, t){ if(i<0||i>=turns.length) return; turns.splice(i,1,t); saveTurns(); renderConvo(); scrollToBottom(); }
+
+function tickElapsed(){
+  document.querySelectorAll('.elapsed[data-since]').forEach(el=>{
+    const since=parseInt(el.dataset.since||'0',10); if(!since)return;
+    const s=Math.max(1,Math.round((Date.now()-since)/1000));
+    el.textContent = s<60 ? s+'s' : Math.floor(s/60)+'m '+(s%60)+'s';
+  });
+}
+function startElapsed(){ if(elapsedTimer) return; elapsedTimer=setInterval(tickElapsed,1000); }
+function stopElapsed(){ if(elapsedTimer){clearInterval(elapsedTimer); elapsedTimer=null;} }
+
+// ── Composer ──────────────────────────────────────────────────────────────
+
+function autoGrow(t){ if(!t) return; t.style.height='auto'; t.style.height=Math.min(200, t.scrollHeight)+'px'; }
+const instrEl=$('#instr');
+instrEl.addEventListener('input', e=>autoGrow(e.target));
+instrEl.addEventListener('keydown', e=>{
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); onSend(); }
+});
+
+$('#run-btn').onclick=onSend;
+$('#convo-clear').onclick=()=>{
+  if(busy){ if(!confirm('A run is in progress. Cancel it and start a fresh conversation?')) return; if(activePoll){clearInterval(activePoll); activePoll=null;} stopElapsed(); busy=false; $('#run-btn').disabled=false; }
+  else if(turns.length && !confirm('Start a fresh conversation? Past turns will be cleared.')) return;
+  turns=[]; saveTurns(); renderConvo();
 };
+
+async function onSend(){
+  if(busy) return;
+  const text=(instrEl.value||'').trim();
+  if(!text) return;
+  if(!aiderReady){ pushTurn({kind:'narr', warn:true, html:'<b>Aider isn\'t installed yet.</b> Open the setup panel above to install it.'}); toggleSetup(true); return; }
+  const project=chosenProject(), model=chosenModel();
+  if(!project){ pushTurn({kind:'narr', warn:true, html:'<b>No repository picked.</b> Open the setup panel above to choose one.'}); toggleSetup(true); return; }
+  if(!model){ pushTurn({kind:'narr', warn:true, html:'<b>No coder model picked.</b> Open the setup panel above to choose one.'}); toggleSetup(true); return; }
+  const files=($('#files')?$('#files').value:'').trim();
+
+  // Clear the composer the moment the user sends — like a real chat.
+  instrEl.value=''; autoGrow(instrEl);
+  busy=true; $('#run-btn').disabled=true;
+
+  pushTurn({kind:'user', text});
+  pushTurn({kind:'narr', html:'Working in <b>'+esc(shortPath(project))+'</b> with <b>'+esc(shortModel(model))+'</b> on a safe branch.'+(files?' Focusing on <b>'+esc(files)+'</b>.':'')});
+  const pIdx = pushTurn({kind:'pending', stage:'starting…', since:Date.now()});
+  startElapsed();
+
+  let r;
+  try{
+    r=await j('/api/code/edit',{method:'POST',body:JSON.stringify({instruction:text,files,project,model})});
+  } catch(e){
+    stopElapsed();
+    replaceTurn(pIdx, {kind:'error', text:'Couldn\'t start the edit: '+(e===401?'admin only — sign in as an admin.':String(e))});
+    busy=false; $('#run-btn').disabled=false; return;
+  }
+  if(!r.ok){
+    stopElapsed();
+    replaceTurn(pIdx, {kind:'error', text:r.error||'Couldn\'t start the edit.'});
+    busy=false; $('#run-btn').disabled=false; return;
+  }
+
+  const id=r.job_id;
+  activePoll=setInterval(async()=>{
+    let job; try{ job=await j('/api/code/jobs/'+id); }catch(e){ return; }
+    if(job.stage && turns[pIdx] && turns[pIdx].kind==='pending') updateTurn(pIdx, {stage: job.stage});
+    if(job.status==='done' || job.status==='failed'){
+      clearInterval(activePoll); activePoll=null; stopElapsed();
+      const res=job.result||{};
+      if(job.status==='failed' || res.error){
+        replaceTurn(pIdx, {kind:'error', text: res.error || 'The edit didn\'t finish.', log: res.log||''});
+      } else {
+        replaceTurn(pIdx, {kind:'ai', result: res});
+      }
+      busy=false; $('#run-btn').disabled=false;
+    }
+  }, 1500);
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+
+turns = loadTurns();
+renderConvo();
+autoGrow(instrEl);
 load();
 </script>
 <script src="/static/js/concierge.js"></script>
