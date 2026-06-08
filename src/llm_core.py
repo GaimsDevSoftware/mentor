@@ -82,6 +82,34 @@ def seconds_since_model_activity(url: str, model: str) -> Optional[float]:
         return None
     return max(0.0, time.time() - ts)
 
+
+# ── Rate-limit / quota header capture ──
+# Stores the latest rate-limit info per endpoint host so the UI can display
+# remaining quota without hitting the provider's billing API.
+_ratelimit_cache: Dict[str, Dict] = {}  # host → {remaining_requests, remaining_tokens, limit_requests, limit_tokens, reset, ts}
+
+def _capture_ratelimit_headers(url: str, model: str, headers) -> None:
+    """Extract x-ratelimit-* headers from an API response and store them."""
+    try:
+        host = _host_key(url)
+        info = {"ts": time.time(), "model": model}
+        for key in ("x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens",
+                     "x-ratelimit-limit-requests", "x-ratelimit-limit-tokens",
+                     "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens",
+                     "x-ratelimit-remaining", "x-ratelimit-limit", "x-ratelimit-reset",
+                     "retry-after", "x-credits-remaining"):
+            v = headers.get(key)
+            if v is not None:
+                info[key] = str(v)
+        if len(info) > 2:
+            _ratelimit_cache[host] = info
+    except Exception:
+        pass
+
+def get_ratelimit_info() -> Dict[str, Dict]:
+    """Return current rate-limit info for all endpoints. Called by the UI."""
+    return dict(_ratelimit_cache)
+
 def _host_key(url: str) -> str:
     from urllib.parse import urlsplit
     s = urlsplit(url)
@@ -873,6 +901,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         raise HTTPException(502, f"POST {target_url} failed: {e}")
     if not r.is_success:
         raise HTTPException(502, f"Upstream {target_url} -> {r.status_code}: {r.text}")
+    _capture_ratelimit_headers(target_url, model, r.headers)
     data = r.json()
     try:
         if provider == "anthropic":
@@ -1041,6 +1070,7 @@ async def llm_call_async(
                 raise HTTPException(r.status_code, friendly)
             logger.info(f"LLM async call to {target_url} succeeded in {duration:.2f}s (attempt {attempt})")
             _clear_host_dead(target_url)
+            _capture_ratelimit_headers(target_url, model, r.headers)
             data = r.json()
             try:
                 if provider == "anthropic":

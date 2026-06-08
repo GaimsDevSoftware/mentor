@@ -410,6 +410,16 @@ def setup_manage_routes() -> APIRouter:
         except Exception:
             return {"heals": []}
 
+    @router.get("/api/manage/quota")
+    async def quota_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Live rate-limit / quota info per provider, captured from API response
+        headers. Shows remaining requests/tokens where the provider reports them."""
+        try:
+            from src.llm_core import get_ratelimit_info
+            return {"providers": get_ratelimit_info()}
+        except Exception:
+            return {"providers": {}}
+
     @router.post("/api/manage/setting")
     async def set_setting(payload: Dict[str, Any] = Body(...),
                           _admin: str = Depends(require_admin)) -> Dict[str, Any]:
@@ -1726,7 +1736,8 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="trace" class="panel"><div class="card"><b>Activity trace</b><div class="sub">What the agent has been doing — every tool call the Aegis firewall scored (and whether it was allowed/warned/blocked). Newest first.</div></div>
  <div id="trace-out" class="muted">loading…</div></div>
 <div id="usage" class="panel"><div class="card"><b>Usage &amp; cost</b><div class="sub">Tokens per model endpoint. <b>Local</b> = free &amp; private. <b>Cloud</b> counts against your usage limits — watch these.</div></div>
- <div id="usage-out" class="muted">loading…</div></div>
+ <div id="usage-out" class="muted">loading…</div>
+ <div class="card"><b>Live provider quotas</b><div class="sub">Remaining requests/tokens as reported by each provider's API headers. Updates after every API call.</div><div id="quota-out" class="muted" style="margin-top:8px">no data yet — make an API call first</div></div></div>
 <div id="connect" class="panel"></div>
 <div id="sources" class="panel"></div>
 <div id="users" class="panel"></div>
@@ -1835,7 +1846,7 @@ function activateTab(name){
   if(t.dataset.t==='toolsdata')loadToolsData();
   if(t.dataset.t==='diag')runDiag();
   if(t.dataset.t==='trace')runTrace();
-  if(t.dataset.t==='usage')runUsage();
+  if(t.dataset.t==='usage'){runUsage();loadQuota();}
   if(t.dataset.t==='code'){aiderStatus();aiderPlan();}
   if(t.dataset.t==='selfcoder')scLoad();
   if(t.dataset.t==='forge')forgeInit();
@@ -2319,6 +2330,29 @@ async function runUsage(){
       +`<span class="muted" style="font-size:12px">today ${tok(e.today)} tok · month ${tok(e.month)} tok</span></div>`;
   }).join('')+'</div>';
 }
+async function loadQuota(){
+  const el=$('#quota-out'); if(!el) return;
+  let d; try{ d=await j('/api/manage/quota'); }catch(e){ return; }
+  const provs=d.providers||{};
+  const keys=Object.keys(provs);
+  if(!keys.length){ el.textContent='No quota data yet — make an API call to a cloud provider first.'; return; }
+  el.innerHTML=keys.map(host=>{
+    const p=provs[host];
+    const parts=[];
+    const rr=p['x-ratelimit-remaining-requests']||p['x-ratelimit-remaining'];
+    const rt=p['x-ratelimit-remaining-tokens'];
+    const lr=p['x-ratelimit-limit-requests']||p['x-ratelimit-limit'];
+    const lt=p['x-ratelimit-limit-tokens'];
+    const cr=p['x-credits-remaining'];
+    if(rr!=null) parts.push('<b>'+rr+'</b>'+(lr?'/'+lr:'')+' requests left');
+    if(rt!=null) parts.push('<b>'+rt+'</b>'+(lt?'/'+lt:'')+' tokens left');
+    if(cr!=null) parts.push('<b>$'+cr+'</b> credits remaining');
+    if(!parts.length) parts.push('<span class="faint">headers present but no remaining-count</span>');
+    const age=p.ts?Math.round((Date.now()/1000-p.ts))+'s ago':'';
+    return '<div style="padding:6px 0;border-top:1px solid var(--sep)"><b>'+esc(host)+'</b> <span class="muted" style="font-size:11px">'+esc(p.model||'')+' · '+age+'</span><div style="font-size:12px;margin-top:2px">'+parts.join(' · ')+'</div></div>';
+  }).join('');
+}
+
 async function runTrace(){
   const el=$('#trace-out'); el.innerHTML='<div class="muted">loading…</div>';
   let d; try{ d=await j('/api/manage/trace'); }catch(e){ el.innerHTML='<div class="card"><span class="pill err">error</span> could not load trace</div>'; return; }
