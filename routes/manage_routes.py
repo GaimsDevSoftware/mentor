@@ -1289,6 +1289,49 @@ def setup_manage_routes() -> APIRouter:
                 "fallbacks": {"default_model": default_fb, "utility_model": utility_fb, "vision_model": vision_fb},
                 "sources": sorted(endpoints), "source_count": nsrc, "note": (warn + vis_note).strip()}
 
+    @router.post("/api/setup/vision-context")
+    async def vision_context(payload: Dict[str, Any], _admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Describe a screenshot the user opted to share with the Setup assistant.
+        Uses vision_model (the role auto_roles assigns). Returns a short, factual
+        description of what's on screen so the concierge can refer to it.
+        ASK-FIRST is the FRONTEND's responsibility — we just describe an image we
+        were given."""
+        from src.settings import get_setting as _gs
+        spec = (_gs("vision_model", "") or "").strip()
+        if not spec:
+            return {"ok": False, "need_vision": True,
+                    "detail": "No vision model is set. Pick one in setup (auto_roles can do it) so the assistant can see your screen."}
+        b64 = str(payload.get("image_b64") or "").strip()
+        # Accept data:image/png;base64,XXX too — strip the prefix.
+        if b64.startswith("data:"):
+            b64 = b64.split(",", 1)[-1]
+        if not b64 or len(b64) < 100:
+            return {"ok": False, "detail": "no usable image"}
+        prompt = str(payload.get("prompt") or
+                     "Describe what's on this screen in 3-5 short sentences. List the app/page name, the key "
+                     "elements I'd need to act on (open dialogs, error messages, form fields, selected items), "
+                     "and any visible problems. Be concrete, no filler."
+                     ).strip()
+        try:
+            from src.ai_interaction import _resolve_model
+            from src.llm_core import complete_with_continuation
+            url, model, headers = _resolve_model(spec)
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64," + b64}},
+                ],
+            }]
+            reply = await complete_with_continuation(url, model, messages,
+                                                     headers=headers or {}, max_tokens=500, timeout=90)
+        except Exception as e:
+            return {"ok": False, "detail": "Vision call failed: %s" % e}
+        text = (reply or "").strip()
+        if not text:
+            return {"ok": False, "detail": "vision model returned nothing"}
+        return {"ok": True, "description": text, "model": spec}
+
     @router.get("/api/setup/role-status")
     async def role_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         """Which important model roles are still empty — so the UI can urgently

@@ -76,12 +76,80 @@
       }
     });
   }
-  function openP() { panel.style.display = 'flex'; launch.style.display = 'none'; try { localStorage.removeItem(CLOSED); } catch (e) {} render(); if (!started && !busy) kickoff(); }
+  function openP() { panel.style.display = 'flex'; launch.style.display = 'none'; try { localStorage.removeItem(CLOSED); } catch (e) {} render(); offerScreenContext(); if (!started && !busy) kickoff(); }
   function minP() { panel.style.display = 'none'; launch.style.display = 'flex'; }
   function closeP() { panel.style.display = 'none'; launch.style.display = 'none'; try { localStorage.setItem(CLOSED, '1'); } catch (e) {} }
   panel.querySelector('#mc-min').onclick = minP;
   panel.querySelector('#mc-close').onclick = closeP;
   launch.onclick = openP;
+
+  // ── screen-share context (ASK FIRST every session) ─────────────────────────
+  // Most of the time the thing the user wants help with is right there on
+  // screen. Offer (once per session, opt-in) to capture a frame and feed it to
+  // the vision model so the assistant has visual context for the conversation.
+  var SCREEN_ASKED_KEY = 'mentor-asst-screenasked';  // sessionStorage flag
+  function offerScreenContext() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return; // no API
+    try { if (sessionStorage.getItem(SCREEN_ASKED_KEY) === '1') return; } catch (e) {}
+    if (log.querySelector('.mc-screenoffer')) return;
+    var offer = document.createElement('div');
+    offer.className = 'mc-screenoffer mc-b mc-a';
+    offer.innerHTML =
+      '<div style="margin-bottom:6px">📷 <b>Vil du dele skjermen?</b> Jeg får ofte mer kontekst — det du vil ha hjelp med ligger gjerne åpent allerede.</div>' +
+      '<div class="muted" style="font-size:11px;margin-bottom:8px">Tips: del skjermen i to (snap Mentor til den ene siden og det du vil vise på den andre), så ser jeg begge deler i samme bilde. Du må velge skjerm hver gang; bildet brukes kun for å beskrive konteksten.</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+      '<button class="mc-screen-yes" style="background:var(--accent,#0a84ff);color:#fff;border:none;padding:6px 12px;border-radius:6px;font:inherit;font-size:12px;cursor:pointer">Del skjermen</button>' +
+      '<button class="mc-screen-no" style="background:transparent;color:inherit;border:1px solid var(--sep-2,rgba(255,255,255,.14));padding:6px 12px;border-radius:6px;font:inherit;font-size:12px;cursor:pointer">Nei takk</button>' +
+      '</div>';
+    log.appendChild(offer); log.scrollTop = log.scrollHeight;
+    offer.querySelector('.mc-screen-no').onclick = function () {
+      try { sessionStorage.setItem(SCREEN_ASKED_KEY, '1'); } catch (e) {}
+      offer.remove();
+    };
+    offer.querySelector('.mc-screen-yes').onclick = async function () {
+      try { sessionStorage.setItem(SCREEN_ASKED_KEY, '1'); } catch (e) {}
+      offer.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+      var status = document.createElement('div');
+      status.className = 'mc-n'; status.textContent = 'Velg skjerm / vindu…';
+      log.appendChild(status); log.scrollTop = log.scrollHeight;
+      var stream = null;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: 'monitor' }, audio: false });
+      } catch (e) {
+        status.textContent = 'Skjermdeling avbrutt.'; offer.remove(); return;
+      }
+      try {
+        var v = document.createElement('video'); v.srcObject = stream;
+        await new Promise(function (res) { v.onloadedmetadata = function () { v.play().then(res, res); }; });
+        await new Promise(function (res) { setTimeout(res, 220); });  // ensure first frame is painted
+        var w = Math.min(v.videoWidth || 1280, 1600), h = Math.round(v.videoHeight * (w / (v.videoWidth || 1280)));
+        var c = document.createElement('canvas'); c.width = w; c.height = h;
+        c.getContext('2d').drawImage(v, 0, 0, w, h);
+        var b64 = c.toDataURL('image/png', 0.92);
+        stream.getTracks().forEach(function (t) { t.stop(); });
+        status.textContent = 'Analyserer skjermbildet med synsmodellen…';
+        var r;
+        try { r = await J('/api/setup/vision-context', { method: 'POST', body: JSON.stringify({ image_b64: b64 }) }); }
+        catch (e) { status.textContent = 'Kunne ikke kontakte synsmodellen.'; offer.remove(); return; }
+        if (r && r.need_vision) {
+          status.textContent = 'Ingen synsmodell satt — kjør auto_roles for å fylle vision_model først.'; offer.remove(); return;
+        }
+        if (!r || !r.ok) {
+          status.textContent = (r && r.detail) || 'Synsmodellen feilet.'; offer.remove(); return;
+        }
+        // Feed the description into the conversation as if the user told us.
+        var msg = '[Jeg har akkurat delt skjermen min. Slik ser den ut nå:]\n' + r.description;
+        ASST.push({ role: 'user', content: msg }); save();
+        status.textContent = '✓ La til skjermbildet som kontekst.';
+        offer.remove();
+        // Nudge the assistant to USE the new context now.
+        if (!busy) { busy = true; work(1); try { await turn(6); } finally { busy = false; work(0); } }
+      } catch (e) {
+        try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
+        status.textContent = 'Klarte ikke å lage skjermbilde: ' + e; offer.remove();
+      }
+    };
+  }
 
   (function () {
     var h = panel.querySelector('#mc-head'), dx, dy, drag = false;
