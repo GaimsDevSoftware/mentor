@@ -24,6 +24,7 @@ import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import selfCoderModule from './js/selfCoder.js';
+import chatFloatModule from './js/chatFloat.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -4000,6 +4001,7 @@ function startOdysseusApp() {
   // Ensure proper initial state
   voiceRecorderModule.init();
   if (censorModule) censorModule.init();
+  chatFloatModule.init();
 
   // Auto-focus message input on load
   const msgEl = document.getElementById('message');
