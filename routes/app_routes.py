@@ -2027,9 +2027,12 @@ function renderTurn(t){
   }
   if(t.kind==='pending'){
     const stage = t.stage || 'starting…';
+    const since = t.since || Date.now();
+    const secs = Math.max(1, Math.round((Date.now() - since) / 1000));
+    const elapsed = secs < 60 ? secs+'s' : Math.floor(secs/60)+'m '+(secs%60)+'s';
     return '<div class="turn"><div class="bub ai">'
       +'<div class="lbl">Mentor</div>'
-      +'<div class="pending"><span class="spin"></span><span class="stage">'+esc(stage)+'</span><span class="elapsed" data-since="'+(t.since||Date.now())+'">0s</span></div>'
+      +'<div class="pending"><span class="spin"></span><span class="stage">'+esc(stage)+'</span><span class="elapsed" data-since="'+since+'">'+elapsed+'</span></div>'
       +'<div class="progress"></div>'
       +'</div></div>';
   }
@@ -2078,7 +2081,16 @@ function scrollToBottom(){
 }
 
 function pushTurn(t){ turns.push(t); saveTurns(); renderConvo(); scrollToBottom(); return turns.length-1; }
-function updateTurn(i, patch){ if(i<0||i>=turns.length) return; Object.assign(turns[i],patch); renderConvo(); }
+function updateTurn(i, patch){
+  if(i<0||i>=turns.length) return; Object.assign(turns[i],patch);
+  // Surgical DOM update for pending turns — avoids full re-render which resets the elapsed timer
+  if(turns[i].kind==='pending' && patch.stage){
+    const convo=$('#convo'); if(!convo) return;
+    const bubbles=convo.querySelectorAll('.turn');
+    if(bubbles[i]){ const s=bubbles[i].querySelector('.stage'); if(s){ s.textContent=patch.stage; return; } }
+  }
+  renderConvo();
+}
 function replaceTurn(i, t){ if(i<0||i>=turns.length) return; turns.splice(i,1,t); saveTurns(); renderConvo(); scrollToBottom(); }
 
 function tickElapsed(){
