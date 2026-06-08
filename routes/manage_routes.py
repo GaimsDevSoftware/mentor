@@ -707,6 +707,7 @@ def setup_manage_routes() -> APIRouter:
         # Live setup state — so the guide tells the user EXACTLY what's left and
         # never re-asks about things already done.
         eps = []
+        nmodels = 0
         try:
             from core.database import SessionLocal, ModelEndpoint
             db = SessionLocal()
@@ -717,6 +718,7 @@ def setup_manage_routes() -> APIRouter:
                         ms = _json.loads(e.cached_models) if e.cached_models else []
                     except Exception:
                         ms = []
+                    nmodels += len(ms)
                     eps.append("%s [%s, %d models, e.g. %s]" % (
                         e.name, "local" if local else "cloud", len(ms),
                         (", ".join(str(x) for x in ms[:3]) or "—")))
@@ -807,6 +809,19 @@ def setup_manage_routes() -> APIRouter:
             except Exception:
                 action = None
             text = (text[:m.start()] + text[m.end():]).strip()
+        # AUTHORITATIVE GATE: never honor a 'done' the model claims unless setup is
+        # really finished — a usable work model connected AND a default chosen.
+        # Protects against a weak/hallucinating guide declaring victory too early.
+        if action and action.get("type") == "done":
+            if not (nmodels > 0 and default_model):
+                missing = []
+                if nmodels <= 0:
+                    missing.append("connect a work model (Local or Cloud)")
+                if not default_model:
+                    missing.append("choose a default work model")
+                action = None
+                text = ("Almost — I can't call it done yet: you still need to "
+                        + " and ".join(missing) + ". Want me to set that up now?")
         return {"ok": True, "reply": text or "(…)", "action": action}
 
     @router.get("/api/manage/teacher-model-options")
