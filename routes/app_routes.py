@@ -1863,6 +1863,14 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  .theme-switch button{background:transparent;border:none;color:var(--dim);padding:5px 11px;border-radius:99px;cursor:pointer;font:500 11px/1 inherit}
  .theme-switch button[aria-current="true"]{background:var(--txt);color:var(--bg)}
  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--sep-2);border-radius:5px}
+ .model-picker-wrap{position:relative}
+ .model-dropdown{display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:280px;overflow-y:auto;background:var(--surface-2);border:1px solid var(--sep-2);border-radius:10px;margin-top:4px;box-shadow:0 12px 32px rgba(0,0,0,.4);backdrop-filter:blur(16px)}
+ .model-dropdown.mp-open{display:block}
+ .mp-group{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);padding:8px 12px 4px;font-weight:600}
+ .mp-item{padding:7px 12px;font-size:13px;cursor:pointer;color:var(--txt);border-radius:6px;margin:1px 4px;transition:background .1s}
+ .mp-item:hover{background:var(--tint-2)}
+ .mp-item.mp-active{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent);font-weight:500}
+ .mp-empty{padding:12px;text-align:center;color:var(--faint);font-size:12px;font-style:italic}
 </style></head><body>
 <nav class="topbar"><a class="jump" href="/app">Home</a><a class="jump" href="/">Chat</a><a class="jump" href="/app/office">Office</a><a class="jump" href="/app/code">Code</a><a class="jump" href="/app/cookbook">Cookbook</a><a class="jump" href="/manage">Admin</a>
  <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
@@ -1905,7 +1913,11 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
       <div id="np-msg" class="faint" style="font-size:12px;margin-top:6px">Mentor scaffolds a runnable starter app + git repo under <span class="mono">~/mentor-projects</span>, then you describe what to build below.</div>
     </div>
     <label class="lab">Coder model</label>
-    <select id="model" class="fld"><option>loading models…</option></select>
+    <div class="model-picker-wrap" id="model-picker-wrap">
+      <input id="model-search" class="fld" placeholder="Search models…" autocomplete="off">
+      <div id="model-dropdown" class="model-dropdown"></div>
+      <input type="hidden" id="model" value="">
+    </div>
     <label class="lab">Files to focus on (optional)</label>
     <input id="files" class="fld" placeholder="leave blank — the AI picks the files itself">
     <div class="faint" style="font-size:11px;margin-top:10px">Edits run on a feature branch (never main) and are <b>not committed</b> — you review the diff, then commit what you like.</div>
@@ -2018,17 +2030,42 @@ async function loadProjects(cur){
 async function loadModels(cur){
   let d={}; try{ d=await j('/api/code/models'); }catch(e){}
   MODELS=(d&&d.models)||[]; cur=cur||(d&&d.current)||'';
-  const sel=$('#model'); sel.innerHTML='';
-  if(!MODELS.length){ const o=document.createElement('option');o.value='';o.textContent='(no local models running — start one in Cookbook, or pick custom)';sel.appendChild(o); }
-  MODELS.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;if(m===cur)o.selected=true;sel.appendChild(o);});
-  const oth=document.createElement('option');oth.value='__other__';oth.textContent='Other / custom…';sel.appendChild(oth);
-  if(cur && MODELS.indexOf(cur)<0){ oth.selected=true; showModelCustom(cur); }
-  sel.onchange=()=>{ if(sel.value==='__other__') showModelCustom(''); else hideModelCustom(); setupSummary(); };
+  const hidden=$('#model'); hidden.value=cur;
+  const search=$('#model-search');
+  const dd=$('#model-dropdown');
+  // Categorize
+  const local=[],cloud=[];
+  MODELS.forEach(m=>{(m.startsWith('ollama/')?local:cloud).push(m);});
+  function renderList(filter){
+    const q=(filter||'').toLowerCase();
+    dd.innerHTML='';
+    function addGroup(label,items){
+      const filtered=q?items.filter(m=>m.toLowerCase().includes(q)):items;
+      if(!filtered.length) return;
+      const hdr=document.createElement('div');hdr.className='mp-group';hdr.textContent=label;dd.appendChild(hdr);
+      filtered.forEach(m=>{
+        const row=document.createElement('div');row.className='mp-item'+(m===hidden.value?' mp-active':'');
+        row.dataset.model=m;row.textContent=m.replace(/^ollama\//,'');
+        row.onclick=()=>{hidden.value=m;search.value=m;dd.classList.remove('mp-open');setupSummary();renderList('');};
+        dd.appendChild(row);
+      });
+    }
+    addGroup('Local',local);
+    addGroup('Cloud / API',cloud);
+    if(!dd.children.length){const e=document.createElement('div');e.className='mp-empty';e.textContent=q?'No matches':'No models available';dd.appendChild(e);}
+  }
+  renderList('');
+  search.value=cur||'';
+  search.onfocus=()=>{dd.classList.add('mp-open');renderList(search.value);};
+  search.oninput=()=>{dd.classList.add('mp-open');renderList(search.value);};
+  document.addEventListener('click',e=>{if(!e.target.closest('#model-picker-wrap'))dd.classList.remove('mp-open');});
+  search.onkeydown=e=>{
+    if(e.key==='Escape'){dd.classList.remove('mp-open');search.blur();}
+    if(e.key==='Enter'){e.preventDefault();const first=dd.querySelector('.mp-item');if(first){first.click();search.blur();}}
+  };
 }
-function showModelCustom(v){ let el=$('#model-custom'); if(!el){ el=document.createElement('input'); el.id='model-custom'; el.className='fld'; el.placeholder='e.g. ollama/qwen2.5-coder:7b'; el.style.marginTop='8px'; $('#model').insertAdjacentElement('afterend',el); el.addEventListener('input', setupSummary); } el.value=v||''; el.style.display=''; }
-function hideModelCustom(){ const el=$('#model-custom'); if(el) el.style.display='none'; }
 function chosenProject(){ const s=$('#proj'); if(!s) return ''; return s.value==='__other__'?($('#proj-path').value||'').trim():s.value; }
-function chosenModel(){ const s=$('#model'); if(!s) return ''; return s.value==='__other__'?(($('#model-custom')||{}).value||'').trim():s.value; }
+function chosenModel(){ return ($('#model')||{}).value||''; }
 
 async function installAider(){
   const msg=$('#inst-msg'); const b=$('#inst-btn'); if(b)b.disabled=true; msg.textContent='Installing (isolated — can take a few minutes)…';
