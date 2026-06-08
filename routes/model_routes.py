@@ -1778,13 +1778,48 @@ def setup_model_routes(model_discovery):
 
     @router.get("/tools")
     def list_tools():
-        """List all available tools with their enabled/disabled status."""
+        """List all available tools with status, a plain description, and a category
+        so the UI can group them meaningfully instead of a flat id list."""
         from src.agent_tools import TOOL_TAGS
+        try:
+            from src.tool_index import BUILTIN_TOOL_DESCRIPTIONS as _DESC
+        except Exception:
+            _DESC = {}
+
+        def _cat(t):
+            t = t.lower()
+            if "email" in t:
+                return "Email"
+            if "document" in t or "suggest_doc" in t:
+                return "Documents"
+            if "image" in t:
+                return "Media"
+            if "calendar" in t or "contact" in t or "reminder" in t:
+                return "Productivity"
+            if t in ("bash", "python", "read_file", "write_file") or "code" in t:
+                return "Code"
+            if "web" in t or "search" in t or "research" in t:
+                return "Web & research"
+            if "session" in t or "chat" in t:
+                return "Chats"
+            if "memory" in t or "skill" in t:
+                return "Knowledge"
+            if any(k in t for k in ("model", "endpoint", "serve", "download", "cached", "cookbook")):
+                return "Models"
+            if "agent" in t or "team" in t:
+                return "Agents"
+            if t.startswith("manage_") or any(k in t for k in ("webhook", "token", "mcp", "task", "setting", "api")):
+                return "System"
+            return "Other"
+
         settings = _load_settings()
         disabled = set(settings.get("disabled_tools", []))
         tools = []
         for tag in sorted(TOOL_TAGS):
-            tools.append({"id": tag, "enabled": tag not in disabled})
+            desc = (_DESC.get(tag, "") or "").split(". ")[0].strip()
+            if desc and not desc.endswith("."):
+                desc += "."
+            tools.append({"id": tag, "enabled": tag not in disabled, "desc": desc, "cat": _cat(tag)})
         return {"tools": tools}
 
     class ToolsUpdate(BaseModel):

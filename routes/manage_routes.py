@@ -1678,6 +1678,7 @@ function loadConnect(){
    +'<div class="card"><b>Connected models</b><div id="ep-list" class="muted" style="margin-top:8px">loading…</div></div>'
    +'<div class="card"><b>Your models</b><div class="sub">Only models from sources you added. Check the ones to keep available; uncheck to hide them from chat &amp; roles. Filter by type.</div>'
      +'<div id="mc-filters" class="row" style="gap:6px;flex-wrap:wrap;margin:10px 0"></div>'
+     +'<div class="row" style="gap:8px;margin:0 0 8px"><button class="go" id="mc-all">Check all shown</button><button class="go" id="mc-none">Uncheck all shown</button><span id="mc-bulk-msg" class="muted" style="font-size:12px;align-self:center"></span></div>'
      +'<div id="mc-models" class="muted">loading…</div></div>';
   $('#ct-local').onclick=()=>{$('#cp-local').style.display='';$('#cp-cloud').style.display='none';};
   $('#ct-cloud').onclick=()=>{$('#cp-local').style.display='none';$('#cp-cloud').style.display='';};
@@ -1713,6 +1714,17 @@ let MC=[], MCF='all';
 async function loadModelCatalog(){
   let d={}; try{ d=await j('/api/models/catalog'); }catch(e){ const el=$('#mc-models'); if(el) el.textContent='Could not load models.'; return; }
   MC=d.models||[]; renderMCFilters(); renderMC();
+  const ab=$('#mc-all'), nb=$('#mc-none');
+  if(ab) ab.onclick=()=>mcBulk(true); if(nb) nb.onclick=()=>mcBulk(false);
+}
+async function mcBulk(visible){
+  const ms=MC.filter(m=>MCF==='all'||m.tier===MCF||m.kind===MCF);
+  const changed=ms.filter(m=>m.hidden===visible); // hidden && want-visible, or visible && want-hidden
+  const msg=$('#mc-bulk-msg'); if(msg){ msg.textContent=(visible?'Showing ':'Hiding ')+changed.length+'…'; }
+  await Promise.all(changed.map(m=>fetch('/api/models/visibility',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ep_id:m.ep_id,model:m.model,visible:visible})})));
+  ms.forEach(m=>m.hidden=!visible);
+  if(msg) msg.textContent=(visible?'Checked ':'Unchecked ')+ms.length+' ✓';
+  renderMCFilters(); renderMC();
 }
 function renderMCFilters(){
   const f=$('#mc-filters'); if(!f) return;
@@ -1771,21 +1783,40 @@ async function loadUserList(){
 }
 
 // ── Tools & Data tab: built-in tool toggles + backup/restore (old SPA cards, new design).
+let BT=[];
+function btHuman(s){ return String(s).replace(/_/g,' ').replace(/^\w/,c=>c.toUpperCase()); }
+function btSave(){ const dis=BT.filter(t=>!t.enabled).map(t=>t.id);
+  return fetch('/api/tools',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({disabled:dis})}); }
+function btRender(){
+  const el=$('#bt-list'); if(!el) return;
+  const q=(($('#bt-search')||{}).value||'').toLowerCase().trim();
+  const ts=BT.filter(t=>!q || t.id.includes(q) || btHuman(t.id).toLowerCase().includes(q) || (t.desc||'').toLowerCase().includes(q));
+  const cnt=$('#bt-count'); if(cnt) cnt.textContent=BT.filter(t=>t.enabled).length+' of '+BT.length+' on';
+  if(!ts.length){ el.innerHTML='<span style="font-size:13px">No abilities match.</span>'; return; }
+  const cats={}; ts.forEach(t=>{ const c=t.cat||'Other'; (cats[c]=cats[c]||[]).push(t); });
+  const order=['Code','Web & research','Documents','Media','Models','Chats','Knowledge','Email','Productivity','Agents','System','Other'];
+  const keys=Object.keys(cats).sort((a,b)=>{const ia=order.indexOf(a),ib=order.indexOf(b);return (ia<0?99:ia)-(ib<0?99:ib);});
+  el.innerHTML=keys.map(c=>'<div style="margin-top:14px"><div style="font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin-bottom:2px">'+esc(c)+' <span class="muted" style="font-weight:400">'+cats[c].length+'</span></div>'
+    +cats[c].map(t=>'<label class="row" style="padding:7px 0;border-top:1px solid var(--sep);cursor:pointer;align-items:flex-start;gap:10px">'
+      +'<input type="checkbox" data-tool="'+esc(t.id)+'" '+(t.enabled?'checked':'')+' style="margin-top:3px;flex:0 0 auto">'
+      +'<span class="grow"><div style="font-weight:500">'+esc(btHuman(t.id))+' <span class="muted mono" style="font-size:10px;font-weight:400">'+esc(t.id)+'</span></div>'
+      +(t.desc?'<div class="muted" style="font-size:12px;line-height:1.4">'+esc(t.desc)+'</div>':'')+'</span></label>').join('')+'</div>').join('');
+  el.querySelectorAll('input[data-tool]').forEach(c=>c.onchange=()=>{ const t=BT.find(x=>x.id===c.dataset.tool); if(t)t.enabled=c.checked; btSave(); const cc=$('#bt-count'); if(cc)cc.textContent=BT.filter(x=>x.enabled).length+' of '+BT.length+' on'; });
+}
 async function loadToolsData(){
   const host=$('#toolsdata');
   host.innerHTML=
-   '<div class="card"><b>Built-in tools</b><div class="sub">Turn the AI\'s built-in abilities on or off. Most people can leave these as they are.</div><div id="bt-list" class="muted" style="margin-top:8px">loading…</div></div>'
+   '<div class="card"><b>What the AI can do</b><div class="sub">These are the abilities the assistant can use while it works — each is a tool it can call. Turn off anything you don\'t want it doing; most people leave them on.</div>'
+     +'<div class="row" style="gap:8px;flex-wrap:wrap;margin:10px 0"><input id="bt-search" placeholder="Search abilities…" style="flex:1;min-width:160px"><button class="go" id="bt-all">Enable all</button><button class="go" id="bt-none">Disable all</button><span id="bt-count" class="muted" style="font-size:12px;align-self:center"></span></div>'
+     +'<div id="bt-list" class="muted">loading…</div></div>'
    +'<div class="card"><b>Backup &amp; restore</b><div class="sub">Export everything — memories, presets, settings, skills, preferences — as one JSON file, or restore from one.</div>'
      +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><button class="go" id="bt-export">Export data</button><button class="go" id="bt-import">Import data</button><input type="file" id="bt-file" accept="application/json,.json" style="display:none"><span id="bt-msg" class="muted" style="font-size:12px"></span></div></div>';
-  let d={}; try{ d=await j('/api/tools'); }catch(e){ $('#bt-list').textContent='Could not load tools.'; }
-  const tools=(d&&d.tools)||[];
-  const human=s=>String(s).replace(/_/g,' ').replace(/^\w/,c=>c.toUpperCase());
-  $('#bt-list').innerHTML=tools.length? tools.map(t=>
-    `<label class="row" style="padding:6px 0;border-top:1px solid var(--sep);cursor:pointer"><span class="grow">${esc(human(t.id))} <span class="muted mono" style="font-size:11px">${esc(t.id)}</span></span><input type="checkbox" data-tool="${esc(t.id)}" ${t.enabled?'checked':''}></label>`
-  ).join('') : '<span style="font-size:13px">No tools found.</span>';
-  async function saveTools(){ const dis=[]; $('#bt-list').querySelectorAll('input[data-tool]').forEach(c=>{ if(!c.checked) dis.push(c.dataset.tool); });
-    await fetch('/api/tools',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({disabled:dis})}); }
-  $('#bt-list').querySelectorAll('input[data-tool]').forEach(c=>c.onchange=saveTools);
+  let d={}; try{ d=await j('/api/tools'); }catch(e){ $('#bt-list').textContent='Could not load abilities.'; }
+  BT=(d&&d.tools)||[];
+  const si=$('#bt-search'); if(si) si.oninput=btRender;
+  $('#bt-all').onclick=()=>{ BT.forEach(t=>t.enabled=true); btSave(); btRender(); };
+  $('#bt-none').onclick=()=>{ if(!confirm('Disable ALL abilities? The AI won\'t be able to do anything until you re-enable some.'))return; BT.forEach(t=>t.enabled=false); btSave(); btRender(); };
+  btRender();
   $('#bt-export').onclick=async()=>{ const m=$('#bt-msg'); m.textContent='Exporting…'; m.style.color='var(--dim)';
     try{ const res=await fetch('/api/export',{credentials:'same-origin'}); if(!res.ok)throw 0; const blob=await res.blob(); const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download='mentor-backup.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u); m.textContent='Downloaded ✓'; m.style.color='var(--ok)'; }
     catch(e){ m.textContent='Export failed.'; m.style.color='var(--err)'; } };
