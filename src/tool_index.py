@@ -78,6 +78,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "manage_memory": "Memory management: list, add, edit, delete, or search persistent memories.",
     "manage_skills": "Skill management: add, update, publish, or search reusable skills/presets.",
     "manage_tasks": "Scheduled task management: list, create, edit, delete, pause, resume, or run cron tasks.",
+    "plan_task": "Your own multi-step plan — use it on ANY task that needs more than one tool call. JSON {action, ...}. action='draft' {goal, steps:[...]} = lay out the steps BEFORE doing them, so you (and the user) can see the path. action='revise' {goal?, steps:[...], why} = REPLACE the plan when new facts (a failed step, a discovered constraint, new info from the user) make the original wrong. action='complete' {step:N, note?} or 'block' {step:N, reason} = mark progress so you don't redo work. action='add' {step}, 'in_progress' {step}, 'show'. The plan is kept in your context every round, so always draft early and revise the moment something invalidates a step — that is how you handle long work without going in circles.",
     "manage_endpoints": "Endpoint management: list, add, delete, enable, or disable model API endpoints.",
     "manage_mcp": "MCP server management: list, add, delete, reconnect servers, or list available tools.",
     "manage_webhooks": "Webhook management: list, add, delete, enable, or disable webhooks.",

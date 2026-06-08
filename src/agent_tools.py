@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants (kept here — sub-modules import from here)
 # ---------------------------------------------------------------------------
-MAX_AGENT_ROUNDS = 20
+MAX_AGENT_ROUNDS = 60   # raised from 20 — long-horizon work is real now (plan_task
+                        # + replan signals). Real budget is still token-based +
+                        # the loop-breaker stall detector + max_tool_calls; this
+                        # is just the hard wall before we give up.
 SHELL_TIMEOUT = 60
 PYTHON_TIMEOUT = 30
 MAX_OUTPUT_CHARS = 10_000
@@ -58,7 +61,11 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.
-             "app_api"}
+             "app_api",
+             # Long-horizon planning scaffold — lets the agent draft a multi-step
+             # plan up front, mark steps done/blocked, and REVISE when new facts
+             # invalidate the original plan (no more 20-round trial-and-error).
+             "plan_task"}
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 

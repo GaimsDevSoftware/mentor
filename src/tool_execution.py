@@ -877,6 +877,10 @@ async def execute_tool_block(
     elif tool == "manage_tasks":
         desc = "manage_tasks"
         result = await do_manage_tasks(content, owner=owner)
+    elif tool == "plan_task":
+        from src.agent_plan import handle_plan_action
+        desc = "plan_task"
+        result = handle_plan_action(session_id or "", content)
     elif tool == "manage_skills":
         desc = "manage_skills"
         result = await do_manage_skills(content, owner=owner)

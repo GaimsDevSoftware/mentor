@@ -65,6 +65,7 @@ The block executes automatically and you see the output."""
 
 _AGENT_RULES = """\
 ## Rules
+- LONG-HORIZON TASKS: if the user's request needs more than ONE tool call (research a topic, build/edit something, audit code, run a multi-step setup), START by calling `plan_task` with action='draft' to lay out the concrete steps you'll take. Then execute step by step. The moment a tool result invalidates a step (a file doesn't exist, an API returns something unexpected, the user reveals a new requirement), call `plan_task` with action='revise' to update the plan BEFORE continuing — that's how you handle long work without going in circles. Mark steps 'complete' as you finish them so you don't redo work. For one-shot trivial asks (a single question, one quick edit), skip the plan and just answer.
 - Only use tools when needed. Don't search for things you already know.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.
 - Multiple tool blocks per response OK. 60s timeout per tool, 10K char output limit.
@@ -1587,6 +1588,20 @@ async def stream_agent_loop(
                     reserve_tokens,
                 )
                 messages = trimmed_messages
+                # If a plan exists for this session, NUDGE the model to re-read
+                # and revise it after we've just compacted away earlier turns —
+                # otherwise the trim can silently strip context that the plan
+                # depended on. (Long-horizon replan signal.)
+                try:
+                    from src.agent_plan import get_plan
+                    if get_plan(session_id or ""):
+                        messages.append({"role": "system", "content":
+                            "[context was just compacted to save space] Before your next tool call, call "
+                            "`plan_task` with action='show' to re-read your plan, then decide if any step is "
+                            "now invalid given the compressed context. If yes, action='revise' with the "
+                            "updated steps + a short why. Continue executing afterward."})
+                except Exception:
+                    pass
     except Exception as e:
         logger.warning("[agent] Soft context trim skipped: %s", e)
     prep_timings["context_trim"] = time.time() - _t3
@@ -1710,7 +1725,24 @@ async def stream_agent_loop(
     _CONT_MAX = int(get_setting("agent_max_continuations", 3) or 3)
     _continue_on_trunc = bool(get_setting("agent_continue_on_truncation", True))
 
+    # Track the plan-render the model already saw, so we only re-inject when it
+    # actually changes between rounds (cheap; no dup bloat).
+    _last_plan_render = ""
     for round_num in range(1, max_rounds + 1):
+        # Re-inject the live plan at the top of each round (after round 1) when
+        # it has been drafted/revised, so the model always sees its own north
+        # star and updated state instead of having to remember it.
+        try:
+            from src.agent_plan import render_for_context as _plan_render
+            _pr = _plan_render(session_id or "")
+            if _pr and _pr != _last_plan_render:
+                messages.append({"role": "system", "content": _pr +
+                                 "\nUse this as your guide. If new facts make a step wrong, call "
+                                 "`plan_task` with action='revise'."})
+                _last_plan_render = _pr
+        except Exception:
+            pass
+
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
         _round_finish_reason = None
@@ -2122,6 +2154,27 @@ async def stream_agent_loop(
                     if disabled_tools and t in disabled_tools]
             _off_note = (f" ({', '.join(_off)} is currently disabled — say so if "
                          f"you needed it.)" if _off else "")
+            # If a plan exists, give the model ONE chance to revise it before we
+            # force-answer — the stuck pattern often means the original plan was
+            # wrong. The next round still has tools enabled so plan_task can run;
+            # if it stalls again, _force_answer kicks in below.
+            _has_plan = False
+            try:
+                from src.agent_plan import get_plan as _gp
+                _has_plan = bool(_gp(session_id or ""))
+            except Exception:
+                pass
+            if _has_plan and _stuck_rounds < 6:
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "You're going in circles — that means your CURRENT PLAN is probably wrong "
+                        "or missing a step. Do this next: call `plan_task` with action='revise' "
+                        "to fix the plan based on what you've learned in the last few tool calls, "
+                        "THEN execute the new first step. Don't repeat the previous tool calls.")
+                })
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
             _force_answer = True
             messages.append({
                 "role": "system",
