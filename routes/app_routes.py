@@ -1250,7 +1250,7 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
 const CONCIERGE=[
   {id:'groq', name:'Groq', tag:'fast · recommended', base:'https://api.groq.com/openai/v1', get:'https://console.groq.com/keys', prefer:['llama-3.3-70b','llama-3.1-8b-instant','llama']},
   {id:'openrouter', name:'OpenRouter', tag:'balanced · many models', base:'https://openrouter.ai/api/v1', get:'https://openrouter.ai/keys', req:true, prefer:[':free']},
-  {id:'opencode', name:'OpenCode Zen', tag:'free + paid · coding', base:'https://opencode.ai/zen/v1', get:'https://opencode.ai/auth', req:true, prefer:['deepseek','qwen3','glm','claude']},
+  {id:'opencode', name:'OpenCode Zen', tag:'free tier + Go sub · cheap', base:'https://opencode.ai/zen/v1', get:'https://opencode.ai/auth', req:true, prefer:['deepseek','qwen3','glm','claude']},
   {id:'cerebras', name:'Cerebras', tag:'strong', base:'https://api.cerebras.ai/v1', get:'https://cloud.cerebras.ai', prefer:['gpt-oss-120b','llama-3.3-70b','llama']},
   {id:'local', name:'Local (Ollama)', tag:'private · no key', local:true},
 ];
@@ -1523,7 +1523,7 @@ const PROVIDERS=[
   {name:'Anthropic', url:'https://api.anthropic.com', hint:'Claude', get:'https://console.anthropic.com/settings/keys', cost:'pay-as-you-go (needs billing set up)'},
   {name:'OpenAI', url:'https://api.openai.com/v1', hint:'GPT', get:'https://platform.openai.com/api-keys', cost:'pay-as-you-go (needs billing set up)'},
   {name:'OpenRouter', url:'https://openrouter.ai/api/v1', hint:'many models', req:true, free:true, get:'https://openrouter.ai/keys', cost:'free models available (limited); others pay-as-you-go'},
-  {name:'OpenCode Zen', url:'https://opencode.ai/zen/v1', hint:'free + paid · coding', req:true, free:true, get:'https://opencode.ai/auth', cost:'free tier + pay-as-you-go (sign in with opencode)'},
+  {name:'OpenCode Zen', url:'https://opencode.ai/zen/v1', hint:'free + Go sub · cheap', req:true, free:true, get:'https://opencode.ai/auth', cost:'free tier (usage-limited) · OpenCode Go subscription is much cheaper than Claude Max for the GLM/Qwen3/DeepSeek pool · Claude/GPT pay-as-you-go on top'},
   {name:'DeepSeek', url:'https://api.deepseek.com/v1', hint:'cheap & strong', get:'https://platform.deepseek.com/api_keys', cost:'pay-as-you-go (very cheap)'},
   {name:'Groq', url:'https://api.groq.com/openai/v1', hint:'very fast', free:true, get:'https://console.groq.com/keys', cost:'free to start (generous free tier)'},
   {name:'Google Gemini', url:'https://generativelanguage.googleapis.com/v1beta/openai', hint:'Gemini', free:true, get:'https://aistudio.google.com/apikey', cost:'free tier (no card needed to start)'},

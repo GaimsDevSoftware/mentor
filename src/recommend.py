@@ -28,14 +28,22 @@ def _get(key: str, default: Any) -> Any:
 
 def _tier_of(m: Dict[str, Any]) -> str:
     """Classify a candidate's billing tier: local/free/subscription/paid.
-    Same heuristics as routes/models_catalog_routes.classify so the UI filter
-    and the AI's candidate pool agree on what 'Free' / 'Paid' / 'Subscription'
-    actually mean."""
+    Mirrors routes.models_catalog_routes.classify so the UI filter and the AI's
+    candidate pool agree on what each tier means. OpenCode is split: Zen-free
+    pool → free, Go subscription pool (GLM/Kimi/Qwen3.x/DeepSeek/MiniMax/MiMo)
+    → subscription, Claude/GPT/Gemini/Grok via Zen → paid."""
     if not m.get("remote"):
         return "local"
     src = str(m.get("source") or m.get("endpoint") or "").lower()
     model = str(m.get("model") or "").lower()
-    if any(k in src for k in ("opencode", "zen", "codex", "claude", "chatgpt")):
+    if any(k in src for k in ("opencode", "zen")):
+        if any(p in model for p in ("claude-", "gpt-5.5", "gpt-5.4", "gpt-4", "gemini-", "grok-")):
+            return "paid"
+        if any(p in model for p in ("glm", "kimi", "mimo", "qwen3.7", "qwen3.6", "qwen3-coder",
+                                     "minimax", "deepseek")):
+            return "subscription"
+        return "free"
+    if any(k in src for k in ("codex", "claude", "chatgpt")):
         return "subscription"
     if model.endswith(":free") or ("openrouter" in src and ":free" in model):
         return "free"

@@ -12,17 +12,34 @@ from src.auth_helpers import get_current_user, require_user
 
 
 def classify(name: str, base: str, model_id: str):
-    """Return (kind, tier) for a model. kind=local|cloud, tier=free|paid|subscription."""
+    """Return (kind, tier) for a model. kind=local|cloud, tier=free|paid|subscription.
+
+    OpenCode Zen has THREE real tiers (the plugin already enumerates them):
+      * Zen free tier — most models, usage-limited but no card
+      * OpenCode Go subscription — open-source coder pool (GLM, Kimi, Qwen3.x,
+        DeepSeek, MiniMax, MiMo) — much cheaper than Claude Max
+      * Per-request paid — Claude, GPT-5.x, Gemini, Grok, billed per call
+    We mirror the plugin's heuristic so the picker reflects what each model
+    actually costs the user.
+    """
     n = (name or "").lower()
     b = (base or "").lower()
     m = (model_id or "").lower()
-    sub = (any(k in n for k in ("chatgpt", "codex", "claude", "opencode", "zen"))
-           or any(k in b for k in ("opencode", "/zen", "ollama.com")))
     local = any(h in b for h in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1"))
-    if sub:
-        return "cloud", "subscription"
     if local:
         return "local", "free"
+    # OpenCode Zen: discriminate by model name (matches plugins/opencode/plugin.py).
+    if "opencode" in b or "/zen" in b or any(k in n for k in ("opencode", "zen")):
+        if any(p in m for p in ("claude-", "gpt-5.5", "gpt-5.4", "gpt-4", "gemini-", "grok-")):
+            return "cloud", "paid"
+        if any(p in m for p in ("glm", "kimi", "mimo", "qwen3.7", "qwen3.6", "qwen3-coder",
+                                 "minimax", "deepseek")):
+            return "cloud", "subscription"   # OpenCode Go
+        return "cloud", "free"               # Zen free tier
+    # ChatGPT / Codex / Claude proxies are personal-subscription channels.
+    if (any(k in n for k in ("chatgpt", "codex", "claude"))
+            or "ollama.com" in b):
+        return "cloud", "subscription"
     if m.endswith(":free") or ("openrouter" in b and ":free" in m):
         return "cloud", "free"
     return "cloud", "paid"

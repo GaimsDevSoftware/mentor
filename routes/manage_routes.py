@@ -818,8 +818,11 @@ def setup_manage_routes() -> APIRouter:
             "  • Two or more free sources already: do NOT urge more. Say \"your free fallback chain is healthy\".\n"
             "  • Paid endpoint connected (subscription/paid=1+): mention multi-source as OPTIONAL — \"Paid APIs "
             "rarely run out, so a second source is just resilience insurance against outages, not necessity.\"\n"
-            "  • Subscription source (ChatGPT/Claude/OpenCode): mention that subscription quotas are higher and "
-            "outages rarer; second source is optional for redundancy.\n"
+            "  • Subscription source connected: quotas are higher and outages rarer; second source is optional for "
+            "redundancy. Note the practical price ladder for the user: OpenCode Go (GLM/Kimi/Qwen3.x/DeepSeek pool) "
+            "is much cheaper than a Claude Max sub for similar coding/agent work, and OpenCode Zen has a real free "
+            "tier — so if the user is comparing subscriptions, suggest trying Zen-free first, then Go if they need "
+            "more, before they reach for Claude/ChatGPT Plus.\n"
             "  • LOCAL ONLY (user wants private): do NOT urge cloud at all. Their fallback story is bigger VRAM / "
             "more nodes / smaller backup model — explain that instead. If their VRAM is small (<8 GB), warn that "
             "fitting big models is the real constraint, and a cloud free source as a fallback is one option — but "
@@ -1746,7 +1749,7 @@ const CONNECT_PROVIDERS=[
  {name:'Anthropic',url:'https://api.anthropic.com',hint:'Claude'},
  {name:'OpenAI',url:'https://api.openai.com/v1',hint:'GPT'},
  {name:'OpenRouter',url:'https://openrouter.ai/api/v1',hint:'many models',req:true},
- {name:'OpenCode Zen',url:'https://opencode.ai/zen/v1',hint:'free + paid · coding',req:true},
+ {name:'OpenCode Zen',url:'https://opencode.ai/zen/v1',hint:'free + Go sub · cheap',req:true},
  {name:'DeepSeek',url:'https://api.deepseek.com/v1',hint:'cheap & strong'},
  {name:'Groq',url:'https://api.groq.com/openai/v1',hint:'very fast'},
  {name:'Google Gemini',url:'https://generativelanguage.googleapis.com/v1beta/openai',hint:'Gemini'},
