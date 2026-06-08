@@ -875,6 +875,9 @@ def setup_manage_routes() -> APIRouter:
         except Exception as e:
             return {"ok": False, "detail": "Guide AI call failed: %s" % e}
         text = (reply or "").strip()
+        text = _re.sub(r"<think>[\s\S]*?</think>\s*", "", text).strip()
+        if "<think>" in text:
+            text = _re.sub(r"<think>[\s\S]*$", "", text).strip()
         action = None
         m = _re.search(r"```action\s*(\{.*?\})\s*```", text, _re.DOTALL)
         if m:
