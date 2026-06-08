@@ -708,8 +708,10 @@ def setup_manage_routes() -> APIRouter:
         # never re-asks about things already done.
         eps = []
         nmodels = 0
+        tier_counts = {"local": 0, "free": 0, "subscription": 0, "paid": 0}
         try:
             from core.database import SessionLocal, ModelEndpoint
+            from routes.models_catalog_routes import classify as _cls
             db = SessionLocal()
             try:
                 for e in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
@@ -719,13 +721,25 @@ def setup_manage_routes() -> APIRouter:
                     except Exception:
                         ms = []
                     nmodels += len(ms)
-                    eps.append("%s [%s, %d models, e.g. %s]" % (
-                        e.name, "local" if local else "cloud", len(ms),
+                    # Classify endpoint tier by its first model (all share the source).
+                    _, ep_tier = _cls(e.name, e.base_url or "", (ms[0] if ms else ""))
+                    if ms:
+                        tier_counts[ep_tier] = tier_counts.get(ep_tier, 0) + 1
+                    eps.append("%s [%s/%s, %d models, e.g. %s]" % (
+                        e.name, ("local" if local else "cloud"), ep_tier, len(ms),
                         (", ".join(str(x) for x in ms[:3]) or "—")))
             finally:
                 db.close()
         except Exception:
             pass
+        # Hardware (so the AI knows whether local is a real option).
+        try:
+            from services.hwfit.hardware import detect_system
+            _hw = detect_system() or {}
+            hw_vram = float(_hw.get("gpu_vram_gb") or 0)
+            hw_gpu = str(_hw.get("gpu_name") or "")
+        except Exception:
+            hw_vram, hw_gpu = 0.0, ""
         default_model = (_gs("default_model", "") or "").strip()
         aider_model = (_gs("aider_model", "") or "").strip()
         vision_model = (_gs("vision_model", "") or "").strip()
@@ -745,6 +759,8 @@ def setup_manage_routes() -> APIRouter:
         state = (
             "\n\nCURRENT SETUP STATE — rely on this; never ask about things already done:\n"
             "- Guide AI (that's you): %s\n"
+            "- Hardware: GPU=%s, VRAM=%.1f GB (local models that fit ≈ this number minus ~3 GB headroom)\n"
+            "- Connected endpoints by tier: local=%d, free-cloud=%d, subscription=%d, paid=%d\n"
             "- Connected work-model endpoints: %d%s\n"
             "- Default / main model: %s\n"
             "- Vision model (analyze pasted/uploaded images): %s\n"
@@ -758,7 +774,10 @@ def setup_manage_routes() -> APIRouter:
             "it the user can't paste/upload images for analysis. A hired agent is a nice bonus. When everything's "
             "done, emit the `done` action and tell the user they can open Mentor from the button you'll show in "
             "the chat — do NOT tell them to hunt for a button elsewhere." % (
-                spec, len(eps), (": " + "; ".join(eps) if eps else " (none yet)"),
+                spec, (hw_gpu or "none"), hw_vram,
+                tier_counts.get("local", 0), tier_counts.get("free", 0),
+                tier_counts.get("subscription", 0), tier_counts.get("paid", 0),
+                len(eps), (": " + "; ".join(eps) if eps else " (none yet)"),
                 (default_model or "NOT set yet"), (vision_model or "NOT set — image analysis won't work"),
                 (research_model or "not set"), (utility_model or "not set"),
                 (aider_model or "not set"), ollama, nagents)
@@ -786,12 +805,28 @@ def setup_manage_routes() -> APIRouter:
             "(I suggest, you confirm)?\" Do NOT silently auto-pick — wait for their choice, THEN run auto_roles "
             "(automatic) or set_role one by one (together). If a role can't be filled from connected models "
             "(e.g. no multimodal model for vision), say so and offer to connect one. Aim to leave NO role empty.\n"
-            "FREE-CLOUD STRATEGY — multiple sources: free cloud providers have daily/per-minute limits AND can "
-            "be unreliable. If the user wants to stay free in the cloud, urge them to connect at least TWO "
-            "different free sources (e.g. Groq + Google Gemini + OpenRouter :free + Cerebras + Mistral) — auto_roles "
-            "uses models from DIFFERENT endpoints as fallbacks, so when one source rate-limits or fails, the next "
-            "one picks up. With only one source there is no safety net. If auto_roles reports source_count<2 or its "
-            "note mentions only one source, tell the user clearly and offer open_concierge so they can add another.\n"
+            "MULTI-SOURCE — context-aware, NOT a blanket rule. Only raise it when it's actually useful for THIS "
+            "user, and ALWAYS explain WHY in plain language tailored to their setup. Use this matrix:\n"
+            "  • Only ONE free-cloud source connected (free=1, no paid/subscription): DO urge a second free source. "
+            "Plain why: \"Groq/OpenRouter/etc. each have daily limits — typically a few hundred to a few thousand "
+            "free requests per day, plus per-minute caps. When you hit a limit (or that provider has an outage — it "
+            "happens), every request fails until midnight resets. With a SECOND free source from a different company, "
+            "Mentor automatically falls back to that one — different limit, different uptime. Trade-off: one more "
+            "1-minute sign-up + key paste, and you're juggling two free accounts instead of one. Concretely: I'd "
+            "suggest <pick 2 from Groq / Google Gemini / OpenRouter / Cerebras / Mistral> — different companies, "
+            "different limits.\"\n"
+            "  • Two or more free sources already: do NOT urge more. Say \"your free fallback chain is healthy\".\n"
+            "  • Paid endpoint connected (subscription/paid=1+): mention multi-source as OPTIONAL — \"Paid APIs "
+            "rarely run out, so a second source is just resilience insurance against outages, not necessity.\"\n"
+            "  • Subscription source (ChatGPT/Claude/OpenCode): mention that subscription quotas are higher and "
+            "outages rarer; second source is optional for redundancy.\n"
+            "  • LOCAL ONLY (user wants private): do NOT urge cloud at all. Their fallback story is bigger VRAM / "
+            "more nodes / smaller backup model — explain that instead. If their VRAM is small (<8 GB), warn that "
+            "fitting big models is the real constraint, and a cloud free source as a fallback is one option — but "
+            "only mention if they ask, since they said private.\n"
+            "  • Mixed (local + free cloud): the cloud is already a natural fallback for local; tell them so.\n"
+            "Always: give CONCRETE numbers/trade-offs grounded in the setup state above (their VRAM, what's already "
+            "connected, what tier they chose). Never just say 'connect another source' without the why.\n"
             "LOCAL POWER-USER — node networks: if the user wants serious local power (multiple bigger models running "
             "at the same time, more than one machine's VRAM can hold), tell them they can ADD MORE MACHINES as Ollama "
             "nodes — each computer on their network runs ollama and the app routes work across them. Pointer: the "
