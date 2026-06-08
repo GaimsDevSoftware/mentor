@@ -1348,13 +1348,24 @@ renderConciergeTiers();
 const ASST=(function(){try{return JSON.parse(localStorage.getItem('mentor-asst-chat')||'[]')||[]}catch(e){return[]}})();
 function asstSave(){try{localStorage.setItem('mentor-asst-chat',JSON.stringify(ASST.slice(-40)))}catch(e){}}
 let asstBusy=false;
-function asstBubble(role, text){
+function asstBubble(role, text, thinking){
   const log=$('#asst-log'); const b=document.createElement('div');
   const me=role==='user';
   b.style.cssText='max-width:90%;padding:8px 11px;border-radius:10px;font-size:13px;white-space:pre-wrap;'
     +(me?'align-self:flex-end;background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent)'
         :'align-self:flex-start;background:var(--tint);border:1px solid var(--sep)');
-  b.textContent=text; log.appendChild(b); log.scrollTop=log.scrollHeight; return b;
+  b.textContent=text;
+  if(thinking && !me){
+    const lnk=document.createElement('a'); lnk.href='#';
+    lnk.style.cssText='display:block;margin-top:6px;font-size:11px;color:var(--faint);text-decoration:none;';
+    lnk.textContent='💭 Resonnering';
+    const box=document.createElement('div');
+    box.style.cssText='display:none;margin-top:6px;padding:8px;background:var(--tint);border:1px solid var(--sep);border-radius:6px;font-size:11px;max-height:160px;overflow:auto;white-space:pre-wrap;color:var(--dim);line-height:1.45;';
+    box.textContent=thinking;
+    lnk.addEventListener('click',function(e){e.preventDefault();box.style.display=box.style.display==='none'?'':'none';});
+    b.appendChild(lnk); b.appendChild(box);
+  }
+  log.appendChild(b); log.scrollTop=log.scrollHeight; return b;
 }
 function asstNote(text){ const log=$('#asst-log'); const b=document.createElement('div');
   b.style.cssText='align-self:center;font-size:11px;color:var(--faint)'; b.innerHTML='⚙ '+esc(text); log.appendChild(b); log.scrollTop=log.scrollHeight; }
@@ -1385,7 +1396,7 @@ async function asstTurn(steps){
   if(r && r.need_model){ asstBubble('assistant','Pick a model for me in the card above — Groq (free, ~1 min) is the easiest. Then I\'ll take it from here.');
     const el=$('#cg-tiers'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); return; }
   if(!r || !r.ok){ asstBubble('assistant', (r&&r.detail)||'Something went wrong — let\'s try that again.'); return; }
-  if(r.reply){ ASST.push({role:'assistant',content:r.reply}); asstBubble('assistant', r.reply); asstSave(); }
+  if(r.reply){ ASST.push({role:'assistant',content:r.reply}); asstBubble('assistant', r.reply, r.thinking||''); asstSave(); }
   if(r.action && r.action.type){
     if(r.action.type==='done'){
       // Announce once; after that just keep the small badge so we don't spam.

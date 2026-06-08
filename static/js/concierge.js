@@ -57,10 +57,23 @@
   document.body.appendChild(panel);
   var log = panel.querySelector('#mc-log'), inp = panel.querySelector('#mc-in');
 
-  function bubble(role, text) {
+  function bubble(role, text, thinking) {
     var b = document.createElement('div');
     b.className = 'mc-b ' + (role === 'user' ? 'mc-u' : 'mc-a');
-    b.textContent = text; log.appendChild(b); log.scrollTop = log.scrollHeight;
+    b.textContent = text;
+    if (thinking && role === 'assistant') {
+      var link = document.createElement('a');
+      link.href = '#';
+      link.style.cssText = 'display:block;margin-top:6px;font-size:11px;color:var(--faint,#8a8a8a);text-decoration:none;';
+      link.textContent = '💭 Resonnering';
+      var box = document.createElement('div');
+      box.style.cssText = 'display:none;margin-top:6px;padding:8px;background:var(--tint,rgba(255,255,255,.04));border:1px solid var(--sep,rgba(255,255,255,.1));border-radius:6px;font-size:11px;max-height:160px;overflow:auto;white-space:pre-wrap;color:var(--dim,#aaa);line-height:1.45;';
+      box.textContent = thinking;
+      link.addEventListener('click', function(e) { e.preventDefault(); box.style.display = box.style.display === 'none' ? '' : 'none'; });
+      b.appendChild(link);
+      b.appendChild(box);
+    }
+    log.appendChild(b); log.scrollTop = log.scrollHeight;
   }
   function note(t) {
     var b = document.createElement('div'); b.className = 'mc-n'; b.textContent = '⚙ ' + t;
@@ -222,7 +235,7 @@
     catch (e) { bubble('assistant', 'I could not reach the backend — try again in a moment.'); return; }
     if (r && r.need_model) { bubble('assistant', 'I need a model first — taking you to Setup.'); setTimeout(function () { location.href = '/app/setup'; }, 1200); return; }
     if (!r || !r.ok) { bubble('assistant', (r && r.detail) || 'Something went wrong — let\'s try again.'); return; }
-    if (r.reply) { ASST.push({ role: 'assistant', content: r.reply }); bubble('assistant', r.reply); save(); }
+    if (r.reply) { ASST.push({ role: 'assistant', content: r.reply }); bubble('assistant', r.reply, r.thinking || ''); save(); }
     if (r.action && r.action.type) {
       if (r.action.type === 'done') {
         // Only announce ready ONCE per session — after that, just a tiny header

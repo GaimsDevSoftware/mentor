@@ -875,8 +875,15 @@ def setup_manage_routes() -> APIRouter:
         except Exception as e:
             return {"ok": False, "detail": "Guide AI call failed: %s" % e}
         text = (reply or "").strip()
-        text = _re.sub(r"<think>[\s\S]*?</think>\s*", "", text).strip()
+        thinking = ""
+        think_match = _re.search(r"<think>([\s\S]*?)</think>", text)
+        if think_match:
+            thinking = think_match.group(1).strip()
+            text = _re.sub(r"<think>[\s\S]*?</think>\s*", "", text).strip()
         if "<think>" in text:
+            unclosed = _re.search(r"<think>([\s\S]*)$", text)
+            if unclosed:
+                thinking = (thinking + "\n" + unclosed.group(1)).strip()
             text = _re.sub(r"<think>[\s\S]*$", "", text).strip()
         action = None
         m = _re.search(r"```action\s*(\{.*?\})\s*```", text, _re.DOTALL)
@@ -899,7 +906,10 @@ def setup_manage_routes() -> APIRouter:
                 action = None
                 text = ("Almost — I can't call it done yet: you still need to "
                         + " and ".join(missing) + ". Want me to set that up now?")
-        return {"ok": True, "reply": text or "(…)", "action": action}
+        resp = {"ok": True, "reply": text or "(…)", "action": action}
+        if thinking:
+            resp["thinking"] = thinking[:2000]
+        return resp
 
     @router.get("/api/manage/teacher-model-options")
     async def teacher_model_options(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
