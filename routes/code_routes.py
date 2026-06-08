@@ -3,6 +3,9 @@ aider_code plugin being enabled. Project picker, model picker, and async edits
 with live progress, all backed by src/code_edit.py.
 """
 import asyncio
+import json
+import logging
+import os
 import time
 import uuid
 from typing import Any, Dict
@@ -11,7 +14,43 @@ from fastapi import APIRouter, Body, Depends
 
 from core.middleware import require_admin
 
+logger = logging.getLogger(__name__)
+
 _jobs: Dict[str, Dict] = {}
+_tasks: Dict[str, asyncio.Task] = {}
+
+_JOBS_FILE = None
+
+def _jobs_path():
+    global _JOBS_FILE
+    if _JOBS_FILE is None:
+        try:
+            from src.constants import DATA_DIR
+            _JOBS_FILE = os.path.join(DATA_DIR, "code_jobs.json")
+        except Exception:
+            _JOBS_FILE = "/tmp/mentor-code-jobs.json"
+    return _JOBS_FILE
+
+def _persist_jobs():
+    try:
+        safe = {k: {kk: vv for kk, vv in v.items() if kk != "task"}
+                for k, v in _jobs.items() if v.get("status") in ("done", "failed")}
+        with open(_jobs_path(), "w") as f:
+            json.dump(safe, f)
+    except Exception:
+        pass
+
+def _load_persisted_jobs():
+    try:
+        p = _jobs_path()
+        if os.path.exists(p):
+            with open(p) as f:
+                saved = json.load(f)
+            for k, v in saved.items():
+                if k not in _jobs:
+                    _jobs[k] = v
+    except Exception:
+        pass
 
 
 def _get(key, default=""):
@@ -131,10 +170,31 @@ def setup_code_routes() -> APIRouter:
             job["result"] = {"error": str(e), "exit_code": 1}
             job["stage"] = str(e)
         job["finished_at"] = time.time()
+        _tasks.pop(job_id, None)
+        _persist_jobs()
         # keep last 20 jobs
         if len(_jobs) > 20:
             for k in sorted(_jobs, key=lambda k: _jobs[k].get("started_at", 0))[:-20]:
                 _jobs.pop(k, None)
+            _persist_jobs()
+
+    @router.post("/api/code/stop/{job_id}")
+    async def stop_job(job_id: str, _admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        job = _jobs.get(job_id)
+        if not job:
+            return {"ok": False, "error": "no such job"}
+        if job.get("status") not in ("queued", "running"):
+            return {"ok": False, "error": "job already finished"}
+        task = _tasks.get(job_id)
+        if task:
+            task.cancel()
+        job["status"] = "failed"
+        job["stage"] = "stopped by user"
+        job["result"] = {"error": "Stopped by user.", "exit_code": 1}
+        job["finished_at"] = time.time()
+        _tasks.pop(job_id, None)
+        _persist_jobs()
+        return {"ok": True}
 
     @router.post("/api/code/edit")
     async def edit(payload: Dict[str, Any] = Body(...), _admin: str = Depends(require_admin)) -> Dict[str, Any]:
@@ -156,11 +216,13 @@ def setup_code_routes() -> APIRouter:
         job_id = uuid.uuid4().hex[:12]
         _jobs[job_id] = {"id": job_id, "status": "queued", "stage": "queued",
                          "instruction": instruction, "started_at": time.time()}
-        asyncio.create_task(_run_job(job_id, instruction, files, project, model))
+        t = asyncio.create_task(_run_job(job_id, instruction, files, project, model))
+        _tasks[job_id] = t
         return {"ok": True, "job_id": job_id}
 
     @router.get("/api/code/jobs/{job_id}")
     async def job(job_id: str, _admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        _load_persisted_jobs()
         return _jobs.get(job_id) or {"error": "no such job"}
 
     return router

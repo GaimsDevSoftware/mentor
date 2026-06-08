@@ -1770,6 +1770,11 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  .elapsed{color:var(--faint);font-size:11px;font-variant-numeric:tabular-nums;flex-shrink:0}
  .progress{height:2px;background:color-mix(in srgb,var(--brass) 18%,transparent);border-radius:2px;overflow:hidden;margin-top:8px;position:relative}
  .progress::after{content:"";position:absolute;left:-30%;top:0;height:100%;width:30%;background:var(--brass);animation:slide 1.6s ease-in-out infinite}
+ .stop-btn{background:transparent;border:1px solid color-mix(in srgb,var(--err) 50%,var(--sep));color:var(--err);border-radius:6px;padding:3px 10px;font:500 11px/1 inherit;cursor:pointer;flex-shrink:0;margin-left:8px;transition:all .15s}
+ .stop-btn:hover{background:color-mix(in srgb,var(--err) 14%,transparent);border-color:var(--err)}
+ .rewind-btn{display:block;margin-top:8px;background:transparent;border:none;color:var(--faint);font:400 11px/1 inherit;cursor:pointer;padding:0;opacity:0;transition:opacity .15s}
+ .bub.user:hover .rewind-btn{opacity:1}
+ .rewind-btn:hover{color:var(--txt)}
  @keyframes slide{50%{left:100%}100%{left:100%}}
 
  /* "Klemmer" — collapsible technical details inside a result bubble */
@@ -2018,9 +2023,11 @@ function diffStats(diff){
   return {plus,minus};
 }
 
-function renderTurn(t){
+function renderTurn(t, idx){
   if(t.kind==='user'){
-    return '<div class="turn"><div class="bub user"><div class="lbl">You</div>'+esc(t.text)+'</div></div>';
+    return '<div class="turn"><div class="bub user"><div class="lbl">You</div>'+esc(t.text)
+      +'<button class="rewind-btn" onclick="rewindTo('+idx+')" title="Rewind conversation to this point and resend">&#x21BA; Rewind to here</button>'
+      +'</div></div>';
   }
   if(t.kind==='narr'){
     return '<div class="turn"><div class="narr'+(t.warn?' warn':'')+'">'+(t.html||esc(t.text||''))+'</div></div>';
@@ -2030,9 +2037,10 @@ function renderTurn(t){
     const since = t.since || Date.now();
     const secs = Math.max(1, Math.round((Date.now() - since) / 1000));
     const elapsed = secs < 60 ? secs+'s' : Math.floor(secs/60)+'m '+(secs%60)+'s';
+    const stopBtn = t.jobId ? '<button class="stop-btn" onclick="stopJob(\''+t.jobId+'\')">Stop</button>' : '';
     return '<div class="turn"><div class="bub ai">'
       +'<div class="lbl">Mentor</div>'
-      +'<div class="pending"><span class="spin"></span><span class="stage">'+esc(stage)+'</span><span class="elapsed" data-since="'+since+'">'+elapsed+'</span></div>'
+      +'<div class="pending"><span class="spin"></span><span class="stage">'+esc(stage)+'</span><span class="elapsed" data-since="'+since+'">'+elapsed+'</span>'+stopBtn+'</div>'
       +'<div class="progress"></div>'
       +'</div></div>';
   }
@@ -2073,7 +2081,7 @@ function emptyState(){
 function renderConvo(){
   const el=$('#convo');
   if(!turns.length){ el.innerHTML=emptyState(); return; }
-  el.innerHTML = turns.map(renderTurn).join('');
+  el.innerHTML = turns.map((t,i) => renderTurn(t,i)).join('');
 }
 
 function scrollToBottom(){
@@ -2156,6 +2164,24 @@ async function onSend(){
   updateTurn(pIdx, {jobId: id});
   saveTurns();
   pollJob(id, pIdx);
+}
+
+function rewindTo(idx){
+  if(busy){ alert('Wait for the current task to finish first.'); return; }
+  if(!confirm('Rewind to this message? Everything after it will be removed.')) return;
+  const userTurn = turns[idx];
+  if(!userTurn || userTurn.kind !== 'user') return;
+  turns.splice(idx);
+  saveTurns(); renderConvo();
+  instrEl.value = userTurn.text;
+  autoGrow(instrEl);
+  instrEl.focus();
+  scrollToBottom();
+}
+
+async function stopJob(jobId){
+  if(!jobId) return;
+  try{ await j('/api/code/stop/'+jobId, {method:'POST'}); }catch(e){}
 }
 
 function pollJob(id, pIdx){
