@@ -23,6 +23,7 @@ import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
+import selfCoderModule from './js/selfCoder.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -914,6 +915,18 @@ function initializeEventListeners() {
       }
     });
   }
+  // Self-coder tool button
+  const toolSelfcoderBtn = el('tool-selfcoder-btn');
+  if (toolSelfcoderBtn) {
+    toolSelfcoderBtn.addEventListener('click', async () => {
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('selfcoder-modal')) {
+        if (selfCoderModule.isSelfCoderOpen()) selfCoderModule.closeSelfCoder();
+        else selfCoderModule.openSelfCoder();
+      }
+    });
+  }
+
   // Refresh notes due-reminder badge on load and every 5 minutes
   if (notesModule && notesModule.refreshDueBadge) {
     notesModule.refreshDueBadge();
@@ -1005,6 +1018,7 @@ function initializeEventListeners() {
       }
     },
     '/calendar': () => calendarModule && calendarModule.openCalendar(),
+    '/selfcoder': () => selfCoderModule && selfCoderModule.openSelfCoder(),
     '/cookbook': () => document.getElementById('tool-cookbook-btn')?.click(),
     '/email':    () => {
       // Collapse the wide sidebar → icon rail (48px) so the user keeps
@@ -3455,6 +3469,7 @@ function startOdysseusApp() {
     'rail-tasks':     'tool-tasks-btn',
     'rail-calendar':  'tool-calendar-btn',
     'rail-notes':     'tool-notes-btn',
+    'rail-selfcoder': 'tool-selfcoder-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',
     'rail-email':     'email-section-title',
