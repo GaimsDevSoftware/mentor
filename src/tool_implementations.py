@@ -4189,3 +4189,89 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         pass
 
     return {"output": "Vault unlocked. Session saved.", "exit_code": 0}
+
+
+# ---------------------------------------------------------------------------
+# self_coder — autonomous code improvement loop
+# ---------------------------------------------------------------------------
+
+async def do_self_coder(content: str, owner: Optional[str] = None) -> Dict:
+    """Expose the self-coder engine as a chat tool.
+
+    Actions:
+      propose  {instruction, files?}  — create a new code-change proposal
+      list                            — list all proposals (newest first)
+      get      {id}                   — show one proposal with diff + verify log
+      apply    {id}                   — merge + canary deploy a verified proposal
+      discard  {id}                   — delete a proposal's branch + record
+      status                          — diagnostic (readiness, proposal count)
+    """
+    from src import self_coder as sc
+    import time as _time
+
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    action = (args.get("action") or "status").strip().lower()
+
+    if action == "status":
+        clean = sc._clean_tree()
+        props = sc.list_proposals()
+        return {
+            "output": json.dumps({
+                "clean_tree": clean,
+                "proposal_count": len(props),
+                "aider_model": sc._get("aider_model", "(not set)"),
+                "autonomy": sc._get("self_coder_autonomy", 1),
+            }),
+            "exit_code": 0,
+        }
+
+    if action == "list":
+        props = sc.list_proposals()
+        summary = []
+        for p in props:
+            summary.append({
+                "id": p.get("id"),
+                "instruction": (p.get("instruction") or "")[:120],
+                "status": p.get("status"),
+                "ts": p.get("ts"),
+                "risk_tier": (p.get("risk") or {}).get("tier"),
+            })
+        return {"output": json.dumps(summary, indent=2), "exit_code": 0}
+
+    if action == "get":
+        pid = args.get("id") or args.get("pid") or ""
+        if not pid:
+            return {"error": "id is required", "exit_code": 1}
+        p = sc.get_proposal(pid)
+        if not p:
+            return {"error": f"No proposal with id '{pid}'", "exit_code": 1}
+        return {"output": json.dumps(p, indent=2, default=str), "exit_code": 0}
+
+    if action == "propose":
+        instruction = (args.get("instruction") or "").strip()
+        if not instruction:
+            return {"error": "instruction is required", "exit_code": 1}
+        files = list(args.get("files") or [])
+        result = await sc.propose(instruction, files, source="chat-tool",
+                                  ts=_time.time())
+        return {"output": json.dumps(result, indent=2, default=str), "exit_code": 0}
+
+    if action == "apply":
+        pid = args.get("id") or args.get("pid") or ""
+        if not pid:
+            return {"error": "id is required", "exit_code": 1}
+        result = sc.apply_proposal(pid)
+        return {"output": json.dumps(result, indent=2, default=str), "exit_code": 0}
+
+    if action == "discard":
+        pid = args.get("id") or args.get("pid") or ""
+        if not pid:
+            return {"error": "id is required", "exit_code": 1}
+        result = sc.discard_proposal(pid)
+        return {"output": json.dumps(result, indent=2, default=str), "exit_code": 0}
+
+    return {"error": f"Unknown action '{action}'. Use: propose, list, get, apply, discard, status", "exit_code": 1}

@@ -863,6 +863,23 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "self_coder",
+            "description": "Propose, list, apply, or discard autonomous code changes to this app. Actions: propose (create a change via Aider), list (all proposals), get (one with diff), apply (merge + canary), discard, status.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["propose", "list", "get", "apply", "discard", "status"], "description": "Action to perform"},
+                    "instruction": {"type": "string", "description": "What to change (for propose)"},
+                    "files": {"type": "array", "items": {"type": "string"}, "description": "Files to scope the change to (for propose, optional)"},
+                    "id": {"type": "string", "description": "Proposal ID (for get/apply/discard)"},
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "trigger_research",
             "description": "Start a deep research task on a topic. Returns a task ID for tracking.",
             "parameters": {

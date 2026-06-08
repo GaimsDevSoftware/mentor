@@ -324,6 +324,7 @@ _ADMIN_TOOLS = {
     "serve_preset",
     "stop_served_model",
     "cancel_download",
+    "self_coder",
 }
 
 
@@ -762,7 +763,7 @@ async def execute_tool_block(
         do_edit_image, do_trigger_research, do_manage_research, do_resolve_contact,
         do_manage_contact,
         do_vault_search, do_vault_get, do_vault_unlock,
-        do_app_api,
+        do_app_api, do_self_coder,
     )
 
     tool = block.tool_type
@@ -1003,6 +1004,9 @@ async def execute_tool_block(
     elif tool == "vault_unlock":
         desc = "vault_unlock"
         result = await do_vault_unlock(content, owner=owner)
+    elif tool == "self_coder":
+        desc = "self_coder"
+        result = await do_self_coder(content, owner=owner)
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()
