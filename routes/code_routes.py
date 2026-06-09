@@ -88,40 +88,36 @@ def setup_code_routes() -> APIRouter:
     async def models(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         from src.code_edit import list_local_models
         out = await list_local_models()
-        # Include cloud/subscription models from configured endpoints
+        # Include cloud/subscription models from configured endpoints.
+        # Label each with the litellm-compatible prefix so Aider knows
+        # which provider to use (openrouter/, openai/, anthropic/).
         try:
             from core.database import ModelEndpoint, SessionLocal
             import json as _json
             db = SessionLocal()
             try:
                 for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+                    url = (ep.base_url or "").lower()
+                    if "openrouter" in url:
+                        pfx = "openrouter/"
+                    elif "openai.com" in url:
+                        pfx = "openai/"
+                    elif "anthropic" in url:
+                        pfx = "anthropic/"
+                    else:
+                        pfx = "openai/"  # generic OpenAI-compat
                     cached = _json.loads(ep.cached_models or "[]") if ep.cached_models else []
                     pinned = _json.loads(ep.pinned_models or "[]") if ep.pinned_models else []
+                    ep_name = (ep.name or "").strip()
                     for mid in cached + pinned:
-                        if mid and mid not in out:
-                            out.append(mid)
+                        if not mid:
+                            continue
+                        # Don't double-prefix if already has one
+                        label = mid if "/" in mid else pfx + mid
+                        if label not in out:
+                            out.append(label)
             finally:
                 db.close()
-        except Exception:
-            pass
-        # Include models from cookbook providers (OpenRouter, OpenCode, etc.)
-        try:
-            from src import plugin_system
-            for prov in plugin_system.get_cookbook_providers():
-                try:
-                    cat = prov.catalog() if hasattr(prov, "catalog") else []
-                except Exception:
-                    cat = []
-                for m in cat:
-                    if not isinstance(m, dict) or not m.get("remote"):
-                        continue
-                    mid = m.get("model", "")
-                    if not mid:
-                        continue
-                    src = (m.get("source") or m.get("endpoint") or "").lower().replace(" ", "")
-                    label = f"openrouter/{mid}" if "openrouter" in src else (f"opencode/{mid}" if "opencode" in src or "zen" in src else mid)
-                    if label not in out:
-                        out.append(label)
         except Exception:
             pass
         return {"models": out, "current": _get("aider_model", "")}
