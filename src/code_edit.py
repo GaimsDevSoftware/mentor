@@ -80,7 +80,13 @@ def resolve_aider_model(model: str) -> tuple:
                 _bare = _prefix
                 _prefix = ""
 
-            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+            _eps = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            # Prefer an OpenCode Go subscription endpoint (/zen/go/) over the
+            # pay-as-you-go Zen endpoint (/zen/v1) when the SAME model (minimax,
+            # glm, kimi, qwen3-coder, deepseek…) exists on both. Otherwise the
+            # request bills the empty pay-as-you-go wallet → "Insufficient balance".
+            _eps.sort(key=lambda e: 0 if "/zen/go/" in (e.base_url or "").lower() else 1)
+            for ep in _eps:
                 url = (ep.base_url or "").lower()
                 cached = _json.loads(ep.cached_models or "[]") if ep.cached_models else []
                 pinned = _json.loads(ep.pinned_models or "[]") if ep.pinned_models else []
@@ -212,11 +218,11 @@ async def run_edit(instruction: str, files, project: str, model: str,
         auto_picked = await _guess_files(instruction, project, model)
         safe_files = [f for f in auto_picked if _within(os.path.join(project, f), project)]
 
+    import subprocess
+    import time
+    import re as _re
     branched = None
     if auto_branch:
-        import subprocess
-        import time
-        import re as _re
         try:
             cur = subprocess.run(["git", "-C", project, "rev-parse", "--abbrev-ref", "HEAD"],
                                  capture_output=True, text=True, timeout=5).stdout.strip()
@@ -230,6 +236,22 @@ async def run_edit(instruction: str, files, project: str, model: str,
                     _stage(f"working on a safe branch: {new_branch}")
         except Exception:
             pass
+
+    # Snapshot the working tree BEFORE Aider runs — `git stash create` writes a
+    # commit-ish without touching the index or worktree, so we can diff exactly
+    # this run's changes later, excluding any pre-existing dirty files from
+    # other work. Falls back to HEAD if the tree is clean (stash create returns
+    # empty in that case).
+    snapshot = None
+    try:
+        r = subprocess.run(["git", "-C", project, "stash", "create"],
+                           capture_output=True, text=True, timeout=10)
+        snapshot = (r.stdout or "").strip() or None
+        if not snapshot:
+            snapshot = subprocess.run(["git", "-C", project, "rev-parse", "HEAD"],
+                                      capture_output=True, text=True, timeout=5).stdout.strip() or None
+    except Exception:
+        snapshot = None
 
     _stage("Aider is editing the code…")
     aider_model, env = resolve_aider_model(model)
@@ -278,16 +300,50 @@ async def run_edit(instruction: str, files, project: str, model: str,
     _stage("collecting the diff…")
     diff = ""
     try:
+        diff_cmd = ["git", "-C", project, "diff"]
+        if snapshot:
+            # Scoped diff: only show this run's edits, not unrelated dirty files.
+            diff_cmd.append(snapshot)
         dp = await asyncio.create_subprocess_exec(
-            "git", "-C", project, "diff",
+            *diff_cmd,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         d, _ = await dp.communicate()
         diff = (d or b"").decode(errors="replace")
     except Exception:
         pass
 
+    # Honest exit code: trust Aider's returncode, AND scan the output for the
+    # known failure markers Aider prints without crashing (auth errors come
+    # out as text on stdout in many providers — litellm wraps the exception
+    # then Aider just keeps the chat going with zero edits).
+    rc = proc.returncode if proc.returncode is not None else 1
+    out_lc = out_s.lower()
+    error_markers = (
+        "authenticationerror", "insufficient balance", "invalid api key",
+        "rate limit", "ratelimiterror", "could not connect",
+        "litellm.apiconnectionerror", "litellm.authenticationerror",
+        "litellm.notfounderror",
+    )
+    failed_marker = next((m for m in error_markers if m in out_lc), None)
+    if failed_marker and rc == 0:
+        rc = 1
+
     branch_note = f" on branch '{branched}'" if branched else ""
-    return {"response": f"Aider applied the change in {project}{branch_note} (not committed — review the diff).",
+    if rc != 0:
+        why = failed_marker or f"aider exited with code {rc}"
+        return {"error": f"Aider failed: {why}. See log for details.",
+                "instruction": instruction, "branch_created": branched,
+                "files_used": safe_files, "auto_picked": auto_picked,
+                "log": out_s[-2000:], "diff": diff[:12000] or "(no changes)",
+                "exit_code": rc}
+
+    response_msg = (f"Aider applied the change in {project}{branch_note} "
+                    "(not committed — review the diff).")
+    if not diff.strip():
+        # Honest: zero exit code AND no diff = nothing actually happened.
+        response_msg = (f"Aider exited cleanly in {project}{branch_note} but "
+                        "made no changes. Re-check the instruction or the model.")
+    return {"response": response_msg,
             "instruction": instruction, "branch_created": branched,
             "files_used": safe_files, "auto_picked": auto_picked,
-            "log": out_s[-2000:], "diff": diff[:12000] or "(no changes)", "exit_code": 0}
+            "log": out_s[-2000:], "diff": diff[:12000] or "(no changes)", "exit_code": rc}

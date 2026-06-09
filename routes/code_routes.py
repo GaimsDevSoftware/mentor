@@ -71,11 +71,20 @@ def setup_code_routes() -> APIRouter:
     @router.get("/api/code/status")
     async def status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         from src.plugin_forge import aider_bin
+        from src.code_agent import CODE_AGENT_DEFAULT_MODEL
+        # `aider_code_engine` selects the motor: 'agentic' (default, multi-round
+        # tool loop, cost-safe) or 'aider' (one-shot fallback). Stored as a
+        # plain setting so the UI can flip it from a toggle.
+        engine = (_get("aider_code_engine", "agentic") or "agentic").strip().lower()
+        if engine not in ("agentic", "aider"):
+            engine = "agentic"
         return {
             "aider_installed": bool(aider_bin()),
             "project": _get("aider_code_project", ""),
-            "model": _get("aider_model", ""),
+            "model": _get("aider_model", "") or CODE_AGENT_DEFAULT_MODEL,
             "auto_branch": bool(_get("aider_code_auto_branch", True)),
+            "engine": engine,
+            "default_model": CODE_AGENT_DEFAULT_MODEL,
         }
 
     @router.get("/api/code/projects")
@@ -181,7 +190,7 @@ def setup_code_routes() -> APIRouter:
         _set("aider_code_project", path)
         return {"ok": True, "path": path}
 
-    async def _run_job(job_id, instruction, files, project, model):
+    async def _run_job(job_id, instruction, files, project, model, owner=None):
         job = _jobs[job_id]
         job["status"] = "running"
         job["stage"] = "starting…"
@@ -196,14 +205,34 @@ def setup_code_routes() -> APIRouter:
                 del job["live_log"][:150]
 
         try:
-            from src.code_edit import run_edit
             auto_branch = bool(_get("aider_code_auto_branch", True))
-            result = await run_edit(instruction, files, project, model,
-                                    auto_branch=auto_branch, progress_cb=_cb, line_cb=_line)
+            engine = (_get("aider_code_engine", "agentic") or "agentic").strip().lower()
+            if engine == "aider":
+                # Fallback engine: Aider one-shot. Still available behind the toggle.
+                from src.code_edit import run_edit
+                result = await run_edit(instruction, files, project, model,
+                                        auto_branch=auto_branch,
+                                        progress_cb=_cb, line_cb=_line)
+            else:
+                # Default: the agentic motor on stream_agent_loop. Cost-safe
+                # (tool allowlist + paid escalations hard-blocked).
+                from src.code_agent import run_agentic_edit, CODE_AGENT_DEFAULT_MODEL
+                eff_model = (model or "").strip() or CODE_AGENT_DEFAULT_MODEL
+                result = await run_agentic_edit(
+                    instruction, files, project, eff_model,
+                    auto_branch=auto_branch,
+                    progress_cb=_cb, line_cb=_line,
+                    owner=owner,
+                )
             job["result"] = result
             job["status"] = "done" if result.get("exit_code") == 0 else "failed"
             if result.get("error"):
                 job["stage"] = result["error"]
+        except asyncio.CancelledError:
+            job["status"] = "failed"
+            job["result"] = {"error": "Stopped by user.", "exit_code": 1}
+            job["stage"] = "stopped by user"
+            raise
         except Exception as e:
             job["status"] = "failed"
             job["result"] = {"error": str(e), "exit_code": 1}
@@ -236,11 +265,14 @@ def setup_code_routes() -> APIRouter:
         return {"ok": True}
 
     @router.post("/api/code/edit")
-    async def edit(payload: Dict[str, Any] = Body(...), _admin: str = Depends(require_admin)) -> Dict[str, Any]:
+    async def edit(payload: Dict[str, Any] = Body(...), admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        from src.code_agent import CODE_AGENT_DEFAULT_MODEL
         instruction = (payload.get("instruction") or "").strip()
         files = payload.get("files") or []
         project = (payload.get("project") or _get("aider_code_project", "")).strip()
-        model = (payload.get("model") or _get("aider_model", "")).strip()
+        # Default to the Go-pinned spec when nothing has been picked yet —
+        # so a fresh user gets a covered model on the very first run.
+        model = (payload.get("model") or _get("aider_model", "") or CODE_AGENT_DEFAULT_MODEL).strip()
         if not instruction:
             return {"ok": False, "error": "Describe the change first."}
         if not project:
@@ -255,7 +287,7 @@ def setup_code_routes() -> APIRouter:
         job_id = uuid.uuid4().hex[:12]
         _jobs[job_id] = {"id": job_id, "status": "queued", "stage": "queued",
                          "instruction": instruction, "started_at": time.time()}
-        t = asyncio.create_task(_run_job(job_id, instruction, files, project, model))
+        t = asyncio.create_task(_run_job(job_id, instruction, files, project, model, owner=admin))
         _tasks[job_id] = t
         return {"ok": True, "job_id": job_id}
 
