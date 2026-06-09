@@ -745,27 +745,26 @@ def setup_calendar_routes() -> APIRouter:
         from src.caldav_sync import sync_caldav
         return await sync_caldav(owner)
 
+
     @router.delete("/calendars/{cal_id}")
-    async def delete_calendar(cal_id: str, request: Request):
+    async def delete_calendar(request: Request, cal_id: str):
         owner = _require_user(request)
         db = SessionLocal()
         try:
-            cal = db.query(CalendarCal).filter(
-                CalendarCal.id == cal_id,
-                CalendarCal.owner == owner,
-            ).first()
-            if not cal:
-                raise HTTPException(404, "Calendar not found")
+            cal = _get_or_404_calendar(db, cal_id, owner)
+            db.query(CalendarEvent).filter(CalendarEvent.calendar_id == cal_id).delete()
             db.delete(cal)
             db.commit()
             return {"ok": True}
         except HTTPException:
             raise
         except Exception as e:
+            db.rollback()
             logger.error("Failed to delete calendar %s: %s", cal_id, e)
             raise HTTPException(500, "Failed to delete calendar")
         finally:
             db.close()
+
 
     @router.get("/calendars")
     async def list_calendars(request: Request):
@@ -1046,23 +1045,6 @@ def setup_calendar_routes() -> APIRouter:
         finally:
             db.close()
 
-    @router.delete("/calendars/{cal_id}")
-    async def delete_calendar(request: Request, cal_id: str):
-        owner = _require_user(request)
-        db = SessionLocal()
-        try:
-            cal = _get_or_404_calendar(db, cal_id, owner)
-            db.query(CalendarEvent).filter(CalendarEvent.calendar_id == cal_id).delete()
-            db.delete(cal)
-            db.commit()
-            return {"ok": True}
-        except HTTPException:
-            raise
-        except Exception as e:
-            db.rollback()
-            return {"error": str(e)}
-        finally:
-            db.close()
 
     # 10 MB hard cap on ICS upload. Loading the whole file into memory is
     # unavoidable with python-icalendar, so an unbounded upload would OOM.
