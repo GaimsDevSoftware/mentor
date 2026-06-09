@@ -230,12 +230,15 @@ async def _do_propose(pid: str) -> None:
     _progress(p, "aider_starting", model=model, files=safe_files)
 
     import asyncio
+    from src.code_edit import resolve_aider_model
+    aider_model, aider_env = resolve_aider_model(model)
     try:
         proc = await asyncio.create_subprocess_exec(
-            aider_bin(), "--model", model, "--yes-always", "--no-auto-commits",
+            aider_bin(), "--model", aider_model, "--yes-always", "--no-auto-commits",
             "--no-show-model-warnings",
             "--no-pretty", "--no-stream", "--message", instruction, *safe_files,
-            cwd=_repo(), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            cwd=_repo(), env=aider_env,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         # stream stdout line-by-line into the proposal so the UI shows it live
         last_save = time.time()
         log_chars = 0

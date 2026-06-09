@@ -57,6 +57,64 @@ def find_git_repos(max_repos: int = 40) -> list:
     return sorted(repos)
 
 
+def resolve_aider_model(model: str) -> tuple:
+    """Resolve a model name to a litellm-compatible spec + env vars.
+
+    Returns (aider_model_name, env_dict) where env_dict contains
+    API keys and base URLs needed for Aider/litellm to authenticate.
+    Handles opencode/, openrouter/, and generic endpoint models.
+    """
+    env = dict(os.environ)
+    aider_model = model
+
+    if model.startswith("ollama/"):
+        return aider_model, env
+
+    try:
+        from core.database import ModelEndpoint, SessionLocal
+        import json as _json
+        db = SessionLocal()
+        try:
+            _prefix, _, _bare = model.partition("/")
+            if not _bare:
+                _bare = _prefix
+                _prefix = ""
+
+            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+                url = (ep.base_url or "").lower()
+                cached = _json.loads(ep.cached_models or "[]") if ep.cached_models else []
+                pinned = _json.loads(ep.pinned_models or "[]") if ep.pinned_models else []
+                all_models = cached + pinned
+                if not (model in all_models or _bare in all_models
+                        or any(_bare in m for m in all_models)):
+                    continue
+
+                if "openrouter" in url:
+                    if ep.api_key:
+                        env["OPENROUTER_API_KEY"] = ep.api_key
+                    aider_model = f"openrouter/{_bare}"
+                elif "openai.com" in url:
+                    if ep.api_key:
+                        env["OPENAI_API_KEY"] = ep.api_key
+                    aider_model = f"openai/{_bare}"
+                elif "anthropic" in url:
+                    if ep.api_key:
+                        env["ANTHROPIC_API_KEY"] = ep.api_key
+                    aider_model = f"anthropic/{_bare}"
+                else:
+                    if ep.api_key:
+                        env["OPENAI_API_KEY"] = ep.api_key
+                    env["OPENAI_API_BASE"] = ep.base_url
+                    aider_model = f"openai/{_bare}"
+                break
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+    return aider_model, env
+
+
 async def list_local_models() -> list:
     """Local Ollama models as aider/litellm names ('ollama/<name>'), for the
     model picker. Best-effort — empty if Ollama isn't running."""
@@ -174,58 +232,7 @@ async def run_edit(instruction: str, files, project: str, model: str,
             pass
 
     _stage("Aider is editing the code…")
-
-    # Resolve model name + API credentials for Aider/litellm.
-    # litellm only knows: ollama/, openrouter/, openai/, anthropic/
-    # Our "opencode/" prefix must be rewritten to "openai/" with the
-    # right OPENAI_API_BASE so litellm uses the generic OpenAI-compat path.
-    env = dict(os.environ)
-    aider_model = model  # may be rewritten below
-    try:
-        from core.database import ModelEndpoint, SessionLocal
-        import json as _json
-        db = SessionLocal()
-        try:
-            # Extract the bare model name (after provider/ prefix)
-            _prefix, _, _bare = model.partition("/")
-            if not _bare:
-                _bare = _prefix
-                _prefix = ""
-
-            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
-                url = (ep.base_url or "").lower()
-                cached = _json.loads(ep.cached_models or "[]") if ep.cached_models else []
-                pinned = _json.loads(ep.pinned_models or "[]") if ep.pinned_models else []
-                all_models = cached + pinned
-                has_model = (model in all_models
-                             or _bare in all_models
-                             or any(_bare in m for m in all_models))
-                if not has_model:
-                    continue
-
-                if "openrouter" in url:
-                    if ep.api_key:
-                        env["OPENROUTER_API_KEY"] = ep.api_key
-                    aider_model = f"openrouter/{_bare}"
-                elif "openai.com" in url:
-                    if ep.api_key:
-                        env["OPENAI_API_KEY"] = ep.api_key
-                    aider_model = f"openai/{_bare}"
-                elif "anthropic" in url:
-                    if ep.api_key:
-                        env["ANTHROPIC_API_KEY"] = ep.api_key
-                    aider_model = f"anthropic/{_bare}"
-                else:
-                    # Generic OpenAI-compat (OpenCode/Zen, vLLM, etc.)
-                    if ep.api_key:
-                        env["OPENAI_API_KEY"] = ep.api_key
-                    env["OPENAI_API_BASE"] = ep.base_url
-                    aider_model = f"openai/{_bare}"
-                break  # first matching endpoint wins
-        finally:
-            db.close()
-    except Exception:
-        pass
+    aider_model, env = resolve_aider_model(model)
 
     cmd = [_bin, "--model", aider_model, "--yes-always", "--no-auto-commits",
            "--no-show-model-warnings", "--message", instruction] + safe_files

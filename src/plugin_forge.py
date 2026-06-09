@@ -245,12 +245,15 @@ async def build_with_aider(slug: str, intent: str, overwrite: bool = False) -> D
     _bin = aider_bin()
     if not _bin:
         return {"ok": False, "detail": "aider not installed (use the Install Aider button in /manage)"}
+    from src.code_edit import resolve_aider_model
+    _aider_model, _aider_env = resolve_aider_model(model)
     try:
         proc = await asyncio.create_subprocess_exec(
-            _bin, "--model", model, "--no-git", "--yes-always",
+            _bin, "--model", _aider_model, "--no-git", "--yes-always",
             "--no-show-model-warnings",
             "--message", msg, "plugin.py", "plugin.json",
-            cwd=pdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            cwd=pdir, env=_aider_env,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         try:
             await asyncio.wait_for(proc.wait(), timeout=300)
         except asyncio.TimeoutError:
