@@ -62,12 +62,16 @@ import turnManager from './turnManager.js';
   // otherwise `isStreaming` stays true forever and every typed reply just sits
   // in the queue. Generous so a cold on-demand model load isn't killed.
   const STALL_HARD_ABORT_MS = 240000;
-  // Queue-pressure short-circuit: when the user has typed follow-up messages
-  // and they're piled up in the queue, sitting on a silent stream is much
-  // worse than killing it early. After this many ms of silence WITH the
-  // queue non-empty, force-abort so drain runs. Tight because the model has
-  // already delivered visible content in the most common stuck case (server
-  // forgot to send [DONE] after the answer).
+  // Queue-pressure short-circuit: when the user has queued follow-ups, sitting
+  // on a silent stream is worse than killing it early. After this much silence
+  // WITH the queue non-empty AND content already on screen, force-abort so the
+  // queue drains. The "content already arrived" guard is the key refinement:
+  // it fires only for the "delivered the answer then went silent (server forgot
+  // [DONE])" case — NOT while a cold model is still loading before its first
+  // token, which can legitimately be silent for 30-60s on a big local model.
+  // Phase 1's server-side [DONE] guarantee makes this path rare; it remains as
+  // the client's fast recovery for a dropped socket the fetch reader didn't
+  // surface as an error.
   const STALL_QUEUE_KICK_MS = 20000;
   let _sendInFlight = false;   // covers the window from click → streaming start
   let _displayOverride = null; // Override visible user bubble text (hides injected prompts)
@@ -3480,13 +3484,15 @@ import turnManager from './turnManager.js';
       if (!isStreaming) return;
       const quietMs = Date.now() - _lastReaderActivity;
       // Queue-pressure short-circuit: the user piled up follow-ups and the
-      // model has been silent for STALL_QUEUE_KICK_MS. The most common
-      // cause is "stream delivered the answer but server forgot [DONE]" —
-      // we already have visible content, so the kindest thing is to close
-      // the stream and let the queue drain instead of making the user
-      // stare at it for 4 minutes.
-      if (_msgQueue.length > 0 && quietMs >= STALL_QUEUE_KICK_MS) {
-        console.warn(`[stall-watchdog] ${Math.round(quietMs / 1000)}s silent with ${_msgQueue.length} message(s) queued — force-closing so the queue can drain.`);
+      // model has been silent for STALL_QUEUE_KICK_MS. Fire ONLY when content
+      // has already arrived — i.e. "delivered the answer then went silent
+      // (server forgot [DONE]) / socket dropped" — so we never kill a cold
+      // model that's simply slow to produce its first token (legitimately
+      // silent 30-60s on a big local model). Empty content + silence is left
+      // to the 60s banner / 240s hard-abort.
+      const _hasContent = !!(currentAccumulated && currentAccumulated.trim());
+      if (_hasContent && _msgQueue.length > 0 && quietMs >= STALL_QUEUE_KICK_MS) {
+        console.warn(`[stall-watchdog] ${Math.round(quietMs / 1000)}s silent after content with ${_msgQueue.length} message(s) queued — force-closing so the queue can drain.`);
         _removeStallBanner();
         if (currentAbort) currentAbort._reason = 'stall';
         abortCurrentRequest(true);

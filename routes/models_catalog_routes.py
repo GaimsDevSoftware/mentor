@@ -10,6 +10,13 @@ from fastapi import APIRouter, Body, Depends, Request
 
 from src.auth_helpers import get_current_user, require_user
 
+# OpenCode Zen's free tier is a PROMOTIONAL, ROTATING roster. Most free models
+# carry a "-free" suffix, but some (stealth/preview models) are free with no
+# suffix. This short list catches the current no-suffix free models; it WILL
+# drift as opencode.ai rotates the roster, and it's only a display hint (never a
+# billing guarantee). Keep in sync with plugins/opencode/plugin.py.
+_ZEN_FREE_ROSTER = ("big-pickle", "grok-code-fast")
+
 
 def classify(name: str, base: str, model_id: str):
     """Return (kind, tier) for a model. kind=local|cloud, tier=free|paid|subscription.
@@ -38,12 +45,18 @@ def classify(name: str, base: str, model_id: str):
     if "/zen/go/" in b or "opencode go" in n:
         return "cloud", "subscription"       # OpenCode Go — all models on this endpoint are subscription
     if "opencode" in b or "/zen" in b or any(k in n for k in ("opencode", "zen")):
-        if any(p in m for p in ("claude-", "gpt-5.5", "gpt-5.4", "gpt-4", "gemini-", "grok-")):
-            return "cloud", "paid"
-        if any(p in m for p in ("glm", "kimi", "mimo", "qwen3.7", "qwen3.6", "qwen3-coder",
-                                 "minimax", "deepseek")):
-            return "cloud", "subscription"   # OpenCode Go model on Zen endpoint
-        return "cloud", "free"               # Zen free tier
+        # On OpenCode Zen, billing is per-model. Subscription is its OWN
+        # endpoint (OpenCode Go), handled above. The rule mirrors how
+        # opencode.ai actually charges:
+        #   * free roster ("-free" suffix OR a promotional no-suffix model
+        #     like big-pickle) → Free (no balance needed). The roster ROTATES,
+        #     so the no-suffix list will drift — it's a display hint only.
+        #   * everything else on Zen → Paid (billed per request against the
+        #     workspace balance). The open-source coders are pay-as-you-go
+        #     HERE; the cheap way to reach them is the OpenCode Go endpoint.
+        if m.endswith("-free") or "-free-" in m or any(fr in m for fr in _ZEN_FREE_ROSTER):
+            return "cloud", "free"
+        return "cloud", "paid"
     # Ollama Cloud is a subscription/pay-as-you-go service.
     if "ollama.com" in b:
         return "cloud", "subscription"

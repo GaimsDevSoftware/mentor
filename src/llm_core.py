@@ -7,7 +7,7 @@ import logging
 import hashlib
 import threading
 from fastapi import HTTPException
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from src.model_context import get_context_length, DEFAULT_CONTEXT
 from urllib.parse import urlparse
 
@@ -394,12 +394,83 @@ def _provider_label(url: str) -> str:
     return host or "provider"
 
 
+# ── Endpoint health tracker ────────────────────────────────────────────────
+# When an endpoint returns 401/402/403 ("rejected the API key", "Insufficient
+# balance", "denied access"), the issue isn't transient — the user needs to
+# fix billing or paste a new key. Remembering that for a few minutes lets the
+# resolver skip the broken endpoint so a name-only model spec doesn't
+# accidentally bind to a dead provider when the user actually wants the
+# free one (e.g. gpt-oss-120b on Groq instead of opencode.ai).
+#
+# In-process only: tiny dict keyed by endpoint base URL. Cleared on restart.
+
+import time as _time
+
+_ENDPOINT_FAILURE_TTL = 300.0   # 5 minutes
+_endpoint_failures: Dict[str, Dict[str, Any]] = {}  # base_url → {status, reason, ts}
+
+
+def _endpoint_health_key(url: str) -> str:
+    """Use the base origin (scheme://host) as the key so /v1/models and
+    /v1/chat/completions on the same provider share the same failure mark."""
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url)
+        if p.scheme and p.netloc:
+            return f"{p.scheme}://{p.netloc}".lower()
+    except Exception:
+        pass
+    return (url or "").strip().lower()
+
+
+def mark_endpoint_failure(url: str, status: int, reason: str = "") -> None:
+    """Record a fatal-class failure for this ENDPOINT.
+
+    Only 401/402/403 are recorded — auth/billing failures are endpoint-wide
+    ("fix the key", "out of balance") so skipping the whole endpoint for a few
+    minutes is correct. 404 is deliberately EXCLUDED: it's per-MODEL (a stale
+    or wrong model id), not an endpoint-wide fault — marking the whole endpoint
+    broken over one missing model would wrongly hide every other model on it.
+    Transient classes (429, 5xx) are not recorded either; they retry/recover.
+    """
+    if status not in (401, 402, 403):
+        return
+    key = _endpoint_health_key(url)
+    if not key:
+        return
+    _endpoint_failures[key] = {"status": status, "reason": reason, "ts": _time.time()}
+
+
+def is_endpoint_broken(url: str) -> Optional[Dict[str, Any]]:
+    """Return the failure record if this endpoint failed recently, else None.
+
+    Resolves expired entries inline so callers see a clean cache.
+    """
+    key = _endpoint_health_key(url)
+    rec = _endpoint_failures.get(key)
+    if not rec:
+        return None
+    if _time.time() - rec.get("ts", 0) > _ENDPOINT_FAILURE_TTL:
+        _endpoint_failures.pop(key, None)
+        return None
+    return rec
+
+
+def clear_endpoint_failure(url: str) -> None:
+    """Force-clear a failure marker (called after a successful response)."""
+    _endpoint_failures.pop(_endpoint_health_key(url), None)
+
+
 def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
     """Turn an upstream HTTP error into a user-readable sentence.
 
     Auth failures (401/403) become 'xAI rejected the API key' etc., so the UI
     stops showing raw JSON like '{"error":{"message":"User not found."}}'.
+    Also tags the endpoint as broken (TTL 5 min) so the resolver can skip it.
     """
+    # Mark the endpoint as broken FIRST so even if message formatting throws
+    # later, the failure is recorded.
+    mark_endpoint_failure(url, status, "")
     if isinstance(body, bytes):
         try:
             body = body.decode("utf-8", errors="replace")

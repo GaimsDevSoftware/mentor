@@ -14,20 +14,27 @@ import os
 
 from src.model_source import ModelSource
 
-# Tier patterns. Tiers:
-#   "paid"         — frontier proprietary, ALWAYS billed per request
-#                    (Claude, GPT-5.x, Gemini, Grok). Hidden by default.
-#   "subscription" — open-source coder models included in the Go subscription
-#                    (GLM, Kimi, MiMo, Qwen3.x, MiniMax, DeepSeek). Free with Go,
-#                    pay-as-you-go on Zen without Go.
-#   "free"         — everything else surfaced by Zen.
+# This SOURCE is the OpenCode ZEN endpoint (/zen/v1). On Zen, billing is
+# per-model — subscription is its OWN separate endpoint (OpenCode Go,
+# /zen/go/v1), so NO model on THIS source is "subscription". Tiers here:
+#   "free"  — the promotional rotating roster ("-free" suffix or a no-suffix
+#             stealth/preview model like big-pickle).
+#   "paid"  — everything else: frontier proprietary (Claude/GPT-5/Gemini/Grok)
+#             AND the open-source coders (GLM/Kimi/Qwen3.x/DeepSeek/…), which
+#             are pay-as-you-go on Zen. Hidden by default, which steers the user
+#             to the cheaper OpenCode Go subscription endpoint for those models.
+# (Keep _ZEN_FREE_ROSTER in sync with routes/models_catalog_routes.py.)
 DEFAULT_PAID_PATTERNS = ["claude-", "gpt-5.5", "gpt-5.4", "gpt-4", "gemini-", "grok-"]
+# Open-source coder pool — pay-as-you-go on Zen, subscription on Go.
 GO_PATTERNS = ["glm", "kimi", "mimo", "qwen3.7", "qwen3.6", "qwen3-coder",
                "minimax", "deepseek"]
+_ZEN_FREE_ROSTER = ("big-pickle", "grok-code-fast")
 
 
 def _model_tier(model_id: str) -> str:
     mid = (model_id or "").lower()
+    if mid.endswith("-free") or "-free-" in mid or any(fr in mid for fr in _ZEN_FREE_ROSTER):
+        return "free"
     try:
         from src.settings import get_setting
         paid_pats = get_setting("opencode_paid_patterns", DEFAULT_PAID_PATTERNS) or DEFAULT_PAID_PATTERNS
@@ -35,9 +42,31 @@ def _model_tier(model_id: str) -> str:
         paid_pats = DEFAULT_PAID_PATTERNS
     if any(p.lower() in mid for p in paid_pats):
         return "paid"
+    # Open-source coders are pay-as-you-go on the Zen endpoint → paid (hidden by
+    # default; reach them cheaply via the OpenCode Go endpoint instead).
     if any(p in mid for p in GO_PATTERNS):
-        return "subscription"
+        return "paid"
     return "free"
+
+
+def _go_endpoint_present() -> bool:
+    """Does the user have an OpenCode Go subscription endpoint connected? Go is
+    a SEPARATE endpoint (/zen/go/v1); its presence — not Zen model names — is
+    the real signal that the user has a Go subscription."""
+    try:
+        from core.database import SessionLocal, ModelEndpoint
+        db = SessionLocal()
+        try:
+            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+                b = (ep.base_url or "").lower()
+                n = (ep.name or "").lower()
+                if "/zen/go/" in b or "opencode go" in n:
+                    return True
+            return False
+        finally:
+            db.close()
+    except Exception:
+        return False
 
 
 def _model_filter(model_id: str) -> bool:
@@ -80,21 +109,16 @@ def _stats():
                 "status": "none"}
     SOURCE._models_cache = None  # fresh count
     models = SOURCE.list_models()
-    free, sub, paid = 0, 0, 0
-    for m in models:
-        t = _model_tier(m)
-        if t == "free":
-            free += 1
-        elif t == "subscription":
-            sub += 1
-        else:
-            paid += 1
+    free = sum(1 for m in models if _model_tier(m) == "free")
+    # "subscription" is no longer a Zen tier — Go is a separate endpoint, so we
+    # detect it by endpoint presence rather than by Zen model names.
+    has_go = _go_endpoint_present()
     # paid count won't show up here unless include_paid is on, so probe raw
     try:
         ok, raw = SOURCE.probe_models(cred)
         all_paid = sum(1 for x in (raw if ok else []) if _model_tier(x) == "paid")
     except Exception:
-        all_paid = paid
+        all_paid = sum(1 for m in models if _model_tier(m) == "paid")
     try:
         from src.settings import get_setting
         paid_on = bool(get_setting("opencode_include_paid", False))
@@ -115,27 +139,27 @@ def _stats():
     today_tok = today.get("in", 0) + today.get("out", 0)
     month_tok = month.get("in", 0) + month.get("out", 0)
     metrics = [
-        {"label": "Subscription", "value": str(sub), "good": sub > 0},
+        {"label": "Free models", "value": str(free), "good": free > 0},
+        {"label": "Go subscription", "value": "Yes" if has_go else "No", "good": has_go},
         {"label": "Paid available", "value": str(all_paid)},
         {"label": "Tokens today", "value": "~" + _h(today_tok)},
         {"label": "Tokens this month", "value": "~" + _h(month_tok)},
-        {"label": "Requests (mo)", "value": str(month.get("req", 0))},
     ]
-    has_go = sub > 0
-    if not has_go and not paid_on:
-        insight = ("No Go-subscription models detected and per-request paid models are hidden. "
-                   "If you have a Go subscription, your account should expose these — try signing out and back in.")
-        status = "warn"
-    elif has_go:
-        insight = (f"Go subscription active — {sub} subscription models available "
-                   f"(GLM, Kimi, DeepSeek, etc.). " +
-                   ("Per-request paid models are visible." if paid_on else
-                    f"{all_paid} per-request paid models are hidden — toggle in card above to use them."))
+    if has_go:
+        insight = ("OpenCode Go subscription connected — reach the GLM / Kimi / DeepSeek / Qwen3 "
+                   "coder pool cheaply through the Go endpoint. " +
+                   ("Per-request paid Zen models are visible." if paid_on else
+                    f"{all_paid} per-request paid Zen models are hidden — toggle above to use them."))
+        status = "ok"
+    elif paid_on:
+        insight = (f"{all_paid} per-request paid models are visible on Zen. Each request bills your "
+                   "account — consider an OpenCode Go subscription for predictable costs on the coder pool.")
         status = "ok"
     else:
-        insight = (f"{all_paid} per-request paid models are visible. Each request bills your account; "
-                   "consider switching to a Go subscription for predictable costs.")
-        status = "ok"
+        insight = (f"{free} free Zen models available. The open-source coder pool (GLM, Kimi, DeepSeek, "
+                   "Qwen3) is pay-as-you-go on Zen — add an OpenCode Go endpoint for a cheap subscription, "
+                   "or toggle paid models above to use them per-request.")
+        status = "ok" if free > 0 else "warn"
     # append usage note when there's traffic
     if month_tok > 0:
         insight += (f"  Usage this month: ~{_h(month_tok)} tokens over {month.get('req', 0)} requests"
