@@ -186,9 +186,12 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
                 break
             if ev == _DONE_EVENT or ev == "data: [DONE]\n\n":
                 saw_done = True
+                logger.info("[agent-run] %s saw [DONE] from generator", session_id)
             _publish(run, ev)
         if run.status == "running":
             run.status = "done"
+        logger.info("[agent-run] %s generator finished (saw_done=%s, status=%s)",
+                    session_id, saw_done, run.status)
     except asyncio.CancelledError:
         run.status = "stopped"
         # Let the wrapped generator's own CancelledError handler run (it saves
@@ -217,7 +220,11 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         # double up. (The CancelledError branch re-raises, so its own emit above
         # is the one that runs for cancels.)
         if not saw_done and run.status != "stopped":
+            logger.info("[agent-run] %s finally: generator never sent [DONE] (status=%s) — emitting guaranteed [DONE]",
+                        session_id, run.status)
             _publish(run, _DONE_EVENT)
+        logger.info("[agent-run] %s closing: waking %d subscriber(s) with end sentinel",
+                    session_id, len(run.subscribers))
         # Wake every subscriber with the end sentinel so their SSE closes.
         for q in list(run.subscribers):
             try:

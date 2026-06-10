@@ -420,7 +420,17 @@ import turnManager from './turnManager.js';
   turnManager.startSafetyDrain(() => (typeof _sendInFlight !== 'undefined' && _sendInFlight));
 
   function _renderQueueBar() {
-    // Get or create the bar
+    // Idempotent: there must be exactly ONE queue bar in the document. Adopt
+    // any existing node if our reference is missing or stale (detached after a
+    // re-render / session switch), and sweep strays so a duplicate can never
+    // accumulate. Defense-in-depth on top of single-loading chat.js.
+    const existing = document.querySelectorAll('.chat-queue-bar');
+    if (existing.length > 1) {
+      for (let i = 0; i < existing.length - 1; i++) existing[i].remove();
+    }
+    if (!_queueBarEl || !_queueBarEl.isConnected) {
+      _queueBarEl = document.querySelector('.chat-queue-bar') || null;
+    }
     if (!_queueBarEl) {
       _queueBarEl = document.createElement('div');
       _queueBarEl.className = 'chat-queue-bar';

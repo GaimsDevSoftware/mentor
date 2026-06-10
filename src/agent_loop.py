@@ -77,6 +77,7 @@ _AGENT_RULES = """\
 - AFTER A TOOL FAILS (timeout, error, "Unknown action", "not found"), DO NOT GO SILENT. The user expects a follow-up: either retry with a fix (e.g. correct args, longer-running form, run `tail -f /tmp/foo.log` to see progress, split into smaller steps), OR explicitly tell them "this didn't work, want me to try X instead?". A failed tool is not a stopping condition — only a successful one is.
 - YOU DECLARE WHEN THE JOB IS DONE — not a timer. Keep taking concrete steps while the task still needs them; you have plenty of rounds, so don't rush to quit just because you've made a few calls. There are exactly three ways to end a turn: (1) DONE — before you declare it, sanity-check that every concrete thing the user asked for actually exists or succeeded (file written, edit applied, command exited clean); then stop calling tools and write the final answer (that IS your "done" signal); (2) BLOCKED — you genuinely can't proceed (a capability is missing, permission denied, or data you can't obtain), so say plainly what's blocking you, in a sentence or two, and stop; (3) keep going with the single most useful next step. The only wrong moves are trailing off mid-task without one of these, and repeating a call you already ran.
 - Calendar: call `manage_calendar` with `action=list_calendars` FIRST before create/update/delete operations.
+- SUDO / PRIVILEGED COMMANDS: NEVER ask the user for their password in the chat. Just run the `sudo` command directly — the system will detect the password prompt and show a secure password dialog (🔒) to the user automatically. The user types their password in that secure field, not in the chat. If sudo fails even after the dialog, fall back to `pkexec` (which shows a native OS authentication dialog). Under no circumstances should you ask "can you type your password?" or similar.
 - BULK email actions ("delete all those", "mark all as read", "archive these", "delete all spam", "mark these 19 read") → use the `bulk_email` tool ONCE with either the exact `uids` list from the latest `list_emails` result or `all_unread: true`. NEVER just say you deleted/archived/marked messages unless a delete/archive/mark/bulk email tool call succeeded. NEVER loop mark_email_read / archive_email / delete_email one message at a time — that floods the context and can blow the token budget. One bulk_email call handles the whole set.
 - Email UIDs are the values after `UID:` in tool output, not list row numbers. For example, row `1.` with `UID: 90186` must use `"90186"`, never `"1"`.
 - "Last/latest/newest email" means call `list_emails` with `max_results: 1`, `unread_only: false`, and the right `account`, then read the UID returned by that tool if full content is needed. NEVER use a table row number like "#18" as an email UID.
@@ -1607,6 +1608,28 @@ async def stream_agent_loop(
         logger.warning("[agent] Soft context trim skipped: %s", e)
     prep_timings["context_trim"] = time.time() - _t3
 
+    # ── Progressive compression: older messages compressed more aggressively ──
+    try:
+        import caveman_compress as _cc
+        _non_system = [i for i, m in enumerate(messages) if m.get("role") != "system"]
+        _total = len(_non_system)
+        if _total > 6:
+            _levels = {0: "aggressive", 1: "structural", 2: "minimal"}
+            for _qi, _mi in enumerate(_non_system[:-4]):
+                _m = messages[_mi]
+                _c = _m.get("content", "")
+                if not isinstance(_c, str) or len(_c) < 200:
+                    continue
+                _age_frac = _qi / max(1, _total - 4)
+                _lvl = _levels.get(0 if _age_frac < 0.33 else (1 if _age_frac < 0.66 else 2), "minimal")
+                _comp, _o, _cn = _cc.compress(_c, _lvl)
+                if _cn < _o:
+                    messages[_mi] = {**_m, "content": _comp}
+    except ImportError:
+        pass
+    except Exception as _cc_err:
+        logger.debug("[agent] progressive compression skipped: %s", _cc_err)
+
     # Strip internal metadata keys before sending to the LLM API
     messages = [{k: v for k, v in msg.items() if k != "_protected"} for msg in messages]
 
@@ -2053,18 +2076,52 @@ async def stream_agent_loop(
         cleaned_round = strip_tool_blocks(round_response).strip()
         round_texts.append(cleaned_round)
 
+        # ── Colon-trail hint for rounds WITH tool calls ──────────────
+        # When the model emits text ending with ":" alongside a tool call,
+        # it wrote an incomplete thought. After the tool runs, nudge it to
+        # finish the sentence so the user doesn't see a dangling colon.
+        _vis_for_trail = _THINK_RE.sub("", cleaned_round).strip()
+        _needs_completion_hint = (
+            tool_blocks
+            and _vis_for_trail
+            and _vis_for_trail.rstrip()[-1:] == ":"
+        )
+        if _vis_for_trail and _vis_for_trail.rstrip()[-1:] == ":":
+            logger.info("[agent] round %d text ends with colon (%d tool_blocks, hint=%s): %s",
+                        round_num, len(tool_blocks), _needs_completion_hint, _vis_for_trail[-60:])
+
         if not tool_blocks:
             # ── Anti-truncation continuation ──────────────────────────
             # The text was cut off mid-message (finish_reason "length") with no
             # tool call. Feed the partial back and continue the SAME answer
             # instead of stopping. The partial already streamed to the user, so
             # the continuation appends seamlessly. Bounded by _CONT_MAX.
+            _visible_text = _THINK_RE.sub("", cleaned_round).strip()
+            _should_continue = False
             if (_continue_on_trunc and _round_finish_reason == "length"
                     and not _force_answer and _cont_used < _CONT_MAX
-                    and _THINK_RE.sub("", cleaned_round).strip()):
+                    and _visible_text):
+                _should_continue = True
+            # ── Premature stop detection ─────────────────────────────
+            # Some local models emit finish_reason "stop" prematurely,
+            # especially after a colon. A colon NEVER ends a complete
+            # thought — always continue. Other trailing punctuation is
+            # suspicious only on short outputs.
+            elif (_continue_on_trunc and _round_finish_reason == "stop"
+                    and not _force_answer and _cont_used < _CONT_MAX
+                    and _visible_text):
+                _trail = _visible_text.rstrip()[-1:]
+                if _trail == ":":
+                    _should_continue = True
+                elif _trail in (";", ",", "(", "[", "{", "-") and len(_visible_text) < 300:
+                    _should_continue = True
+                if _should_continue:
+                    logger.info("[agent] round %d premature stop detected (ends with %r, %d chars) — continuing",
+                                round_num, _trail, len(_visible_text))
+            if _should_continue:
                 _cont_used += 1
-                logger.info("[agent] round %d truncated (length) — continuing (%d/%d)",
-                            round_num, _cont_used, _CONT_MAX)
+                logger.info("[agent] round %d continuation (%d/%d), finish_reason=%s",
+                            round_num, _cont_used, _CONT_MAX, _round_finish_reason)
                 messages.append({"role": "assistant", "content": round_response})
                 messages.append({"role": "user", "content": (
                     "Continue exactly where you left off. Do not repeat anything "
@@ -2481,6 +2538,12 @@ async def stream_agent_loop(
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning)
 
+        if _needs_completion_hint:
+            messages.append({"role": "system", "content":
+                "Your last message ended with a colon — you were mid-sentence. "
+                "After presenting the tool result, finish the thought you started."})
+            _needs_completion_hint = False
+
         # Emit agent_step event
         yield (
             f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
@@ -2595,4 +2658,6 @@ async def stream_agent_loop(
     except Exception as _esc_err:
         logger.debug(f"escalation check skipped: {_esc_err}")
 
+    logger.info("[agent] turn complete (round=%s) — emitting [DONE] for session=%s",
+                round_num, session_id)
     yield "data: [DONE]\n\n"

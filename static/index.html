@@ -2331,7 +2331,12 @@
 <script type="module" src="/static/js/chatRenderer.js"></script>
 <script type="module" src="/static/js/codeRunner.js"></script>
 <script type="module" src="/static/js/chatStream.js"></script>
-<script type="module" src="/static/js/chat.js?v=20260611a"></script>
+<!-- chat.js is loaded ONCE via app.js's `import './js/chat.js'` (and the
+     modulepreload above). A separate <script src="chat.js?v=…"> tag here used
+     a DIFFERENT URL (the query string), which made the browser instantiate a
+     SECOND chat.js module that shared the one turnManager singleton — two
+     queue-bar renderers, divergent state. The server sends `cache-control:
+     no-cache` + etag, so the ?v= bust was never needed. Do NOT re-add it. -->
 <script type="module" src="/static/js/cookbook.js"></script>
 <script type="module" src="/static/js/search-chat.js"></script>
 <script type="module" src="/static/js/compare/index.js"></script>
