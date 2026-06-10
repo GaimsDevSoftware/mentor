@@ -21,13 +21,23 @@ import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
+import turnManager from './turnManager.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
   let API_BASE = '';
   let currentAbort = null;
+  // `isStreaming` is now backed by TurnManager (single source of truth). All
+  // the existing READ sites (`if (isStreaming)`, `!isStreaming`, …) keep
+  // working via this local mirror, which is kept in lockstep by _setStreaming()
+  // — the ONLY writer. Never assign `isStreaming` directly; call _setStreaming.
   let isStreaming = false;
+  function _setStreaming(v) {
+    v = !!v;
+    isStreaming = v;                 // fast local mirror for the many readers
+    turnManager.setStreaming(v);     // authority — also schedules drain on false
+  }
   // Continuous stall watchdog: while streaming, if the SSE stream produces
   // NOTHING for STALL_THRESHOLD_MS (no deltas, no tool heartbeat — tools beat
   // every 2s, so a full minute of silence means it's genuinely stuck or the
@@ -36,7 +46,29 @@ import createResearchSynapse from './researchSynapse.js';
   // recovery (which fired only on visibilitychange and silently reloaded).
   let _stallWatchdog = null;
   let _stallBannerShown = false;
+  // True from the moment the user clicks "Nudge it" on a stall banner until
+  // the stream produces fresh activity (a reader.read() that bumps
+  // _lastReaderActivity) OR the turn ends. While set, the watchdog refuses
+  // to re-show the banner, so re-stalls don't queue duplicate "Are you still
+  // working?" messages on top of the one already in the queue.
+  let _nudgedThisEpisode = false;
+  // The fixed text the Nudge button sends. Pulled out so the queue de-dup
+  // and the Nudge handler agree on what counts as a duplicate.
+  const NUDGE_TEXT = 'Are you still working? If you stopped, continue exactly where you left off and finish the task.';
   const STALL_THRESHOLD_MS = 60000;
+  // Unattended safety net: after this much TOTAL stream silence, the turn is
+  // wedged (server hung upstream, dropped SSE, model quietly died). Abort it so
+  // the stream's finally resets to idle and the message queue drains itself —
+  // otherwise `isStreaming` stays true forever and every typed reply just sits
+  // in the queue. Generous so a cold on-demand model load isn't killed.
+  const STALL_HARD_ABORT_MS = 240000;
+  // Queue-pressure short-circuit: when the user has typed follow-up messages
+  // and they're piled up in the queue, sitting on a silent stream is much
+  // worse than killing it early. After this many ms of silence WITH the
+  // queue non-empty, force-abort so drain runs. Tight because the model has
+  // already delivered visible content in the most common stuck case (server
+  // forgot to send [DONE] after the answer).
+  const STALL_QUEUE_KICK_MS = 20000;
   let _sendInFlight = false;   // covers the window from click → streaming start
   let _displayOverride = null; // Override visible user bubble text (hides injected prompts)
   let _hideUserBubble = false; // Skip user bubble entirely (e.g. continue after stop)
@@ -87,9 +119,25 @@ import createResearchSynapse from './researchSynapse.js';
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
 
   // ── Message queue — lets the user type while agent is busy ──
-  const _msgQueue = [];        // Array of { text, attachments?, priority? }
+  // The queue array now LIVES in TurnManager (single source of truth). This is
+  // the same array object by reference, so every existing `_msgQueue.length /
+  // .shift() / .splice()` call site keeps working — but TurnManager owns the
+  // lifecycle (enqueue notifications, drain scheduling, the draining lock).
+  const _msgQueue = turnManager.queue;
   let _queueBarEl = null;      // DOM element for queue chip bar
-  let _draining = false;       // True while auto-sending next queued msg
+  let _activeTurnText = null;  // User text of the turn currently streaming — so
+                               // "run now" can re-queue it if it gets interrupted
+  let _queueNote = '';         // Transient status line shown in the queue bar to
+  let _queueNoteTimer = null;  // explain what just happened (promote/interrupt/resume)
+
+  function _setQueueNote(text) {
+    _queueNote = text || '';
+    if (_queueNoteTimer) { clearTimeout(_queueNoteTimer); _queueNoteTimer = null; }
+    _renderQueueBar();
+    if (_queueNote) {
+      _queueNoteTimer = setTimeout(() => { _queueNote = ''; _renderQueueBar(); }, 7000);
+    }
+  }
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
@@ -249,7 +297,7 @@ import createResearchSynapse from './researchSynapse.js';
       submitBtn.title = 'Stop generation (or type to queue)';
       submitBtn.dataset.mode = 'streaming';
       submitBtn.dataset.phase = 'processing';
-      isStreaming = true;
+      _setStreaming(true);
       _startStallWatchdog();
       // Update placeholder to hint that typing queues
       const _qMsg = uiModule.el('message');
@@ -258,15 +306,12 @@ import createResearchSynapse from './researchSynapse.js';
       submitBtn.dataset.mode = '';
       delete submitBtn.dataset.phase;
       submitBtn.classList.remove('recording');
-      isStreaming = false;
+      _setStreaming(false);    // → TurnManager schedules the drain automatically
+      _activeTurnText = null;  // turn ended — nothing to resume
       _stopStallWatchdog();
       // Restore placeholder
       const _idleMsg = uiModule.el('message');
       if (_idleMsg) _idleMsg.placeholder = 'Message Mentor…';
-      // Auto-drain next queued message
-      if (_msgQueue.length > 0 && !_draining) {
-        setTimeout(_drainQueue, 150);
-      }
       _renderQueueBar();
       // Defer to global updater which handles mic/newchat/send modes
       if (window._updateSendBtnIcon) {
@@ -284,42 +329,91 @@ import createResearchSynapse from './researchSynapse.js';
   // Slash commands — now in slashCommands.js
   // -----------------------------------------------------------------------
 
-  // ── Message queue helpers ──────────────────────────────────────────────
+  // ── Message queue helpers — thin wrappers over TurnManager ───────────────
+  // TurnManager fires 'queue-changed' (wired to _renderQueueBar in init) and
+  // schedules a drain when an item is enqueued while idle.
   function _enqueueMessage(text, priority) {
-    if (priority) {
-      _msgQueue.unshift({ text });
-    } else {
-      _msgQueue.push({ text });
-    }
-    _renderQueueBar();
+    turnManager.enqueue({ text }, { priority: !!priority });
   }
 
   function _removeFromQueue(idx) {
-    _msgQueue.splice(idx, 1);
-    _renderQueueBar();
+    turnManager.removeAt(idx);
   }
 
   function _prioritize(idx) {
-    if (idx <= 0 || idx >= _msgQueue.length) return;
-    const item = _msgQueue.splice(idx, 1)[0];
-    _msgQueue.unshift(item);
-    _renderQueueBar();
+    turnManager.prioritize(idx);
   }
 
-  async function _drainQueue() {
-    if (_draining || isStreaming || _msgQueue.length === 0) return;
-    _draining = true;
-    const next = _msgQueue.shift();
-    _renderQueueBar();
+  // Codex-CLI-style "run now": interrupt the current turn and immediately
+  // evaluate THIS queued message, instead of waiting for the stream to finish.
+  // Moves the item to the front, stops the running generation, and lets the
+  // idle→drain path send it right away.
+  function _runNow(idx) {
+    if (idx < 0 || idx >= _msgQueue.length) return;
     const msgInput = uiModule.el('message');
-    if (msgInput) {
-      msgInput.value = next.text;
-      // Trigger submit programmatically
+    // Don't eat any half-typed message — queue it (to the back) before we steer.
+    const pending = (msgInput && msgInput.value || '').trim();
+    if (pending) {
+      _enqueueMessage(pending);      // pushes to END → existing indices unchanged
+      msgInput.value = '';
+      if (uiModule.autoResize) uiModule.autoResize(msgInput);
+    }
+    // Capture the task whose reply is currently streaming so it isn't lost when
+    // we interrupt it — it gets re-queued right BEHIND the promoted task and
+    // runs the moment the promoted one finishes.
+    const interrupted = isStreaming ? String(_activeTurnText || '').trim() : '';
+    // Promote the chosen item to the front.
+    if (idx > 0) {
+      const item = _msgQueue.splice(idx, 1)[0];
+      _msgQueue.unshift(item);
+    }
+    // Re-queue the interrupted task at position 1 (immediately after the promoted
+    // one). Mark it _resumed so the chip can show it's a resumed task.
+    if (interrupted) {
+      _msgQueue.splice(1, 0, { text: interrupted, _resumed: true });
+    }
+    turnManager.notifyChanged();
+    if (isStreaming) {
+      // Interrupt the current turn. With the composer empty, the send button's
+      // streaming-branch takes the Stop path → abort → idle → TurnManager
+      // drains the front (just-promoted) item automatically; resumed follows.
+      if (msgInput) msgInput.value = '';
+      const submitBtn = document.querySelector('.send-btn');
+      if (submitBtn) submitBtn.click();
+    } else {
+      turnManager.scheduleDrain();
+    }
+  }
+
+  // The actual drain executor — TurnManager owns the lock + scheduling; this
+  // is just the DOM-coupled "put the next message in the composer and submit"
+  // step it calls back into. requestSubmit() goes straight through the form's
+  // onsubmit, avoiding the 300ms click-debounce race in app.js.
+  turnManager.setDrainExecutor((next) => {
+    const msgInput = uiModule.el('message');
+    if (!msgInput) return;
+    msgInput.value = next.text;
+    const form = document.getElementById('chat-form');
+    if (form && typeof form.requestSubmit === 'function') {
+      form.requestSubmit();
+    } else {
       const submitBtn = document.querySelector('.send-btn');
       if (submitBtn) submitBtn.click();
     }
-    _draining = false;
-  }
+  });
+
+  // Back-compat shim: any remaining caller of _drainQueue() just asks
+  // TurnManager to drain. (TurnManager bails if streaming/draining/empty.)
+  function _drainQueue() { turnManager.scheduleDrain(); }
+
+  // Re-render the queue chip bar whenever TurnManager's queue changes. This is
+  // the single place the DOM reacts to queue mutations now that all ops funnel
+  // through TurnManager.
+  turnManager.on('queue-changed', () => { _renderQueueBar(); });
+
+  // Safety-net drain every 2s — catches any exotic turn-end path that somehow
+  // didn't flow through _setStreaming(false). Belt to setStreaming's suspenders.
+  turnManager.startSafetyDrain(() => (typeof _sendInFlight !== 'undefined' && _sendInFlight));
 
   function _renderQueueBar() {
     // Get or create the bar
@@ -339,15 +433,16 @@ import createResearchSynapse from './researchSynapse.js';
       _queueBarEl.style.display = 'none';
       return;
     }
-    _queueBarEl.style.display = '';
+    _queueBarEl.style.display = 'flex';
     const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    _queueBarEl.innerHTML = `<span class="queue-label">Queue (${_msgQueue.length})</span>` +
+    _queueBarEl.innerHTML = `<span class="queue-label">${_msgQueue.length} message${_msgQueue.length > 1 ? 's' : ''} queued</span>` +
       _msgQueue.map((item, i) => {
-        const preview = esc(item.text.slice(0, 40)) + (item.text.length > 40 ? '…' : '');
+        const preview = (item._resumed ? '↻ ' : '') + esc(item.text.slice(0, 50)) + (item.text.length > 50 ? '…' : '');
         const isNext = (i === 0);
-        return `<span class="queue-chip${isNext ? ' queue-chip-next' : ''}" data-idx="${i}">` +
-          (isNext ? '<span class="queue-chip-badge">next</span>' : '') +
+        return `<span class="queue-chip${isNext ? ' queue-chip-next' : ''}${item._resumed ? ' queue-chip-resumed' : ''}" data-idx="${i}"${item._resumed ? ' title="Resumed: interrupted to run a promoted task; will complete now"' : ''}>` +
+          (isNext ? '<span class="queue-chip-badge">next</span>' : `<span class="queue-chip-badge" style="background:var(--fg);opacity:.3">${i + 1}</span>`) +
           `<span class="queue-chip-text">${preview}</span>` +
+          `<button class="queue-chip-run" data-idx="${i}" title="Stop the current reply and run this one now">▶</button>` +
           (i > 0 ? `<button class="queue-chip-prio" data-idx="${i}" title="Send this next (move to front)">⤒</button>` : '') +
           `<button class="queue-chip-rm" data-idx="${i}" title="Remove from queue">×</button>` +
           `</span>`;
@@ -357,6 +452,8 @@ import createResearchSynapse from './researchSynapse.js';
     _queueBarEl.onclick = (e) => {
       const rmBtn = e.target.closest('.queue-chip-rm');
       if (rmBtn) { _removeFromQueue(+rmBtn.dataset.idx); return; }
+      const runBtn = e.target.closest('.queue-chip-run');
+      if (runBtn) { _runNow(+runBtn.dataset.idx); return; }
       const prioBtn = e.target.closest('.queue-chip-prio');
       if (prioBtn) { _prioritize(+prioBtn.dataset.idx); return; }
     };
@@ -649,6 +746,7 @@ import createResearchSynapse from './researchSynapse.js';
     const streamSessionId = sessionModule.getCurrentSessionId();
     _streamSessionId = streamSessionId;
     const streamQuery = msg;
+    _activeTurnText = msg;  // track for queue "run now" interruption/resume
     _lastReaderActivity = Date.now();
 
     // Acquire Web Lock to hint browser not to discard this tab while streaming
@@ -1412,9 +1510,41 @@ import createResearchSynapse from './researchSynapse.js';
       let _nextIsError = false;
       let _streamSawDone = false;
 
+      // ── "Still thinking..." silence indicator ──
+      let _silenceTimer = null;
+      let _silenceEl = null;
+      const _SILENCE_MS = 8000;
+      function _resetSilenceTimer() {
+        if (_silenceTimer) clearTimeout(_silenceTimer);
+        if (_silenceEl) { _silenceEl.remove(); _silenceEl = null; }
+        _silenceTimer = setTimeout(() => {
+          if (!holder) return;
+          const body = holder.querySelector('.body');
+          if (!body) return;
+          _silenceEl = document.createElement('div');
+          _silenceEl.className = 'silence-indicator';
+          _silenceEl.textContent = 'Still thinking…';
+          body.appendChild(_silenceEl);
+          uiModule.scrollHistory();
+        }, _SILENCE_MS);
+      }
+      _resetSilenceTimer();
+
+      // Terminal-event flag. Set when the loop body decides the stream is
+      // semantically done (e.g. provider returned an error event) but the
+      // server might not close the SSE connection. Without this, the outer
+      // `while` keeps awaiting reader.read() forever — isStreaming stays
+      // true and the queue never drains.
+      let _streamShouldStop = false;
       while (true) {
+        if (_streamShouldStop) { try { reader.cancel(); } catch {} break; }
         const { done, value } = await reader.read();
         _lastReaderActivity = Date.now();
+        // The model produced something — clear the per-episode nudge lock so
+        // a NEW stall later in the turn can re-prompt the user. (Without this,
+        // one nudge would silence the watchdog for the rest of the turn.)
+        _nudgedThisEpisode = false;
+        _resetSilenceTimer();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -1524,13 +1654,20 @@ import createResearchSynapse from './researchSynapse.js';
             }
             try {
               const json = JSON.parse(data);
-              // Handle SSE error events (e.g. HTTP 404 from provider)
+              // Handle SSE error events (e.g. HTTP 404 from provider, or an
+              // upstream "insufficient balance"-style rejection). The
+              // response is terminal — mark the stream done so the outer
+              // reader loop exits and finally runs (idle, drain). Some
+              // providers don't send [DONE] after error events, which used
+              // to leave isStreaming stuck `true` and the queue wedged.
               if (_nextIsError || json.status >= 400) {
                 _nextIsError = false;
                 const errMsg = json.text || json.error?.message || `Error ${json.status || 'unknown'}`;
                 console.error('Stream error:', errMsg);
                 if (spinner && spinner.element) spinner.destroy();
                 typewriterInto(roundHolder.querySelector('.body'), errMsg);
+                _streamSawDone = true;
+                _streamShouldStop = true;
                 break;
               }
               if (json.delta || json.type === 'tool_start' || json.type === 'agent_step' || json.type === 'doc_stream_delta') {
@@ -2304,6 +2441,42 @@ import createResearchSynapse from './researchSynapse.js';
 
               } else if (json.type === 'tool_output') {
                 if (_isBg) continue;
+
+                // --- Aegis approval request ---
+                if (json.aegis_ask) {
+                  // Import Aegis approval module
+                  import('./aegis-approval.js').then(aegisModule => {
+                    const approvalId = aegisModule.showAegisApproval(json, json);
+
+                    // Wait for user decision
+                    const decisionHandler = (event) => {
+                      if (event.detail.approvalId === approvalId) {
+                        document.removeEventListener('aegis-decision', decisionHandler);
+
+                        if (event.detail.approved) {
+                          // User approved — send continuation message to server
+                          console.log('Aegis approval granted for:', json.tool);
+                          // The server will retry the same tool call with aegis_override flag
+                          _sendMessage(`@continue aegis approval: proceed with ${json.tool}`, { _aegis_override_id: approvalId });
+                        } else {
+                          // User denied
+                          console.log('Aegis approval denied for:', json.tool);
+                          // Mark as failed in the tool bubble
+                          if (currentToolBubble) {
+                            currentToolBubble.className = 'agent-thread-node error';
+                            currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">⊘</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">denied</span><span class="agent-thread-chevron">▶</span></div><div class="agent-thread-content"><pre class="agent-thread-cmd">Aegis: User denied execution</pre></div>`;
+                          }
+                          uiModule.scrollHistory();
+                        }
+                      }
+                    };
+
+                    document.addEventListener('aegis-decision', decisionHandler);
+                  }).catch(e => console.error('Failed to load aegis-approval module:', e));
+
+                  continue;
+                }
+
                 // --- Update the current thread node ---
                 if (currentToolBubble) {
                   // Stop wave animation + the per-second cooking ticker
@@ -2527,6 +2700,17 @@ import createResearchSynapse from './researchSynapse.js';
                 budgetDiv.textContent = `Tool budget reached (${json.used}/${json.limit} calls). Agent stopped.`;
                 const chatBox = document.getElementById('chat-history');
                 chatBox.appendChild(budgetDiv);
+
+              } else if (json.type === 'agent_error') {
+                if (_isBg) continue;
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                const errDiv = document.createElement('div');
+                errDiv.style.cssText = 'font-size:12px;padding:10px 14px;margin:8px 0;border-radius:10px;background:color-mix(in srgb,var(--color-error,#ff453a) 10%,transparent);border:1px solid color-mix(in srgb,var(--color-error,#ff453a) 30%,transparent);color:var(--fg);line-height:1.45';
+                errDiv.innerHTML = '<b style="color:var(--color-error,#ff453a)">Agent crashed</b><br>' + esc(json.error || 'Unknown error') + '<br><span style="opacity:.6;font-size:11px">The conversation is saved. You can retry your last message.</span>';
+                const chatBox = document.getElementById('chat-history');
+                chatBox.appendChild(errDiv);
+                uiModule.scrollHistory();
 
               } else if (json.type === 'teacher_takeover') {
                 if (_isBg) continue;
@@ -2926,6 +3110,22 @@ import createResearchSynapse from './researchSynapse.js';
             return;
           }
 
+          if (abortReason === 'stall') {
+            const stallMsg = 'Stream stalled with no response — auto-recovered so the queue could continue. Partial output preserved.';
+            if (holder && !accumulated) {
+              holder.querySelector('.body').innerHTML =
+                `<div style="color: var(--color-error); font-style: italic; padding: 4px 0;">[${stallMsg}]</div>`;
+            } else if (holder && accumulated) {
+              const stallNote = document.createElement('div');
+              stallNote.className = 'stopped-indicator';
+              stallNote.innerHTML =
+                `<span style="color: var(--color-error);">[${stallMsg}]</span>`;
+              holder.querySelector('.body').appendChild(stallNote);
+            }
+            currentAbort = null;
+            return;
+          }
+
           if (abortReason === 'recovery') {
             const recoveryMsg = 'Streaming was interrupted after the tab went inactive. Partial output was preserved.';
             if (holder && !accumulated) {
@@ -3031,6 +3231,8 @@ import createResearchSynapse from './researchSynapse.js';
         }
       }
     } finally {
+      if (_silenceTimer) { clearTimeout(_silenceTimer); _silenceTimer = null; }
+      if (_silenceEl) { _silenceEl.remove(); _silenceEl = null; }
       clearProcessingProbe();
       // Streaming done — let screen readers announce the settled response.
       const _chatLogDone = document.getElementById('chat-history');
@@ -3042,8 +3244,17 @@ import createResearchSynapse from './researchSynapse.js';
         if (_rToggleCleanup) _rToggleCleanup.classList.remove('research-running');
       }
 
-      // Only reset UI state if still on the stream's session and was never backgrounded
-      const _isBgFinally = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
+      // Reset UI to idle whenever the user is currently viewing the stream's
+      // OWN session. A run gets parked in _backgroundStreams when you switch
+      // AWAY mid-stream, but that entry is not cleared when you switch back — so
+      // the old "|| _backgroundStreams.has(...)" guard wrongly suppressed the
+      // idle reset on switch-back, leaving isStreaming stuck `true`. The visible
+      // symptom: a new message just sits in the queue and never runs because the
+      // composer still thinks a stream is active. "Background" = a DIFFERENT
+      // session is in front — nothing more. Clear the stale parked entry too.
+      const _onStreamSession = (sessionModule.getCurrentSessionId() === streamSessionId);
+      if (_onStreamSession) _backgroundStreams.delete(streamSessionId);
+      const _isBgFinally = !_onStreamSession;
 
       if (!_isBgFinally) {
         // Reset button to idle state
@@ -3229,9 +3440,20 @@ import createResearchSynapse from './researchSynapse.js';
     cont.title = 'Stop the stalled stream and ask it to continue';
     cont.addEventListener('click', () => {
       _removeStallBanner();
+      // Lock out further banners for this stall episode — one pending nudge
+      // is enough. The flag clears in _onStreamActivity (fresh deltas mean
+      // the model is back) or _stopStallWatchdog (turn ended).
+      _nudgedThisEpisode = true;
+      // If a nudge is already queued (user clicked Nudge while a previous
+      // one was still pending in the queue), don't stack another duplicate.
+      const alreadyQueued = _msgQueue.some(it => (it && it.text) === NUDGE_TEXT);
+      if (alreadyQueued) {
+        _setQueueNote('Nudge already queued — waiting for the model to respond.');
+        return;
+      }
       const mi = uiModule.el('message');
       if (mi) {
-        mi.value = 'Are you still working? If you stopped, continue exactly where you left off and finish the task.';
+        mi.value = NUDGE_TEXT;
         const sb = document.querySelector('.send-btn');
         if (sb) sb.click();
       }
@@ -3246,15 +3468,49 @@ import createResearchSynapse from './researchSynapse.js';
     if (uiModule.scrollHistory) uiModule.scrollHistory();
   }
   function _startStallWatchdog() {
-    // Disabled: the server-side stall detector / auto-continue (agent
-    // loop-breaker) handles quiet/stalled streams now, so the manual
-    // "Quiet for Nm — still working?" banner is redundant (and annoying).
+    // Police the live turn for silence. The server-side stall detector only
+    // trips at its 5-20 min timeouts, during which `isStreaming` stays true and
+    // the message queue is wedged — so we watch client-side too. `_lastReaderActivity`
+    // updates on every reader.read(), incl. server heartbeats, so research/image
+    // streams (which heartbeat) never false-trip; only a genuinely silent
+    // agent/chat stream goes quiet here.
     if (_stallWatchdog) { clearInterval(_stallWatchdog); _stallWatchdog = null; }
     _removeStallBanner();
+    _stallWatchdog = setInterval(() => {
+      if (!isStreaming) return;
+      const quietMs = Date.now() - _lastReaderActivity;
+      // Queue-pressure short-circuit: the user piled up follow-ups and the
+      // model has been silent for STALL_QUEUE_KICK_MS. The most common
+      // cause is "stream delivered the answer but server forgot [DONE]" —
+      // we already have visible content, so the kindest thing is to close
+      // the stream and let the queue drain instead of making the user
+      // stare at it for 4 minutes.
+      if (_msgQueue.length > 0 && quietMs >= STALL_QUEUE_KICK_MS) {
+        console.warn(`[stall-watchdog] ${Math.round(quietMs / 1000)}s silent with ${_msgQueue.length} message(s) queued — force-closing so the queue can drain.`);
+        _removeStallBanner();
+        if (currentAbort) currentAbort._reason = 'stall';
+        abortCurrentRequest(true);
+        return;
+      }
+      if (quietMs >= STALL_HARD_ABORT_MS) {
+        // Wedged with nobody draining the queue — recover automatically.
+        console.warn(`[stall-watchdog] No stream activity for ${Math.round(quietMs / 1000)}s — auto-recovering so the queue can drain.`);
+        _removeStallBanner();
+        if (currentAbort) currentAbort._reason = 'stall';
+        abortCurrentRequest(true);
+        return;
+      }
+      if (quietMs >= STALL_THRESHOLD_MS && !_stallBannerShown && !_nudgedThisEpisode) {
+        // Non-destructive nudge: let the user Stop (frees the queue instantly)
+        // or wait it out toward the hard cap.
+        _showStallBanner(Math.round(quietMs / 1000));
+      }
+    }, 2000);
   }
   function _stopStallWatchdog() {
     if (_stallWatchdog) { clearInterval(_stallWatchdog); _stallWatchdog = null; }
     _removeStallBanner();
+    _nudgedThisEpisode = false;
   }
 
   /** Show a "Cancelled by user" record in `holder` and persist an empty
@@ -3333,7 +3589,7 @@ import createResearchSynapse from './researchSynapse.js';
     }
     // Clear local state WITHOUT aborting the fetch
     currentAbort = null;
-    isStreaming = false;
+    _setStreaming(false);
     currentHolder = null;
     currentAccumulated = '';
     // Reset submit button so the new chat is ready to send
@@ -3611,7 +3867,7 @@ import createResearchSynapse from './researchSynapse.js';
           currentAbort._reason = 'recovery';
           currentAbort.abort();
         }
-        isStreaming = false;
+        _setStreaming(false);
 
         // Release Web Lock
         if (_webLockRelease) {
