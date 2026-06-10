@@ -46,6 +46,26 @@ _active_streams: Dict[str, dict] = {}
 _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
 
 
+async def _ensure_done(agen: "AsyncGenerator[str, None]") -> "AsyncGenerator[str, None]":
+    """Wrap a direct (non-detached) SSE generator so it ALWAYS terminates with
+    exactly one `[DONE]` event, on every path: normal end, silent upstream that
+    never sent it, or an exception. Detached runs get this guarantee from
+    agent_runs._drain instead; this is for the StreamingResponse(gen) paths
+    (e.g. rewrite) that don't go through agent_runs."""
+    saw_done = False
+    try:
+        async for ev in agen:
+            if ev == "data: [DONE]\n\n":
+                saw_done = True
+            yield ev
+    except Exception as e:
+        logger.error("[stream] generator failed before completion: %s", e)
+        yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 500})}\n\n'
+    finally:
+        if not saw_done:
+            yield "data: [DONE]\n\n"
+
+
 def _stream_set(session_id: str, **fields) -> None:
     """Update fields on the active-stream entry for `session_id`, or
     no-op if the entry has already been popped. Using .get() avoids a
@@ -1045,6 +1065,20 @@ def setup_chat_routes(
                     except Exception:
                         logger.exception("Failed to save partial response on disconnect (session %s)", session)
                     raise
+                except Exception as _agent_exc:
+                    logger.exception("Agent loop crashed for session %s: %s", session, _agent_exc)
+                    _err_msg = f"Agent error: {type(_agent_exc).__name__}: {_agent_exc}"
+                    yield f'data: {json.dumps({"type": "agent_error", "error": _err_msg})}\n\n'
+                    if full_response:
+                        full_response += f"\n\n*(Agent crashed: {type(_agent_exc).__name__})*"
+                        try:
+                            _cr_content, _cr_md = clean_thinking_for_save(full_response, {"error": str(_agent_exc), "model": sess.model})
+                            sess.add_message(ChatMessage("assistant", _cr_content, metadata=_cr_md))
+                            if not incognito:
+                                session_manager.save_sessions()
+                        except Exception:
+                            pass
+                    yield "data: [DONE]\n\n"
                 finally:
                     _active_streams.pop(session, None)
 
@@ -1296,6 +1330,6 @@ def setup_chat_routes(
                 logger.error("Rewrite stream error: %s", e)
                 yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 500})}\n\n'
 
-        return StreamingResponse(stream_rewrite(), media_type="text/event-stream")
+        return StreamingResponse(_ensure_done(stream_rewrite()), media_type="text/event-stream")
 
     return router

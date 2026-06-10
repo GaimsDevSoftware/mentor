@@ -21,19 +21,61 @@ from typing import AsyncGenerator, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# ── SSE protocol contract ───────────────────────────────────────────────────
+# Bumped when the event shape changes in a way clients must know about. Sent
+# once per run in the opening `meta` event so a client can detect a server
+# newer than itself and prompt a reload (Phase 1 of the queue redesign).
+SSE_PROTOCOL_VERSION = 1
+
+# The terminal sentinel every run MUST end with. The drain loop guarantees it
+# is emitted exactly once, on every exit path (normal, error, cancel, or the
+# upstream generator finishing WITHOUT sending it). Clients use this as the
+# authoritative "this turn is over" signal — not the raw HTTP connection close,
+# which the detached-run model can leave open while a slow upstream is still
+# being awaited.
+_DONE_EVENT = "data: [DONE]\n\n"
+
+# If the wrapped generator produces NOTHING (no chunk, no completion) for this
+# long, the run is considered wedged (upstream provider hung, dropped the
+# socket without closing, model died mid-thought). The drain force-terminates
+# and emits [DONE] so the client's turn state can settle and its queue drains.
+# Generous so a cold on-demand model load or a long legitimate reasoning pass
+# isn't killed — the client's own stall UX (nudge at 60s) fires first.
+_RUN_IDLE_TIMEOUT_S = 300.0
+
 
 class _Run:
-    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task")
+    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task", "run_id")
 
-    def __init__(self) -> None:
+    def __init__(self, run_id: str = "") -> None:
         self.buffer: list = []          # ordered SSE event strings (replay log)
         self.subscribers: set = set()   # one asyncio.Queue per connected client
         self.status: str = "running"    # running | done | error | stopped
         self.task: Optional[asyncio.Task] = None
         self.evict_task: Optional[asyncio.Task] = None
+        self.run_id: str = run_id       # stable id for this turn (SSE meta)
 
 
 _RUNS: Dict[str, _Run] = {}
+
+_run_counter = 0
+
+
+def _next_run_id(session_id: str) -> str:
+    """Monotonic per-process run id. Cheap, unique within a server lifetime,
+    and good enough to disambiguate rapid re-sends on the same session.
+    (Avoids time/random so it stays deterministic for tests.)"""
+    global _run_counter
+    _run_counter += 1
+    return f"run-{_run_counter}"
+
+
+def _meta_event(run_id: str, session_id: str) -> str:
+    """The opening SSE event carrying the protocol contract. Older clients
+    ignore unknown event types, so emitting this is backward compatible."""
+    payload = {"type": "meta", "run_id": run_id, "session_id": session_id,
+               "v": SSE_PROTOCOL_VERSION}
+    return f"event: meta\ndata: {json.dumps(payload)}\n\n"
 
 # How long a FINISHED run (and its full replay buffer) is retained after the
 # last subscriber disconnects, so a reconnect within the window can still
@@ -86,9 +128,16 @@ def get_status(session_id: str) -> Optional[str]:
 
 
 async def _drain(session_id: str, agen: AsyncGenerator[str, None],
-                 prev_task: Optional[asyncio.Task] = None) -> None:
+                 prev_task: Optional[asyncio.Task] = None,
+                 run_id: Optional[str] = None) -> None:
     """Pull every event from the wrapped generator into the run buffer, fanning
-    each out to live subscribers. Runs to completion regardless of subscribers."""
+    each out to live subscribers. Runs to completion regardless of subscribers.
+
+    SSE contract (Phase 1): the run ALWAYS starts with a `meta` event carrying
+    {run_id, session_id, v} and ALWAYS ends with exactly one `[DONE]` event —
+    on every exit path: normal completion, the upstream generator finishing
+    without sending [DONE], an error, a cancel, or an idle timeout. Clients
+    treat [DONE] as the authoritative end-of-turn signal."""
     run = _RUNS.get(session_id)
     if run is None:
         return
@@ -103,8 +152,40 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
             raise            # our own cancellation — propagate
         except Exception:
             pass
+
+    # Opening contract event. Unknown event types are ignored by older clients,
+    # so this is backward compatible.
+    _publish(run, _meta_event(run_id or "", session_id))
+
+    saw_done = False           # did the wrapped generator emit [DONE] itself?
     try:
-        async for ev in agen:
+        # Manually pump the generator so we can apply a per-chunk idle timeout —
+        # `async for` gives no hook to detect an upstream that hangs forever.
+        agen_iter = agen.__aiter__()
+        while True:
+            try:
+                ev = await asyncio.wait_for(agen_iter.__anext__(), timeout=_RUN_IDLE_TIMEOUT_S)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                logger.warning("[agent-run] %s idle for %ss — force-closing so the client can recover.",
+                               session_id, int(_RUN_IDLE_TIMEOUT_S))
+                run.status = "error"
+                _publish(
+                    run,
+                    "event: error\n"
+                    f"data: {json.dumps({'error': f'No response from the model for {int(_RUN_IDLE_TIMEOUT_S)}s — the stream was closed. Try again or switch models.', 'status': 504})}\n\n",
+                )
+                # Close the wrapped generator so its own finally (partial-save,
+                # _active_streams cleanup) runs deterministically rather than
+                # waiting for GC.
+                try:
+                    await agen.aclose()
+                except Exception:
+                    pass
+                break
+            if ev == _DONE_EVENT or ev == "data: [DONE]\n\n":
+                saw_done = True
             _publish(run, ev)
         if run.status == "running":
             run.status = "done"
@@ -116,6 +197,12 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
             await agen.aclose()
         except Exception:
             pass
+        # Cancelled runs still get a [DONE] so a still-connected client (or a
+        # reconnect replaying the buffer) settles its turn instead of hanging.
+        if not saw_done:
+            _publish(run, _DONE_EVENT)
+            saw_done = True
+        raise            # propagate cancellation after recording the sentinel
     except Exception as e:
         logger.error("[agent-run] %s failed: %s", session_id, e, exc_info=True)
         run.status = "error"
@@ -124,8 +211,13 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
             "event: error\n"
             f"data: {json.dumps({'error': 'Agent run failed before completion.', 'status': 500})}\n\n",
         )
-        _publish(run, "data: [DONE]\n\n")
     finally:
+        # THE guarantee: every run ends with exactly one [DONE], whatever path
+        # we took to get here. If the wrapped generator already sent it, don't
+        # double up. (The CancelledError branch re-raises, so its own emit above
+        # is the one that runs for cancels.)
+        if not saw_done and run.status != "stopped":
+            _publish(run, _DONE_EVENT)
         # Wake every subscriber with the end sentinel so their SSE closes.
         for q in list(run.subscribers):
             try:
@@ -149,9 +241,10 @@ def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
             prev_task = prev.task   # new run awaits this before it starts writing
         if prev.evict_task and not prev.evict_task.done():
             prev.evict_task.cancel()
-    run = _Run()
+    run_id = _next_run_id(session_id)
+    run = _Run(run_id=run_id)
     _RUNS[session_id] = run
-    run.task = asyncio.create_task(_drain(session_id, agen, prev_task))
+    run.task = asyncio.create_task(_drain(session_id, agen, prev_task, run_id))
     return run
 
 
