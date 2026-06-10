@@ -2635,7 +2635,20 @@ async def stream_agent_loop(
                 "du må gjøre dette selv", "you need to do this manually",
                 "åpne code-fanen", "use the code tab",
             )
-            if any(p in _resp_lower for p in _cant_phrases):
+            # Don't escalate when the model is ENGAGING, not refusing. A reply
+            # that offers a next step or asks the user a question ("Vil du at
+            # jeg skal sjekke …?", "Do you want me to …?") is cooperating —
+            # re-running it wastes a call and double-streams into the bubble.
+            # This killed the false-positive on "har ikke tilgang til
+            # sanntidsdata … Vil du at jeg skal sjekke statusen?".
+            _stripped = _THINK_RE.sub("", strip_tool_blocks(full_response)).strip()
+            _offer_phrases = (
+                "vil du", "skal jeg", "ønsker du", "vil du at jeg",
+                "do you want", "would you like", "shall i", "want me to",
+                "can i help", "kan jeg hjelpe", "let me know", "si fra",
+            )
+            _is_engaging = _stripped.endswith("?") or any(p in _resp_lower for p in _offer_phrases)
+            if any(p in _resp_lower for p in _cant_phrases) and not _is_engaging:
                 _correction = (
                     "[SYSTEM CORRECTION: The tools bash, python, read_file, web_search "
                     "ARE available to you right now. You CAN run commands, write code, "
