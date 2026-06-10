@@ -1598,6 +1598,14 @@ import turnManager from './turnManager.js';
 
             if (data === '[DONE]') {
               _streamSawDone = true;
+              // BULLETPROOF TURN-END: stop the reader on the NEXT outer-loop
+              // iteration instead of blocking on another reader.read() that
+              // waits for the server to close the socket. In the detached-run
+              // model that close can be delayed or arrive non-cleanly, which
+              // used to leave isStreaming stuck true ("Still thinking…") and
+              // wedge the queue. [DONE] is the authoritative end-of-turn signal
+              // (guaranteed exactly once by agent_runs) — honor it immediately.
+              _streamShouldStop = true;
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
               if (bgDone) {
