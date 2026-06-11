@@ -13,7 +13,14 @@ venv/
 # Environment
 .env
 .env.bak.*
+.env.bak-*
 !.env.example
+
+# Local backup / scratch files (e.g. foo.py.bak-pre-xyz-20260101) — never ship
+*.bak
+*.bak-*
+*.orig
+=0.*
 
 # Data — all user data stays local
 data/
