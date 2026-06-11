@@ -452,6 +452,7 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
   </div>
   <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
     <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="rec-ready"> Only models that work right now (no extra setup)</label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px" title="The tiers above pick your ROLE models. The recommender (teacher) that does the picking is separate and should be a strong model — let it use the best signed-in cloud/subscription model even when the roles you want are local."><input type="checkbox" id="rec-cloud-teacher" checked> Recommender (teacher) may use a cloud model</label>
     <span style="flex:1"></span>
     <button class="btn" id="rec-btn">✨ Recommend roles</button>
   </div>
@@ -618,17 +619,20 @@ $('#rec-btn').addEventListener('click',async()=>{
   out.innerHTML='<div style="display:flex;align-items:center;gap:8px"><span class="muted" style="font-size:13px">The teacher model is choosing the best model per role…</span><button class="btn mini" id="rec-cancel" type="button">Cancel</button></div>';
   const _cancelBtn=$('#rec-cancel'); if(_cancelBtn) _cancelBtn.onclick=()=>{ _abort.abort(); };
   try{
-    const url='/api/cookbook/recommend?tiers='+encodeURIComponent(tiers.join(','))+'&ready_only='+(readyOnly?'true':'false');
+    const cloudTeacher=$('#rec-cloud-teacher')? $('#rec-cloud-teacher').checked : true;
+    const url='/api/cookbook/recommend?tiers='+encodeURIComponent(tiers.join(','))+'&ready_only='+(readyOnly?'true':'false')+'&cloud_teacher='+(cloudTeacher?'true':'false');
     const res=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},signal:_abort.signal});
     clearTimeout(_timeout);
     const r=await res.json();
-    if(!r.ok){ out.innerHTML=`<span style="color:var(--err);font-size:13px">${esc(r.detail||'Recommendation failed.')}</span><div class="muted" style="font-size:11px;margin-top:4px">Check that teacher_model is set to a working model in Admin → Settings. Try a local model (free, no balance issues) or switch to a subscription model.</div>`; }
+    if(!r.ok){ out.innerHTML=`<span style="color:var(--err);font-size:13px">${esc(r.detail||'Recommendation failed.')}</span><div class="muted" style="font-size:11px;margin-top:4px">The tiers above pick your <b>role</b> models; the <b>recommender</b> (teacher) is separate. Keep "Recommender may use a cloud model" ticked and sign in to a cloud source for the smartest picks, or set a teacher model in Admin → Settings.</div>`; }
     else{
       const recs=r.recommendations||{};
       const rows=Array.isArray(recs)? recs.map(x=>[x.role,x]) : Object.keys(recs).map(k=>[k,recs[k]]);
-      if(!rows.length){ out.innerHTML='<span class="muted" style="font-size:13px">No roles suggested with these filters — try widening the tier choice or turning off "ready only".</span>'; }
+      const _rec=r.recommender||null;
+      const _recHdr=_rec?('<div class="muted" style="font-size:11px;margin:0 0 8px">Recommender (teacher): <b>'+esc(String(_rec.spec||'').split('@')[0])+'</b>'+(_rec.source==='cloud'?' ☁️ cloud':_rec.source==='local'?' 🖥 local':'')+(_rec.auto?' · auto-picked':'')+(_rec.note?' — '+esc(_rec.note):'')+'</div>'):'';
+      if(!rows.length){ out.innerHTML=_recHdr+'<span class="muted" style="font-size:13px">No roles suggested with these filters — try widening the tier choice or turning off "ready only".</span>'; }
       else {
-        out.innerHTML=rows.map(([role,x])=>{
+        out.innerHTML=_recHdr+rows.map(([role,x])=>{
           const remote=!!x.remote, tier=x.tier||(remote?'cloud':'local');
           const tierC=tier==='free'?'var(--ok)':tier==='subscription'?'var(--cyan)':tier==='paid'?'var(--warn)':'var(--brass)';
           const tierTag='<span style="font-size:9px;border:1px solid color-mix(in srgb,'+tierC+' 45%,transparent);color:'+tierC+';border-radius:4px;padding:1px 5px;text-transform:uppercase;margin-left:6px">'+esc(tier)+'</span>';

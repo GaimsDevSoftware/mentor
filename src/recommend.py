@@ -76,16 +76,54 @@ def _candidates(scope: str):
     return pool, len(local), len(remote)
 
 
+def _is_local_spec(spec: str) -> bool:
+    """True if a `model@endpoint` teacher spec points at a local model."""
+    s = (spec or "").lower()
+    return ("ollama" in s or "localhost" in s or "127.0.0.1" in s or "11434" in s
+            or "@local" in s or "(local" in s)
+
+
+def _pick_cloud_teacher() -> str:
+    """Best signed-in CLOUD model to act as the recommender (teacher) — drawn from
+    ALL remote sources, INDEPENDENT of the role-tier filter, since the recommender
+    is a separate concern that should be a strong model. Prefers subscription >
+    free > paid, signed-in first. Returns a `model@source` spec, or ''."""
+    try:
+        remote, _, _ = _candidates("sources")
+    except Exception:
+        return ""
+    remote = [m for m in remote if m.get("remote")]
+    if not remote:
+        return ""
+    order = {"subscription": 0, "free": 1, "paid": 2}
+    ready = [m for m in remote if m.get("ready", True)]
+    cands = sorted(ready or remote, key=lambda m: order.get(m.get("tier"), 9))
+    m = cands[0]
+    src = m.get("source") or m.get("endpoint") or ""
+    model = str(m.get("model") or "")
+    return f"{model}@{src}" if (model and src) else model
+
+
 async def recommend_roles(scope: Optional[str] = None,
                           tiers: Optional[List[str]] = None,
-                          ready_only: bool = False) -> Dict[str, Any]:
-    scope = (scope or _get("recommend_scope", "both") or "both").lower()
+                          ready_only: bool = False,
+                          cloud_teacher: bool = True) -> Dict[str, Any]:
+    tier_set = {t.lower() for t in (tiers or []) if t}
+    # The explicit tier chips are AUTHORITATIVE for which catalog scope to gather.
+    # Otherwise the `recommend_scope` setting (e.g. "sources") silently drops the
+    # LOCAL catalog even when the user clicked "Local" → a false "no candidates".
+    # Only fall back to the setting when no tiers were passed.
+    if tier_set:
+        has_local = "local" in tier_set
+        has_cloud = bool(tier_set & {"free", "subscription", "paid"})
+        scope = "both" if (has_local and has_cloud) else ("local" if has_local else "sources")
+    else:
+        scope = (scope or _get("recommend_scope", "both") or "both").lower()
     if scope not in ("local", "sources", "both"):
         scope = "both"
     pool, n_local, n_remote = _candidates(scope)
     # Filter by the user's preference (which tiers they want considered) — so the
     # AI only sees candidates that match what the user actually wants to pay for.
-    tier_set = {t.lower() for t in (tiers or []) if t}
     tier_pool = [m for m in pool if (not tier_set or m.get("tier") in tier_set)]
     # Ready-only = the candidate is already usable right now (local models that are
     # cached/served, or cloud endpoints that are signed in / have a key). Providers
@@ -109,9 +147,31 @@ async def recommend_roles(scope: Optional[str] = None,
         return {"ok": False, "scope": scope, "detail": detail,
                 "counts": {"local": n_local, "remote": n_remote, "tier_matched": len(tier_pool)}}
 
-    spec = (_get("improve_teacher_model", "") or _get("teacher_model", "") or "").strip()
+    # The RECOMMENDER (teacher) is a SEPARATE concern from the role candidates:
+    # it should be a strong model — typically cloud/subscription — even when the
+    # roles you want are local. With cloud_teacher on (default), use the best
+    # signed-in cloud model as the recommender (keeping an explicitly-set cloud
+    # teacher), and only fall back to a local/configured teacher when no cloud is
+    # available.
+    configured = (_get("improve_teacher_model", "") or _get("teacher_model", "") or "").strip()
+    spec = ""
+    recommender = None
+    if cloud_teacher:
+        auto = _pick_cloud_teacher()
+        if auto:
+            spec = auto
+            recommender = {"spec": auto, "source": "cloud", "auto": True}
+    if not spec and configured:
+        spec = configured
+        recommender = {"spec": configured,
+                       "source": ("local" if _is_local_spec(configured) else "configured"),
+                       "note": ("No cloud recommender is signed in — used your configured teacher; "
+                                "sign in to a cloud source for stronger picks." if cloud_teacher else None)}
     if not spec:
-        return {"ok": False, "scope": scope, "detail": "no teacher model configured for recommendations",
+        return {"ok": False, "scope": scope,
+                "detail": ("No recommender model available — tick 'Recommender may use a cloud "
+                           "model' and sign in to a cloud source, or set a teacher model in "
+                           "Admin → Settings."),
                 "candidates": [{"model": m.get("model"), "tier": m.get("tier"),
                                 "source": m.get("source", m.get("endpoint", "?")),
                                 "remote": bool(m.get("remote"))} for m in pool]}
@@ -179,6 +239,7 @@ async def recommend_roles(scope: Optional[str] = None,
             info["ready"] = bool(m.get("ready", True))
             info["endpoint"] = m.get("endpoint") or m.get("source")
     return {"ok": True, "scope": scope, "recommendations": rec,
+            "recommender": recommender,
             "counts": {"local": n_local, "remote": n_remote, "considered": len(pool)},
             "filters": {"tiers": sorted(tier_set) or None, "ready_only": ready_only},
             "raw": (reply or "")[:400] if not rec else None}

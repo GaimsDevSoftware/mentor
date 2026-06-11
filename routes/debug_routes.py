@@ -66,14 +66,17 @@ def setup_debug_routes() -> APIRouter:
     async def cookbook_recommend(scope: str = Query(None, description="local|sources|both"),
                                  tiers: str = Query(None, description="comma-separated: local,free,subscription,paid"),
                                  ready_only: bool = Query(False, description="only candidates ready right now"),
+                                 cloud_teacher: bool = Query(True, description="let the recommender (teacher) use the best signed-in cloud model, independent of the role tiers"),
                                  _admin: str = Depends(require_admin)) -> Dict[str, Any]:
-        """Copilot recommends role→model. Pass tiers + ready_only to constrain by
-        the user's preference (private-local / free-cloud / subscription / paid)
-        and whether to only consider models that work right now (already cached
-        locally or endpoint signed-in)."""
+        """Copilot recommends role→model. Pass tiers + ready_only to constrain the
+        ROLE candidates by the user's preference (private-local / free-cloud /
+        subscription / paid). The RECOMMENDER (teacher) is separate: cloud_teacher
+        (default true) lets a strong signed-in cloud model do the picking even when
+        the roles you want are local."""
         from src import recommend
         tier_list = [t.strip() for t in (tiers or "").split(",") if t.strip()] or None
-        return await recommend.recommend_roles(scope=scope, tiers=tier_list, ready_only=ready_only)
+        return await recommend.recommend_roles(scope=scope, tiers=tier_list,
+                                               ready_only=ready_only, cloud_teacher=cloud_teacher)
 
     @router.get("/api/cookbook/route")
     async def cookbook_route(q: str = Query(..., description="the task/request text"),
