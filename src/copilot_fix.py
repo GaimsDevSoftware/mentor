@@ -32,7 +32,7 @@ SAFE_SETTING_KEYS = {
     # must never be able to flip a token-spending loop or mass-mount plugins
     # (defense-in-depth; they were here before, removed per audit).
     "caveman_enabled", "caveman_level", "caveman_min_chars",
-    "caveman_compress_system_prompt",
+    "caveman_compress_system_prompt", "caveman_terse_output",
     "regelverk_max_injected", "skill_max_injected",
     "improve_success_sample_rate",
 }
@@ -99,6 +99,67 @@ def _apply_command(fix: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": True, "detail": f"launched: {' '.join(argv)} (runs in background)"}
     except Exception as e:
         return {"ok": False, "detail": f"failed to launch {cmd_id}: {e}"}
+
+
+# ── Ollama environment variable fix ──────────────────────────────────────────
+
+def _apply_ollama_setting(fix: Dict[str, Any]) -> Dict[str, Any]:
+    """Set an Ollama environment variable via systemd unit override.
+
+    For ollama.service, creates /etc/systemd/system/ollama.service.d/odysseus.conf
+    with Environment=VAR=VALUE, then reloads systemd (requires sudo/pkexec).
+    """
+    env_var = fix.get("env_var")
+    value = fix.get("value")
+
+    if not env_var or not value:
+        return {"ok": False, "detail": "ollama_setting fix missing env_var or value"}
+
+    import subprocess
+    import sys
+
+    # Create the override directory and file
+    override_dir = "/etc/systemd/system/ollama.service.d"
+    override_file = os.path.join(override_dir, "odysseus.conf")
+
+    conf_content = f"""[Service]
+Environment="{env_var}={value}"
+"""
+
+    try:
+        # Use pkexec to write with elevated privileges
+        # This is safer than running the whole process as root
+        cmd = f'mkdir -p {override_dir} && cat > {override_file} << "EOF"\n{conf_content}EOF'
+        result = subprocess.run(
+            ["pkexec", "bash", "-c", cmd],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            return {"ok": False, "detail": f"failed to set Ollama config: {result.stderr or 'unknown error'}"}
+
+        # Reload systemd to pick up the new config
+        reload_result = subprocess.run(
+            ["pkexec", "systemctl", "daemon-reload"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if reload_result.returncode != 0:
+            return {"ok": False, "detail": f"failed to reload systemd: {reload_result.stderr}"}
+
+        return {
+            "ok": True,
+            "detail": f"{env_var}={value} set in {override_file} (Ollama will use it on next restart)"
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "detail": "timeout while setting Ollama config"}
+    except Exception as e:
+        return {"ok": False, "detail": f"failed to set Ollama environment: {e}"}
 
 
 # ── plugin repair (self-heal, then Copilot code-fix) ─────────────────────────
@@ -216,6 +277,8 @@ async def apply_fix(fix: Dict[str, Any], owner: Optional[str] = None) -> Dict[st
         return _apply_setting(fix)
     if kind == "command":
         return _apply_command(fix)
+    if kind == "ollama_setting":
+        return _apply_ollama_setting(fix)
     if kind == "plugin_repair":
         name = fix.get("plugin")
         if not name:

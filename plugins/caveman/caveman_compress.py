@@ -12,6 +12,10 @@ Levels:
   • aggressive — structural + curated MEANING-PRESERVING filler removal
                  ("in order to"→"to", "due to the fact that"→"because", cookie/
                  nav boilerplate). No article/stopword butchery.
+  • caveman    — aggressive + true "caveman speak": drops PREDICTABLE grammar
+                 (articles, fillers, hedges, droppable "that"), symbol subs
+                 (→/vs/~), expletive "there is/are". Lossy of grammar, not of
+                 meaning — strong models read it fine. Biggest savings.
 
 compress(text, level) -> (compressed, original_len, compressed_len)
 """
@@ -59,6 +63,41 @@ _FILLER = [
     (re.compile(r"\b(?:It'?s? )?(?:also )?worth (?:noting|mentioning|pointing out) that\b", re.I), ""),
     (re.compile(r"\b(?:Basically|Essentially|Fundamentally|In essence),?\s+", re.I), ""),
 ]
+# ── Caveman-speak: drop PREDICTABLE grammar, keep the unpredictable facts ──
+# The actual "caveman" move the original skill is named for, which our earlier
+# levels deliberately skipped. Applied only to UNPROTECTED prose (code, URLs,
+# numbers and quoted strings are already stashed out), so it's safe on tool
+# output. Lossy of grammar, not of meaning — strong models read it fine.
+_CAVEMAN = [
+    # Articles — the single most predictable, droppable grammar. "the" is never a
+    # name, so always safe; "a"/"an" only lowercase (skip a capital "A" that may
+    # be a label/grade, e.g. "vitamin A").
+    (re.compile(r"\bthe\b[ ]+", re.I), ""),
+    (re.compile(r"\b(?:a|an)\b[ ]+"), ""),
+    # Low-information intensifiers / fillers.
+    (re.compile(r"\b(?:just|really|basically|actually|simply|very|quite|rather|"
+                r"somewhat|essentially|fundamentally|literally|truly|surely|"
+                r"definitely|obviously|clearly|highly|fairly|pretty|that said)\b[ ]*", re.I), ""),
+    # Hedges — caveman drops hedging.
+    (re.compile(r"\b(?:I think|I believe|I feel|it seems|it appears|arguably|"
+                r"presumably|in my opinion|kind of|sort of|more or less)\b[,]?[ ]*", re.I), ""),
+    # Droppable "that" conjunction after common reporting/cognition verbs.
+    (re.compile(r"\b(think|know|knows|believe|see|note|noted|say|says|said|mean|"
+                r"means|ensure|ensures|show|shows|shown|found|find|finds|suggest|"
+                r"suggests|assume|assumes|notice|recall|realize)\b[ ]+that\b", re.I), r"\1"),
+    # Verbose connectors → symbols / short forms.
+    (re.compile(r"\b(?:leads? to|results? in|causes?|gives? rise to|translates? to)\b", re.I), "→"),
+    (re.compile(r"\b(?:versus|compared (?:to|with)|as opposed to)\b", re.I), "vs"),
+    (re.compile(r"\b(?:approximately|roughly|approx\.?|around about)\b", re.I), "~"),
+    (re.compile(r"\b(?:as well as|in addition to)\b", re.I), "+"),
+    (re.compile(r"\b(?:therefore|thus|hence|consequently|as a result)\b[,]?[ ]*", re.I), "so "),
+    # Expletive "there is/are" carries no information.
+    (re.compile(r"\bthere (?:is|are|was|were)\b[ ]*", re.I), ""),
+    # "in order to" already handled in aggressive; mop up a few more verbose stock phrases.
+    (re.compile(r"\bin terms of\b", re.I), "for"),
+    (re.compile(r"\bas a matter of fact\b[,]?[ ]*", re.I), ""),
+]
+
 # Whole-line web boilerplate (nav / cookie / footer cruft).
 _WEB_CRUFT = re.compile(
     r"^\s*(accept (all )?cookies|we use cookies|this (site|website) uses cookies|"
@@ -91,14 +130,17 @@ def compress(text: str, level: str = "structural"):
     work = work.replace("\r\n", "\n").replace("\r", "\n")
 
     # 2) HTML strip (structural+)
-    if level in ("structural", "aggressive") and _looks_html(work):
+    if level in ("structural", "aggressive", "caveman") and _looks_html(work):
         work = _SCRIPT_STYLE.sub(" ", work)
         work = _HTML_TAG.sub(" ", work)
         work = html.unescape(work)
 
-    # 3) curated filler (aggressive)
-    if level == "aggressive":
+    # 3) curated filler (aggressive+), then caveman-speak grammar dropping (caveman)
+    if level in ("aggressive", "caveman"):
         for pat, rep in _FILLER:
+            work = pat.sub(rep, work)
+    if level == "caveman":
+        for pat, rep in _CAVEMAN:
             work = pat.sub(rep, work)
 
     # 4) line-wise normalisation
@@ -107,9 +149,9 @@ def compress(text: str, level: str = "structural"):
     blanks = 0
     for ln in work.split("\n"):
         ln = ln.rstrip()
-        if level in ("structural", "aggressive"):
+        if level in ("structural", "aggressive", "caveman"):
             ln = re.sub(r"[ \t]{2,}", " ", ln)
-            if level == "aggressive" and _WEB_CRUFT.match(ln):
+            if level in ("aggressive", "caveman") and _WEB_CRUFT.match(ln):
                 continue
         if ln == "":
             blanks += 1
@@ -120,7 +162,7 @@ def compress(text: str, level: str = "structural"):
             prev = ""
             continue
         blanks = 0
-        if level in ("structural", "aggressive") and ln == prev:
+        if level in ("structural", "aggressive", "caveman") and ln == prev:
             continue  # dedupe consecutive identical lines
         out_lines.append(ln)
         prev = ln
@@ -128,10 +170,14 @@ def compress(text: str, level: str = "structural"):
     work = "\n".join(out_lines).strip()
 
     # 5) tidy punctuation spacing introduced by filler removal
-    if level == "aggressive":
+    if level in ("aggressive", "caveman"):
         work = re.sub(r"[ \t]{2,}", " ", work)
         work = re.sub(r"\s+([,.;:!?])", r"\1", work)
         work = re.sub(r"\(\s+", "(", work)
+        # Tidy artifacts left when a leading phrase/word was dropped:
+        work = re.sub(r"([.!?;:])\s*,", r"\1", work)        # ". ," → "."
+        work = re.sub(r",\s*,", ",", work)                   # doubled commas
+        work = re.sub(r"(^|\n)[ \t]*[,;:][ \t]*", r"\1", work)  # orphan leading punct
     work = re.sub(r"\n{3,}", "\n\n", work)
 
     # 6) restore protected spans

@@ -28,6 +28,21 @@ _BY_TOOL = {}
 _lock = threading.Lock()
 _api = None  # set in register(); used for settings + data_dir
 
+# Output-side terse directive — the highest real-world lever ("input beats
+# output"): a short instruction that makes the MODEL answer in caveman-speak, so
+# output tokens shrink at the source (and those replies are smaller in history
+# too). This 6-line form is the one an independent benchmark found beats the
+# full 552-token skill. Opt-in (caveman_terse_output) — it changes the model's
+# visible writing style, so it's OFF by default.
+_TERSE_DIRECTIVE = (
+    "RESPONSE STYLE — answer like a smart caveman: cut all filler, keep the "
+    "technical substance. Drop articles (a, an, the) and fillers (just, really, "
+    "basically, actually). Drop pleasantries (sure, certainly, happy to). No "
+    "hedging. Fragments fine. Short synonyms. Technical terms stay exact. Code "
+    "blocks, commands, and file paths unchanged. Pattern: [thing] [action] "
+    "[reason]. [next step]."
+)
+
 
 def _stats_path() -> str:
     return os.path.join(_api.data_dir(), "caveman_stats.json")
@@ -79,8 +94,8 @@ def _enabled() -> bool:
 
 
 def _level() -> str:
-    lvl = str(_api.get_setting("caveman_level", "aggressive")).lower()
-    return lvl if lvl in ("minimal", "structural", "aggressive") else "aggressive"
+    lvl = str(_api.get_setting("caveman_level", "caveman")).lower()
+    return lvl if lvl in ("minimal", "structural", "aggressive", "caveman") else "caveman"
 
 
 def _min_chars() -> int:
@@ -92,7 +107,10 @@ def _min_chars() -> int:
 
 def _compress_tools() -> set:
     tools = _api.get_setting("caveman_compress_tools",
-                             ["web_search", "trigger_research", "manage_research"])
+                             ["web_search", "trigger_research", "manage_research",
+                              "bash", "python", "read_file", "search_files",
+                              "manage_notes", "manage_memory", "list_emails",
+                              "read_email", "manage_calendar"])
     return set(tools or [])
 
 
@@ -138,13 +156,21 @@ def _post_response(content):
 
 
 def _prompt_hook(prompt, context):
-    """Opt-in, SAFE minimal compression of the system prompt (whitespace only)."""
-    if not _enabled() or not _api.get_setting("caveman_compress_system_prompt", False):
+    """Opt-in prompt-side savings (both pay on EVERY turn):
+      1. caveman_compress_system_prompt — compress the system prompt at the
+         chosen level (caveman-speak the persistent instructions, ~40-50%).
+      2. caveman_terse_output — append the terse directive so the MODEL answers
+         in caveman-speak, cutting output tokens at the source.
+    Both OFF by default — they change instruction grammar / visible style."""
+    if not _enabled():
         return prompt
-    comp, o, c = cc.compress(prompt, "minimal")
-    if c < o:
-        _record(o, c)
-        return comp
+    if _api.get_setting("caveman_compress_system_prompt", False):
+        comp, o, c = cc.compress(prompt or "", _level())
+        if c < o:
+            _record(o, c, tool="system_prompt")
+            prompt = comp
+    if _api.get_setting("caveman_terse_output", False):
+        prompt = (prompt or "") + "\n\n" + _TERSE_DIRECTIVE
     return prompt
 
 
@@ -179,7 +205,7 @@ def _stats():
     c = _STATS["compressed_chars"]
     if o == 0 and _STATS["calls"] == 0:
         return {"metrics": [{"label": "Status", "value": "Idle"}],
-                "insight": "No compressions yet. Caveman runs when web_search / research tools return bulky text.",
+                "insight": "No compressions yet. Caveman runs when web_search / research tools return bulky text, compresses bash/python/file outputs, AI responses before they enter history, and progressively compresses older messages in the context window.",
                 "status": "none"}
     saved = max(0, o - c)
     saved_tokens = cc.est_tokens(saved)
@@ -247,8 +273,10 @@ def register(api):
     api.register_repair(_repair)
     api.register_settings([
         {"key": "caveman_level", "label": "Compression level", "type": "select",
-         "options": ["minimal", "structural", "aggressive"], "default": "aggressive"},
+         "options": ["minimal", "structural", "aggressive", "caveman"], "default": "caveman"},
         {"key": "caveman_min_chars", "label": "Min chars to compress", "type": "int", "default": 600},
+        {"key": "caveman_terse_output", "label": "Terse output (model answers caveman-style)",
+         "type": "bool", "default": False},
     ])
 
     try:
