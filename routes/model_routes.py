@@ -724,7 +724,13 @@ def setup_model_routes(model_discovery):
         models from leaking into cached_models when the user hasn't opted in."""
         b = (ep.base_url or "").lower()
         n = (ep.name or "").lower()
-        if "opencode" in b or "/zen" in b or "opencode" in n:
+        # The OpenCode Go endpoint (/zen/go/v1) is the SUBSCRIPTION endpoint —
+        # every model on it is included in the Go plan and must stay visible.
+        # It matches "opencode"/"/zen" too, so exclude it explicitly; otherwise
+        # the Zen paid-filter (which tags the open-source coders "paid") would
+        # strip 16 of 18 Go models out of cached_models during discovery.
+        is_go = "/zen/go/" in b or "opencode go" in n
+        if not is_go and ("opencode" in b or "/zen" in b or "opencode" in n):
             try:
                 from plugins.opencode.plugin import _model_filter
                 ids = [m for m in ids if _model_filter(m)]
