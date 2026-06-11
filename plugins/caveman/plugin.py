@@ -35,13 +35,17 @@ _api = None  # set in register(); used for settings + data_dir
 # full 552-token skill. Opt-in (caveman_terse_output) — it changes the model's
 # visible writing style, so it's OFF by default.
 _TERSE_DIRECTIVE = (
-    "RESPONSE STYLE — answer like a smart caveman: cut all filler, keep the "
-    "technical substance. Drop articles (a, an, the) and fillers (just, really, "
-    "basically, actually). Drop pleasantries (sure, certainly, happy to). No "
-    "hedging. Fragments fine. Short synonyms. Technical terms stay exact. Code "
-    "blocks, commands, and file paths unchanged. Pattern: [thing] [action] "
-    "[reason]. [next step]."
+    "RESPONSE STYLE (terse technical notes — this is a FORMAT, not a roleplay): "
+    "cut all filler, keep the technical substance. Drop articles (a, an, the) and "
+    "fillers (just, really, basically, actually). Drop pleasantries (sure, "
+    "certainly, happy to). No hedging. Fragments fine. Short words. Technical "
+    "terms, code blocks, commands and file paths stay exact. Shape each point: "
+    "[thing] [action] [reason]. [next step]."
 )
+# A/B tested on local models (2026-06-11): capable models (qwen3-coder:30b) cut
+# output ~53% with full accuracy and no roleplay; the early "answer like a smart
+# caveman" wording made small models reply "Ugga, me explain…" — the explicit
+# "FORMAT, not a roleplay" framing fixed that (1B now just ignores it, no harm).
 
 
 def _stats_path() -> str:
@@ -299,11 +303,13 @@ def register(api):
                  "dedupe · aggressive = + filler phrases · caveman = + drop predictable grammar "
                  "(articles, hedges) & symbol subs — biggest savings (~40-55% on prose) but terse. "
                  "Dial back to 'aggressive' if a small local model starts to struggle."},
-        {"key": "caveman_terse_output", "label": "Terse output — model replies caveman-style",
+        {"key": "caveman_terse_output", "label": "Terse output — model replies in dense notes",
          "type": "bool", "default": False,
-         "desc": "Tells the MODEL to answer in caveman-speak — cuts output tokens at the source (the "
-                 "biggest real-world lever). OFF by default: it changes the visible writing style. "
-                 "Strong models read it fine; very small local ones may get clipped — test first."},
+         "desc": "Tells the MODEL to answer in terse technical notes — cuts output tokens at the "
+                 "source (the biggest real-world lever). OFF by default (changes the visible writing "
+                 "style). Tested: capable models (~14B+, e.g. qwen3-coder:30b) come out ~50% shorter "
+                 "with full accuracy; very small local models (1–3B) tend to ignore it — no harm, "
+                 "just no savings. Recommended once your main model is mid-size or bigger."},
         {"key": "caveman_compress_system_prompt", "label": "Compress the system prompt too",
          "type": "bool", "default": False, "advanced": True,
          "desc": "Caveman-speak the persistent instructions, so the saving pays on EVERY turn. "
