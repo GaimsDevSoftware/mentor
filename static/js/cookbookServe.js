@@ -646,6 +646,8 @@ function _rerenderCachedModels() {
       // explicit overrides for known-good advanced presets; blank keeps
       // llama.cpp/profile defaults.
       panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
+      const _nglVal = String(sv('ngl', '')).trim();
+      panelHtml += `<label>${_l('Run on','Where this model runs. GPU = fastest. "CPU only" runs it entirely in system RAM on the CPU (slower) so the GPU stays FREE for another model — the key to running two models at once. For big MoE models you can instead offload just the experts via CPU MoE above.')}<select class="hwfit-sf" data-field="ngl"><option value=""${_nglVal !== '0' ? ' selected' : ''}>GPU (default)</option><option value="0"${_nglVal === '0' ? ' selected' : ''}>CPU only — free the GPU</option></select></label>`;
       panelHtml += `<label>${_l('Split Mode','llama.cpp GPU placement. layer is the usual default; tensor splits weights and KV across GPUs.')}<select class="hwfit-sf" data-field="llama_split_mode">${llamaSplitModeOpts}</select></label>`;
       panelHtml += `<label>${_l('Tensor Split','GPU proportions for llama.cpp, e.g. 50,50 across two visible GPUs. Leave blank for auto.')}<input type="text" class="hwfit-sf" data-field="llama_tensor_split" value="${esc(sv('llama_tensor_split', ''))}" placeholder="50,50" /></label>`;
       panelHtml += `<label>${_l('Main GPU','llama.cpp --main-gpu index inside the visible GPU set. Mostly useful for split mode none/row.')}<input type="text" class="hwfit-sf" data-field="llama_main_gpu" value="${esc(sv('llama_main_gpu', ''))}" placeholder="auto" /></label>`;
