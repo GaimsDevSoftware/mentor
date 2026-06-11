@@ -424,6 +424,21 @@ class ApiToken(TimestampMixin, Base):
     last_used_at = Column(DateTime, nullable=True)
 
 
+class QueuedMessage(TimestampMixin, Base):
+    """A chat message the user typed while a turn was streaming, waiting to be
+    sent. Persisted per-session so the queue survives a page reload — the
+    in-memory TurnManager queue is the live source of truth; this table is a
+    best-effort mirror for restore-on-load. Per-session keying gives the
+    intended per-window isolation (each popup is its own session)."""
+    __tablename__ = "queued_messages"
+
+    id         = Column(String, primary_key=True, index=True)
+    owner      = Column(String, nullable=True, index=True)
+    session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    text       = Column(Text, nullable=False)
+    position   = Column(Integer, nullable=False, default=0)  # FIFO order within a session
+
+
 class Webhook(TimestampMixin, Base):
     """Outgoing webhooks fired on events."""
     __tablename__ = "webhooks"

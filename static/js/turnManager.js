@@ -29,6 +29,10 @@ function createTurnManager() {
   let lastActivity = 0;      // ms timestamp of the last stream event (reader read)
   let drainExecutor = null;  // chat.js sets this: (item) => Promise|void — submits
   let drainTimer = null;     // coalesces multiple scheduleDrain() calls into one
+  let paused = false;        // when true, draining is suppressed (used for queue
+                             // restored from a previous session on reload — the
+                             // items are visible but must NOT auto-send until the
+                             // user acts, so a reload never surprise-fires old msgs)
 
   function on(evt, fn) {
     (listeners[evt] || (listeners[evt] = new Set())).add(fn);
@@ -93,12 +97,12 @@ function createTurnManager() {
   function setDrainExecutor(fn) { drainExecutor = fn; }
 
   function scheduleDrain() {
-    if (drainTimer) return;
+    if (drainTimer || paused) return;
     drainTimer = setTimeout(() => { drainTimer = null; drain(); }, 0);
   }
 
   function drain() {
-    if (draining || streaming || queue.length === 0 || !drainExecutor) return;
+    if (paused || draining || streaming || queue.length === 0 || !drainExecutor) return;
     draining = true;
     try {
       const next = queue.shift();
@@ -125,11 +129,24 @@ function createTurnManager() {
   // setStreaming suspenders.
   function startSafetyDrain(isSendInFlight) {
     return setInterval(() => {
-      if (queue.length === 0 || streaming || draining) return;
+      if (paused || queue.length === 0 || streaming || draining) return;
       if (typeof isSendInFlight === 'function' && isSendInFlight()) return;
       console.warn('[turnManager] safety drain — stranded queue of', queue.length);
       scheduleDrain();
     }, 2000);
+  }
+
+  function setPaused(v) { paused = !!v; if (!paused) scheduleDrain(); }
+  function isPaused() { return paused; }
+
+  // Restore a queue from a previous session (reload) in PAUSED state: the items
+  // become visible but do NOT auto-send. The next user action (sending a
+  // message, or run-now) unpauses, so a reload never surprise-fires old msgs.
+  function restore(texts) {
+    if (!Array.isArray(texts) || !texts.length) return;
+    paused = true;
+    texts.forEach(t => { if (t && String(t).trim()) queue.push({ text: String(t), _restored: true }); });
+    emit('queue-changed', queue);
   }
 
   return {
@@ -139,7 +156,7 @@ function createTurnManager() {
     markActivity, quietMs,
     enqueue, removeAt, prioritize, has, size, clear, notifyChanged,
     setDrainExecutor, scheduleDrain, drain, isDraining,
-    startSafetyDrain,
+    startSafetyDrain, setPaused, isPaused, restore,
   };
 }
 

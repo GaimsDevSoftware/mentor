@@ -64,17 +64,6 @@ try { window.turnManager = turnManager; } catch (_) {}
   // otherwise `isStreaming` stays true forever and every typed reply just sits
   // in the queue. Generous so a cold on-demand model load isn't killed.
   const STALL_HARD_ABORT_MS = 240000;
-  // Queue-pressure short-circuit: when the user has queued follow-ups, sitting
-  // on a silent stream is worse than killing it early. After this much silence
-  // WITH the queue non-empty AND content already on screen, force-abort so the
-  // queue drains. The "content already arrived" guard is the key refinement:
-  // it fires only for the "delivered the answer then went silent (server forgot
-  // [DONE])" case — NOT while a cold model is still loading before its first
-  // token, which can legitimately be silent for 30-60s on a big local model.
-  // Phase 1's server-side [DONE] guarantee makes this path rare; it remains as
-  // the client's fast recovery for a dropped socket the fetch reader didn't
-  // surface as an error.
-  const STALL_QUEUE_KICK_MS = 20000;
   let _sendInFlight = false;   // covers the window from click → streaming start
   let _displayOverride = null; // Override visible user bubble text (hides injected prompts)
   let _hideUserBubble = false; // Skip user bubble entirely (e.g. continue after stop)
@@ -356,6 +345,7 @@ try { window.turnManager = turnManager; } catch (_) {}
   // idle→drain path send it right away.
   function _runNow(idx) {
     if (idx < 0 || idx >= _msgQueue.length) return;
+    turnManager.setPaused(false);   // explicit run resumes a reload-restored queue
     const msgInput = uiModule.el('message');
     // Don't eat any half-typed message — queue it (to the back) before we steer.
     const pending = (msgInput && msgInput.value || '').trim();
@@ -415,11 +405,58 @@ try { window.turnManager = turnManager; } catch (_) {}
   // Re-render the queue chip bar whenever TurnManager's queue changes. This is
   // the single place the DOM reacts to queue mutations now that all ops funnel
   // through TurnManager.
-  turnManager.on('queue-changed', () => { _renderQueueBar(); });
+  turnManager.on('queue-changed', () => { _renderQueueBar(); _persistQueue(); });
 
   // Safety-net drain every 2s — catches any exotic turn-end path that somehow
   // didn't flow through _setStreaming(false). Belt to setStreaming's suspenders.
   turnManager.startSafetyDrain(() => (typeof _sendInFlight !== 'undefined' && _sendInFlight));
+
+  // ── Queue persistence (Phase 3) ──────────────────────────────────────────
+  // Best-effort mirror of the live queue to the server, keyed by session, so
+  // the queue survives a page reload. The in-memory TurnManager queue is the
+  // source of truth; these calls never block it (failures are swallowed).
+  let _persistTimer = null;
+  let _restoredForSession = null;   // guard: restore once per session load
+  function _persistQueue() {
+    const sid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+    if (!sid) return;               // no session yet (pending new chat) → nothing to persist under
+    if (_persistTimer) clearTimeout(_persistTimer);
+    _persistTimer = setTimeout(() => {
+      const texts = turnManager.queue.map(q => q.text);
+      fetch(`${API_BASE}/api/queue/${encodeURIComponent(sid)}`, {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texts }),
+      }).catch(() => {});           // best-effort
+    }, 400);
+  }
+  function _restoreQueue() {
+    const sid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+    if (!sid || _restoredForSession === sid) return;
+    _restoredForSession = sid;
+    // Only restore into an EMPTY live queue, so we never clobber messages the
+    // user just typed this session.
+    if (turnManager.size() > 0) return;
+    fetch(`${API_BASE}/api/queue/${encodeURIComponent(sid)}`, { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d || !Array.isArray(d.queue) || !d.queue.length) return;
+        if (turnManager.size() > 0) return;   // race guard
+        // Restore PAUSED — visible but not auto-sent. Sends when the user next
+        // sends a message or runs one, so a reload never surprise-fires old msgs.
+        turnManager.restore(d.queue);
+        _setQueueNote('Restored ' + d.queue.length + ' queued message' + (d.queue.length > 1 ? 's' : '') + ' from before reload — send a message to resume, or remove them.');
+      })
+      .catch(() => {});
+  }
+  // Restore once the session id is known after load (poll briefly).
+  let _restoreTries = 0;
+  const _restorePoll = setInterval(() => {
+    _restoreTries++;
+    const sid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+    if (sid) { _restoreQueue(); clearInterval(_restorePoll); }
+    else if (_restoreTries > 40) clearInterval(_restorePoll);   // give up after ~20s
+  }, 500);
 
   function _renderQueueBar() {
     // Idempotent: there must be exactly ONE queue bar in the document. Adopt
@@ -484,6 +521,10 @@ try { window.turnManager = turnManager; } catch (_) {}
    */
   export async function handleChatSubmit(e) {
     e.preventDefault();
+    // A user action resumes a paused (reload-restored) queue. While paused the
+    // drainer is suppressed, so reaching here means the USER sent something —
+    // safe to unpause so restored messages flow after this turn.
+    turnManager.setPaused(false);
     // Cancel research clarification timeout if active
     if (window._researchTimeoutTimer) {
       clearTimeout(window._researchTimeoutTimer);
@@ -3513,21 +3554,14 @@ try { window.turnManager = turnManager; } catch (_) {}
     _stallWatchdog = setInterval(() => {
       if (!isStreaming) return;
       const quietMs = Date.now() - _lastReaderActivity;
-      // Queue-pressure short-circuit: the user piled up follow-ups and the
-      // model has been silent for STALL_QUEUE_KICK_MS. Fire ONLY when content
-      // has already arrived — i.e. "delivered the answer then went silent
-      // (server forgot [DONE]) / socket dropped" — so we never kill a cold
-      // model that's simply slow to produce its first token (legitimately
-      // silent 30-60s on a big local model). Empty content + silence is left
-      // to the 60s banner / 240s hard-abort.
-      const _hasContent = !!(currentAccumulated && currentAccumulated.trim());
-      if (_hasContent && _msgQueue.length > 0 && quietMs >= STALL_QUEUE_KICK_MS) {
-        console.warn(`[stall-watchdog] ${Math.round(quietMs / 1000)}s silent after content with ${_msgQueue.length} message(s) queued — force-closing so the queue can drain.`);
-        _removeStallBanner();
-        if (currentAbort) currentAbort._reason = 'stall';
-        abortCurrentRequest(true);
-        return;
-      }
+      // NOTE: a 20s "queue-pressure kick" used to live here — it force-aborted
+      // a silent-but-queued stream. It was a band-aid for the real bug (the
+      // finally threw a ReferenceError so turns never went idle). That root
+      // cause is fixed: turns now end deterministically on [DONE], so the kick
+      // is obsolete AND risky — it could truncate a legitimately slow response
+      // (e.g. a reasoning model pausing >20s mid-answer) just because a
+      // follow-up was queued. Removed. Genuine stalls are still covered by the
+      // 60s banner (user Stop/Nudge) and the 240s unattended hard-abort below.
       if (quietMs >= STALL_HARD_ABORT_MS) {
         // Wedged with nobody draining the queue — recover automatically.
         console.warn(`[stall-watchdog] No stream activity for ${Math.round(quietMs / 1000)}s — auto-recovering so the queue can drain.`);

@@ -535,6 +535,10 @@ app.include_router(setup_session_routes(session_manager, session_config, webhook
 from routes.admin_wipe_routes import setup_admin_wipe_routes
 app.include_router(setup_admin_wipe_routes(session_manager))
 
+# Per-session message-queue persistence (survives reload)
+from routes.queue_routes import setup_queue_routes
+app.include_router(setup_queue_routes())
+
 # Memory
 from routes.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
@@ -932,6 +936,14 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
 
+    # Start plugin watcher — keeps plugins-registry.json in sync with filesystem
+    try:
+        from src.plugin_watcher import start_watcher
+        start_watcher()
+        logger.info("[startup] Plugin watcher started")
+    except Exception as e:
+        logger.warning(f"Plugin watcher startup failed (non-critical): {e}")
+
     # Pre-warm the RAG tool index off the request path. Loading the local
     # embedding model + opening ChromaDB + indexing the built-in tools is a
     # one-time ~1-3s cost that otherwise lands on the user's FIRST message
@@ -1156,6 +1168,12 @@ async def _startup_event():
 
 async def _shutdown_event():
     logger.info("Application shutting down...")
+    # Stop plugin watcher
+    try:
+        from src.plugin_watcher import stop_watcher
+        stop_watcher()
+    except Exception:
+        pass
     if upload_cleanup_task:
         upload_cleanup_task.cancel()
         try:
