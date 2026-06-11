@@ -469,6 +469,7 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
     <option value="ctx">Context: long → short</option>
     <option value="speed">Speed: fast → slow</option>
   </select>
+  <button class="btn" id="pairs-btn" title="Find two models that can run AT THE SAME TIME — one on the GPU, one in CPU/RAM — so you can run several models at once" style="font-size:11px;padding:4px 10px">⚡ Run two at once</button>
 </div>
 <div id="fits-filters" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:8px 0 4px;font-size:12px;color:var(--txt)">
   <label style="display:flex;align-items:center;gap:5px" title="Hide models that need more VRAM than this">Max VRAM
@@ -484,6 +485,7 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
     <select id="fits-pagesize" style="font:inherit;font-size:11px;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:7px;padding:4px 8px;cursor:pointer">
       <option value="12">12</option><option value="24" selected>24</option><option value="50">50</option><option value="0">All</option></select></label>
 </div>
+<div id="pairs-wrap" style="display:none;margin:6px 0 12px"></div>
 <div class="card"><div id="fits" class="muted">ranking models against your hardware…</div>
   <div id="fits-pager" style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px;font-size:12px"></div>
 </div>
@@ -769,6 +771,32 @@ function loadFits(){
 (function(){const s=$('#fits-pagesize'); if(s) s.addEventListener('change', _fitsReset);})();
 (function(){const s=$('#fits-vram'); if(s) s.addEventListener('input',()=>{const o=$('#fits-vram-out'); if(o)o.textContent=s.value+' GB'; _fitsReset();});})();
 (function(){const p=$('#fits-pager'); if(p) p.addEventListener('click',e=>{const b=e.target.closest('[data-pg]'); if(!b)return; _fitsPage+=(b.dataset.pg==='next'?1:-1); renderFits();});})();
+// ⚡ Concurrent setup — two models live at once (one on GPU, one in CPU/RAM).
+const _pairRole=u=>({coding:'coding',chat:'chat',general:'everyday chat',reasoning:'reasoning',multimodal:'vision',embedding:'RAG/embeddings'}[u]||u);
+async function loadPairs(){
+  const wrap=$('#pairs-wrap'); if(!wrap) return;
+  const btn=$('#pairs-btn');
+  if(wrap.style.display!=='none' && wrap.dataset.loaded==='1'){ wrap.style.display='none'; wrap.dataset.loaded=''; return; }
+  wrap.style.display=''; wrap.innerHTML='<div class="card"><span class="muted" style="font-size:13px">Finding the best two-model combos for your machine…</span></div>';
+  if(btn) btn.disabled=true;
+  let d; try{ d=await j('/api/hwfit/pairs?ai=1&limit=6'); }catch(e){ wrap.innerHTML='<div class="card"><span class="muted">Could not compute concurrent setups'+(e===401?' (admin only)':'')+'.</span></div>'; if(btn) btn.disabled=false; return; }
+  if(btn) btn.disabled=false;
+  const combos=(d&&d.combos)||[];
+  if(!combos.length){ wrap.innerHTML='<div class="card"><span class="muted">No two models fit at once on this hardware yet — a bigger GPU or more free RAM would unlock it.</span></div>'; wrap.dataset.loaded='1'; return; }
+  const aiPick=(d.ai&&typeof d.ai.pick==='number')?d.ai.pick:-1;
+  const aiWhy=(d.ai&&d.ai.why)||'';
+  const slot=(m,place)=>`<div style="flex:1;min-width:0"><div style="font-size:10px;letter-spacing:.5px;opacity:.6">${place==='gpu'?'GPU · fast':'CPU / RAM · off-GPU'}</div><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m.name)}">${esc(String(m.name).split('/').pop())}</div><div class="muted" style="font-size:11px">${esc(_pairRole(m.use_case))} · ${esc(m.quant)} · ${m.req_gb}G · ~${Math.round(m.tps)} tok/s</div></div>`;
+  const card=(c,i)=>{const p=c.primary,s=c.secondary,best=(i===aiPick);return `<div class="card" style="margin:0 0 8px;${best?'border-color:var(--ok);box-shadow:0 0 0 1px var(--ok)':''}">${best?'<div style="font-size:11px;color:var(--ok);font-weight:600;margin-bottom:5px">★ Recommended for your goals</div>':''}<div style="display:flex;gap:14px;align-items:flex-start">${slot(p,'gpu')}<div style="align-self:center;opacity:.45;font-size:16px">+</div>${slot(s,s.placement)}</div><div class="muted" style="font-size:11px;margin-top:7px">${esc(c.why)}</div><div style="display:flex;align-items:center;gap:10px;margin-top:9px"><span class="muted" style="font-size:10px">uses ${c.vram_used_gb}G VRAM + ${c.ram_used_gb}G RAM · [${esc(c.placement)}]</span><span style="flex:1"></span><button class="btn" data-pair="${esc(p.name)}|${esc(s.name)}" style="font-size:11px;padding:4px 10px">Set up this pair ↓</button></div></div>`;};
+  const order=combos.map((c,i)=>i).sort((a,b)=>(b===aiPick)-(a===aiPick));
+  let html='<div class="sec-title" style="margin:0 0 6px;display:flex;align-items:center;gap:8px">Run two at once <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px">— a fast model on the GPU + a second in CPU/RAM, live at the same time</span></div>';
+  if(aiWhy) html+='<div class="muted" style="font-size:12px;margin:0 0 8px;line-height:1.4">'+esc(aiWhy)+'</div>';
+  html+=order.map(i=>card(combos[i],i)).join('');
+  wrap.innerHTML=html; wrap.dataset.loaded='1';
+}
+(function(){ const b=$('#pairs-btn'); if(b) b.addEventListener('click',loadPairs); })();
+(function(){ const w=$('#pairs-wrap'); if(!w) return; w.addEventListener('click',async e=>{ const btn=e.target.closest('[data-pair]'); if(!btn)return; const parts=String(btn.dataset.pair).split('|'); btn.disabled=true; btn.textContent='Downloading both…';
+  try{ for(const repo of parts){ if(repo) await j('/api/model/download',{method:'POST',body:JSON.stringify({repo_id:repo, platform:'linux'})}); } btn.textContent='Started — see Running ↑'; setTimeout(()=>{ try{pollTasks();}catch(_){}}, 1500); }
+  catch(err){ btn.textContent='download failed'; btn.disabled=false; } }); })();
 
 // 5) Downloaded & ready
 j('/api/model/cached').then(d=>{

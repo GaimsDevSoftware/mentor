@@ -97,6 +97,50 @@ def _apply_manual_hardware(system, manual_mode="", manual_gpu_count="", manual_v
     return system
 
 
+async def _ai_pick_pair(combos, goals):
+    """Let the configured teacher model pick the best concurrent combo for the
+    user's goals and explain it plainly. Best-effort: returns None (and the UI
+    falls back to the top deterministic combo) if no teacher is set or it fails."""
+    try:
+        from src.settings import get_setting
+        spec = (get_setting("teacher_model", "") or "").strip()
+        if not spec:
+            return None
+        from src.ai_interaction import _resolve_model
+        from src.llm_core import complete_with_continuation
+        url, model, headers = _resolve_model(spec)
+        lines = []
+        for i, c in enumerate(combos[:8]):
+            p, s = c["primary"], c["secondary"]
+            lines.append(
+                f"{i}: [{c['placement']}] GPU={p['name']} ({p['use_case']}, ~{round(p['tps'])} tok/s) + "
+                f"{s['placement'].upper()}={s['name']} ({s['use_case']}, ~{round(s['tps'])} tok/s); "
+                f"uses {c['vram_used_gb']}G VRAM + {c['ram_used_gb']}G RAM")
+        prompt = (
+            "Pick the single best 2-model setup to run AT THE SAME TIME for these goals: "
+            + goals + ".\nThe GPU model stays fast (interactive); a CPU/RAM model is slower but "
+            "frees the GPU. Prefer a strong interactive model + a genuinely useful, complementary "
+            "second model (different role). Options:\n" + "\n".join(lines) + "\n\n"
+            'Reply with ONE fenced ```json block: {"pick": <index>, "why": "<= 2 plain sentences, '
+            'no jargon, say what each model is for"}.')
+        reply = await complete_with_continuation(
+            url, model,
+            [{"role": "system", "content": "You are a concise local-AI setup advisor."},
+             {"role": "user", "content": prompt}],
+            headers=headers or {}, max_tokens=400, timeout=45)
+        import json as _json
+        import re as _re
+        m = _re.search(r"\{.*\}", reply or "", _re.S)
+        if m:
+            d = _json.loads(m.group(0))
+            idx = int(d.get("pick", 0))
+            if 0 <= idx < len(combos):
+                return {"pick": idx, "why": str(d.get("why", "")).strip()[:400]}
+    except Exception:
+        return None
+    return None
+
+
 def setup_hwfit_routes():
     router = APIRouter(prefix="/api/hwfit", tags=["hwfit"])
 
@@ -205,6 +249,32 @@ def setup_hwfit_routes():
 
         results = rank_models(system, use_case=use_case or None, limit=limit, search=search or None, sort=sort, quant=quant or None, target_context=target_context, fit_only=fit_only)
         return {"system": system, "models": results}
+
+    @router.get("/pairs")
+    async def get_pairs(host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False,
+                        limit: int = 6, ai: bool = False, goals: str = "",
+                        manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "",
+                        manual_ram_gb: str = "", manual_backend: str = ""):
+        """Rank 2-model setups that run SIMULTANEOUSLY on the box — one model on
+        the GPU + one in CPU/RAM, or both on the GPU. The app computes feasible
+        combos (services.hwfit.fit.pair_fit); with ai=1 the configured teacher
+        model picks the best for the user's goals + explains it in plain words."""
+        from services.hwfit.hardware import detect_system
+        from services.hwfit.fit import pair_fit
+        system = deepcopy(detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh))
+        if system.get("error"):
+            return {"system": system, "combos": [], "error": system["error"]}
+        system = _apply_manual_hardware(system, manual_mode, manual_gpu_count, manual_vram_gb, manual_ram_gb, manual_backend)
+        try:
+            lim = max(1, min(int(limit or 6), 12))
+        except (TypeError, ValueError):
+            lim = 6
+        res = pair_fit(system, limit=lim)
+        out = {"system": system, **res}
+        if ai and res.get("combos"):
+            out["ai"] = await _ai_pick_pair(res["combos"],
+                                            (goals or "coding, everyday chat, and occasional vision/RAG").strip())
+        return out
 
     @router.get("/profiles")
     def get_serve_profiles(model: str = "", host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, serve_weights_gb: float = 0.0, serve_quant: str = ""):
