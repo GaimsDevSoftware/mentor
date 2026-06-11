@@ -12,6 +12,18 @@ from src.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_mess
 
 logger = logging.getLogger(__name__)
 
+
+def _compress_ctx(text: str, kind: str) -> str:
+    """Best-effort caveman compression of an auto-injected context block (saved
+    memory, RAG). Routes through the plugin hook so it's a no-op when the caveman
+    plugin is disabled/absent. Never raises — returns the original on any error."""
+    try:
+        from src import plugin_system
+        return plugin_system.run_compress_context(text, kind)
+    except Exception:
+        return text
+
+
 # ── Stopwords & tokenizer ──
 
 _STOPWORDS = frozenset(
@@ -179,11 +191,12 @@ class ChatProcessor:
         preface = []
         rag_sources = []
 
-        # Add preset system prompt if specified
+        # Add preset system prompt (persona) if specified — compress the in-context
+        # copy when caveman is on (the stored persona preset is untouched).
         if preset_system_prompt:
             preface.append({
                 "role": "system",
-                "content": preset_system_prompt
+                "content": _compress_ctx(preset_system_prompt, "persona")
             })
         preface.append({
             "role": "system",
@@ -203,7 +216,7 @@ class ChatProcessor:
                 pinned_text = "\n- ".join([m["text"] for m in pinned])
                 preface.append(untrusted_context_message(
                     "saved memory: pinned user facts",
-                    f"Core facts about the user:\n- {pinned_text}",
+                    _compress_ctx(f"Core facts about the user:\n- {pinned_text}", "memory"),
                 ))
                 for m in pinned:
                     self._last_used_memories.append({"text": m["text"], "category": m.get("category", "fact"), "type": "pinned"})
@@ -216,9 +229,10 @@ class ChatProcessor:
                     ext_text = "\n".join([f"- {m['text']}" for m in relevant])
                     preface.append(untrusted_context_message(
                         "saved memory: retrieved context",
-                        (
+                        _compress_ctx(
                             "Memory context. Do not reference unless the user asks "
-                            f"about these topics.\n{ext_text}"
+                            f"about these topics.\n{ext_text}",
+                            "memory",
                         ),
                     ))
                     for m in relevant:
@@ -259,7 +273,8 @@ class ChatProcessor:
                         )
                         if len(rag_content) > 10000:
                             rag_content = rag_content[:10000] + "\n[Truncated]"
-                        preface.append(untrusted_context_message("retrieved documents", rag_content))
+                        preface.append(untrusted_context_message(
+                            "retrieved documents", _compress_ctx(rag_content, "rag")))
             except Exception as e:
                 logger.warning(f"RAG retrieval failed: {e}")
 

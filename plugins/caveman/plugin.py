@@ -174,6 +174,22 @@ def _prompt_hook(prompt, context):
     return prompt
 
 
+def _compress_context(text, kind=""):
+    """Compress an auto-injected context block (saved memory, RAG snippets,
+    persona) at the chosen level — the IN-CONTEXT copy only; the stored data
+    stays human-readable. These blocks ride along on EVERY turn, so compressing
+    them pays repeatedly. Returns compressed text, or None for no change."""
+    if not _enabled() or not _api.get_setting("caveman_compress_context", True):
+        return None
+    if not isinstance(text, str) or len(text) < 150:
+        return None
+    comp, o, c = cc.compress(text, _level())
+    if c < o:
+        _record(o, c, tool="context:" + (kind or "?"))
+        return comp
+    return None
+
+
 def _diagnostic():
     o = _STATS["original_chars"]
     c = _STATS["compressed_chars"]
@@ -268,6 +284,7 @@ def register(api):
     api.register_hook("post_tool", _post_tool)
     api.register_hook("post_response", _post_response)
     api.register_hook("build_prompt", _prompt_hook)
+    api.register_hook("compress_context", _compress_context)
     api.register_hook("diagnostic", _diagnostic)
     api.register_hook("stats", _stats)
     api.register_repair(_repair)
@@ -292,6 +309,11 @@ def register(api):
          "desc": "Caveman-speak the persistent instructions, so the saving pays on EVERY turn. "
                  "Advanced: it's lossy of instruction grammar — verify your model still follows "
                  "instructions well before leaving this on."},
+        {"key": "caveman_compress_context", "label": "Compress injected memory / RAG / persona",
+         "type": "bool", "default": True,
+         "desc": "Compress the saved-memory, document-RAG and persona blocks that get injected into "
+                 "context — these ride along on EVERY turn, so the saving repeats. In-context copy "
+                 "only; your stored memories/files stay human-readable."},
         {"key": "caveman_min_chars", "label": "Min chars to compress", "type": "int", "default": 600,
          "advanced": True,
          "desc": "Skip text shorter than this — tiny outputs aren't worth compressing."},

@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 # Permission strings ↔ surfaces. A plugin may only call register_* for surfaces
 # it declared in manifest["permissions"].
 _VALID_PERMISSIONS = {"tools", "hooks", "cookbook", "services", "routes"}
-_VALID_HOOK_EVENTS = {"pre_tool", "post_tool", "build_prompt", "post_response", "diagnostic", "stats"}
+_VALID_HOOK_EVENTS = {"pre_tool", "post_tool", "build_prompt", "post_response", "diagnostic", "stats", "compress_context"}
 
 
 # ── registry state ───────────────────────────────────────────────────────────
@@ -373,6 +373,24 @@ def run_post_tool(tool: str, content: str, result: Dict[str, Any]) -> None:
             h["fn"](tool, content, result)
         except Exception as e:
             logger.debug("plugin %s post_tool hook error: %s", h["plugin"], e)
+
+
+def run_compress_context(text: str, kind: str = "") -> str:
+    """Run compress_context hooks on an auto-injected context block (saved memory,
+    RAG snippets, persona, …). Each hook: fn(text, kind) -> str | None; a returned
+    string replaces the text (chained across hooks). This is the IN-CONTEXT copy
+    only — callers keep the original stored data human-readable. No hooks
+    registered (plugin disabled/absent) → returns text unchanged."""
+    if not isinstance(text, str) or not text:
+        return text
+    for h in _HOOKS.get("compress_context", []):
+        try:
+            out = h["fn"](text, kind)
+            if isinstance(out, str) and out:
+                text = out
+        except Exception as e:
+            logger.debug("plugin %s compress_context hook error: %s", h["plugin"], e)
+    return text
 
 
 def plugin_settings(plugin: Optional[str] = None):
