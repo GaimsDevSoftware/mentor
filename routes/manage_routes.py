@@ -3141,6 +3141,18 @@ function settingRow(d, pluginName){
     }catch(e){pop.innerHTML=`<div class="err" style="font-size:13px">AI guide failed: ${e}</div>`;}
   });
   wrap.appendChild(helpBtn);
+  // Static one-line trade-off explanation (when the plugin provides `desc`), so
+  // the user understands a switch without having to tap the AI "?" first.
+  if(d.desc){
+    const box=document.createElement('div');
+    box.appendChild(wrap);
+    const dd=document.createElement('div');
+    dd.className='muted';
+    dd.style.cssText='font-size:11px;margin:1px 0 7px;opacity:.72;line-height:1.4';
+    dd.textContent=d.desc;
+    box.appendChild(dd);
+    return box;
+  }
   return wrap;
 }
 async function togglePl(n,en){const r=await j('/api/manage/plugins/toggle',{method:'POST',body:JSON.stringify({name:n,enabled:en})});alert(r.detail||JSON.stringify(r));loadPlugins();}

@@ -272,11 +272,29 @@ def register(api):
     api.register_hook("stats", _stats)
     api.register_repair(_repair)
     api.register_settings([
+        {"key": "caveman_enabled", "label": "Caveman compression", "type": "bool", "default": True,
+         "desc": "Master switch. Shrinks bulky tool output (and optionally AI replies / the system "
+                 "prompt) before it enters the context window. Code, URLs, numbers and quotes are "
+                 "always preserved."},
         {"key": "caveman_level", "label": "Compression level", "type": "select",
-         "options": ["minimal", "structural", "aggressive", "caveman"], "default": "caveman"},
-        {"key": "caveman_min_chars", "label": "Min chars to compress", "type": "int", "default": 600},
-        {"key": "caveman_terse_output", "label": "Terse output (model answers caveman-style)",
-         "type": "bool", "default": False},
+         "options": ["minimal", "structural", "aggressive", "caveman"], "default": "caveman",
+         "desc": "How hard to compress. minimal = whitespace only · structural = + HTML strip / "
+                 "dedupe · aggressive = + filler phrases · caveman = + drop predictable grammar "
+                 "(articles, hedges) & symbol subs — biggest savings (~40-55% on prose) but terse. "
+                 "Dial back to 'aggressive' if a small local model starts to struggle."},
+        {"key": "caveman_terse_output", "label": "Terse output — model replies caveman-style",
+         "type": "bool", "default": False,
+         "desc": "Tells the MODEL to answer in caveman-speak — cuts output tokens at the source (the "
+                 "biggest real-world lever). OFF by default: it changes the visible writing style. "
+                 "Strong models read it fine; very small local ones may get clipped — test first."},
+        {"key": "caveman_compress_system_prompt", "label": "Compress the system prompt too",
+         "type": "bool", "default": False, "advanced": True,
+         "desc": "Caveman-speak the persistent instructions, so the saving pays on EVERY turn. "
+                 "Advanced: it's lossy of instruction grammar — verify your model still follows "
+                 "instructions well before leaving this on."},
+        {"key": "caveman_min_chars", "label": "Min chars to compress", "type": "int", "default": 600,
+         "advanced": True,
+         "desc": "Skip text shorter than this — tiny outputs aren't worth compressing."},
     ])
 
     try:
