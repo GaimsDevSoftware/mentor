@@ -35,7 +35,8 @@ reading code.
 
 ## C. First-run / onboarding
 - [x] Settings AI-guide explains each setting (leakage bug fixed; verified live)
-- [~] Path to first chat / setup wizard — code present; not walked end-to-end (needs fresh/logged-out state)
+- [x] Atlas setup guide is decisive + concise + offers starter suggestions (see G) — source-level review done; live test pending browser
+- [~] Path to first chat / setup wizard — code present; source-reviewed for cohesion/dead-ends (see notes below); not walked end-to-end in a browser (needs fresh/logged-out state)
 - [ ] No confusing dead-ends on core tabs — only chat audited live this run
 - [?] Default model tier — recommendation below (acting as guidance; no key shipped)
 
@@ -61,6 +62,8 @@ reading code.
 ## G. Polish & branding
 - [x] AI-guide no longer leaks reasoning (fixed)
 - [x] Model tiering correct
+- [x] **Download UX** — each active download now has a visual progress bar + approximate time remaining (shard-corrected overall %, overall-throughput ETA, resume-safe). Served-asset + V8 + unit-test verified; live visual click-test pending browser reconnect.
+- [x] **Atlas setup guide** — fixed the "identity crisis" (Atlas is the decisive expert; user only decides privacy-vs-cloud + spending) and the narration leak (conclusion-only, max 2 sentences, banned narration openers). Added starter-suggestion chips for common setups. Prompt + chips in source; live conversational test pending browser reconnect.
 - [x] "Mentor" branding for all user-FACING surfaces — DONE (decision #1 = Mentor). Renamed: composer placeholder (fixed the resize-revert bug), login + landing `<title>` + wordmark, MCP authorize title. Internal IDs (localStorage `odysseus-*`, CSS `.odysseus-*`, `window.__odysseus*`, BroadcastChannel/cache names), the persona preset, and repo-origin/attribution + comments intentionally KEPT (~270 refs).
 - [ ] Full broken-link/404 nav sweep — not done
 
