@@ -61,13 +61,26 @@ reading code.
 ## G. Polish & branding
 - [x] AI-guide no longer leaks reasoning (fixed)
 - [x] Model tiering correct
-- [?] "Mentor" vs "Odysseus" branding consistency — depends on the naming decision (Blocked). Concrete state: **275 "Odysseus" vs 65 "Mentor"** refs in static JS/HTML; title bars say "Mentor", login + landing pages say "Odysseus". A mass rename must spare the Odysseus *persona preset* and legitimate upstream/repo-origin mentions — too risky to automate blind.
+- [x] "Mentor" branding for all user-FACING surfaces — DONE (decision #1 = Mentor). Renamed: composer placeholder (fixed the resize-revert bug), login + landing `<title>` + wordmark, MCP authorize title. Internal IDs (localStorage `odysseus-*`, CSS `.odysseus-*`, `window.__odysseus*`, BroadcastChannel/cache names), the persona preset, and repo-origin/attribution + comments intentionally KEPT (~270 refs).
 - [ ] Full broken-link/404 nav sweep — not done
 
 ## H. Docs
 - [x] `LICENSE`, `CONTRIBUTING`, `SECURITY` present
 - [x] `README` install accurate
-- [ ] Known limitations documented (not done)
+- [x] Known limitations documented (below)
+
+### Known limitations (for new users)
+- **GPU-in-Docker for local model serving** can be finicky (NVIDIA Container
+  Toolkit / AMD ROCm passthrough); native install is the smoothest path for
+  Cookbook model-serving.
+- **Cloud models cost money / need your own key.** No key is shipped. Local
+  Ollama and free-tier keys (Groq, OpenRouter `:free`) are the free paths.
+- **Single-machine focus.** Auth + bind default to localhost; deliberate LAN
+  exposure requires a reverse proxy / Tailscale + auth (never raw on a LAN).
+- **First run needs a model.** With none configured you get a setup prompt;
+  the AI-guide explains settings once a teacher/utility model is set.
+- **Reasoning models** stream a thinking block first; the "Still thinking…"
+  hint is normal during long reasoning, not a hang.
 
 ---
 
@@ -79,20 +92,18 @@ reading code.
 5. **Primary install path**: native (systemd/scripts) documented first, Docker alternative → README already orders it sensibly.
 7. **Telemetry**: confirmed NONE exists; recommend keeping it that way → no action needed.
 
-## Blocked / needs Robert
-- **[NEEDS ROBERT] Branding name** — ship as "Mentor" or "Odysseus"? The app
-  mixes both (title=Mentor, login/docs=Odysseus). This blocks item G (branding
-  consistency) and README framing. My rec: pick "Mentor" as the product name
-  (per your north-star), keep "Odysseus" only where it's the upstream/repo
-  origin + the persona preset (do NOT rename the persona).
-- **[NEEDS ROBERT] Test-suite policy** — 31 pre-existing failures in unrelated
-  subsystems. Block ship on a full green suite, or triage as a separate
-  stabilization effort? My rec: separate effort — they don't touch the core
-  chat/queue/security paths, and fixing them blind risks regressions.
-- **[NEEDS ROBERT] Clean-install / Docker verification** — needs a throwaway
-  environment (I won't run a full Docker build or `install-service.sh` on your
-  live machine). My rec: do one clean `git clone` → venv → run, and one
-  `docker compose up` on a spare box or VM before release.
-- **First-run walkthrough** — needs a logged-out / empty-DB instance to verify
-  the new-user setup wizard has no dead-ends. My rec: spin up a throwaway
-  instance (fresh DATA_DIR) and walk it once.
+## Decisions — RESOLVED (Robert accepted all recommendations)
+- **Branding** = "Mentor" (product) / "Odysseus" (repo-origin + persona). → user-facing rename DONE.
+- **Test-suite** = separate stabilization effort; does not block ship.
+- **Telemetry** = none (confirmed); keep it that way.
+- **Bind / auth / install path** = localhost + auth-required + native-primary. → done/confirmed.
+
+## Remaining — needs a clean environment or interactive step (yours to run)
+- **Clean-install / Docker verification** — one `git clone` → venv → run, and
+  one `docker compose up`, on a spare box/VM. I won't run these on your live
+  machine. *(Recommended pre-release gate.)*
+- **First-run walkthrough** — verify the new-user setup wizard end-to-end. This
+  needs interactive admin-account creation (password entry), which I can't do.
+  Spin up a fresh-`DATA_DIR` instance and walk it once.
+- **Test-suite stabilization** — separate effort when you want it (31 pre-existing
+  failures in email/gallery/search/document/context-compaction subsystems).
