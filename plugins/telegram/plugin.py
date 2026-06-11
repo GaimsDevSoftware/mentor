@@ -34,6 +34,7 @@ def _build_bridge():
         owner=str(_cfg("telegram_owner", "admin") or "admin"),
         allowed_ids=_cfg("telegram_allowed_user_ids", []) or [],
         mode=str(_cfg("telegram_mode", "agent") or "agent"),
+        model_spec=str(_cfg("telegram_model", "") or ""),
     )
 
 
@@ -87,6 +88,7 @@ async def _service():
                     bridge.owner = str(_cfg("telegram_owner", "admin") or "admin")
                     bridge.allowed_ids = {str(x) for x in (_cfg("telegram_allowed_user_ids", []) or [])}
                     bridge.mode = str(_cfg("telegram_mode", "agent") or "agent")
+                    bridge.model_spec = (str(_cfg("telegram_model", "") or "")).strip() or None
                     if not bridge.is_allowed(user_id):
                         await _send(client, token, chat_id,
                                     "⛔ This is a private assistant. Your Telegram id "
@@ -141,6 +143,11 @@ def register(api):
          "type": "text", "default": []},
         {"key": "telegram_mode", "label": "Mode", "type": "select",
          "options": ["agent", "chat"], "default": "agent"},
+        {"key": "telegram_model", "label": "Model", "type": "select",
+         "suggest_url": "/api/manage/teacher-model-options", "default": "",
+         "desc": "Which model this bot replies with. Blank = your default work model. "
+                 "Pick a small/fast model for quick phone replies, or a capable one for real "
+                 "work; use the filter chips or ✦ AI pick to choose."},
         {"key": "telegram_owner", "label": "Odysseus owner", "type": "text", "default": "admin"},
     ])
 

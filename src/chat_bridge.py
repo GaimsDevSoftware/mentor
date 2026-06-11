@@ -29,14 +29,83 @@ _DEFAULT_SYSTEM = ("You are the user's personal Odysseus assistant, reached from
 class ChatBridge:
     def __init__(self, name: str, *, owner: str = "admin", allowed_ids=None,
                  system_prompt: Optional[str] = None, max_history: int = 12,
-                 mode: str = "agent"):
+                 mode: str = "agent", model_spec: Optional[str] = None):
         self.name = name
         self.owner = owner or "admin"
         self.allowed_ids = {str(x) for x in (allowed_ids or [])}
         self.system_prompt = system_prompt or _DEFAULT_SYSTEM
         self.max_history = max_history
         self.mode = mode if mode in ("agent", "chat") else "agent"
-        self._history: Dict[str, Deque[dict]] = {}
+        # Optional explicit "model@endpoint" spec (e.g. the telegram_model
+        # setting). When unset we fall back to the owner's default model.
+        self.model_spec = (model_spec or "").strip() or None
+        self._history: Dict[str, Deque[dict]] = {}   # fallback when no session store
+
+    # ── shared session (so the conversation shows up in the Mentor UI) ──
+    def session_id(self, chat_id) -> str:
+        return f"{self.name}-{chat_id}"
+
+    def _session_manager(self):
+        try:
+            from src.ai_interaction import get_session_manager
+            return get_session_manager()
+        except Exception:
+            return None
+
+    def _ensure_session(self, sm, sid: str, url: str, model: str) -> bool:
+        """Make sure a persisted session exists so the UI can list + open it."""
+        try:
+            if sid in getattr(sm, "sessions", {}):
+                return True
+            sm._load_session_from_db(sid)
+            if sid in getattr(sm, "sessions", {}):
+                return True
+        except Exception:
+            pass
+        try:
+            sm.create_session(sid, f"📱 {self.name.capitalize()}", url or "", model or "",
+                              owner=self.owner)
+            return True
+        except Exception as e:
+            logger.debug("chat bridge: create_session failed: %s", e)
+            return False
+
+    def _session_history(self, sm, sid: str) -> Optional[List[dict]]:
+        """Recent user/assistant turns from the persisted session (shared with
+        whatever the user typed in the web UI)."""
+        try:
+            s = sm.get_session(sid)
+            out: List[dict] = []
+            for m in (getattr(s, "history", None) or [])[-self.max_history:]:
+                role = getattr(m, "role", None) if not isinstance(m, dict) else m.get("role")
+                content = getattr(m, "content", None) if not isinstance(m, dict) else m.get("content")
+                if role in ("user", "assistant") and content:
+                    out.append({"role": role, "content": content})
+            return out
+        except Exception:
+            return None
+
+    def _persist(self, sm, sid: str, role: str, content: str) -> None:
+        try:
+            from core.models import ChatMessage
+            sm.add_message(sid, ChatMessage(role=role, content=content,
+                                            metadata={"source": self.name}))
+        except Exception as e:
+            logger.debug("chat bridge: add_message failed: %s", e)
+
+    def _resolve(self):
+        """(url, model, headers) for this bridge — explicit model_spec, else the
+        owner's default."""
+        if self.model_spec:
+            try:
+                from src.ai_interaction import _resolve_model
+                url, model, headers = _resolve_model(self.model_spec)
+                if url and model:
+                    return url, model, headers
+            except Exception as e:
+                logger.debug("chat bridge: model_spec resolve failed (%s); using default", e)
+        from src.endpoint_resolver import resolve_endpoint
+        return resolve_endpoint("default", owner=self.owner)
 
     def is_allowed(self, user_id) -> bool:
         # Empty allowlist = locked down (respond to NOBODY) — fail safe, so an
@@ -60,14 +129,27 @@ class ChatBridge:
             self.reset(chat_id)
             return "🧹 Conversation reset."
 
-        hist = self._hist(chat_id)
+        sm = self._session_manager()
+        sid = self.session_id(chat_id)
+        persisted = False
         try:
-            from src.endpoint_resolver import resolve_endpoint
-            url, model, headers = resolve_endpoint("default", owner=self.owner)
+            url, model, headers = self._resolve()
             if not url or not model:
-                return ("⚠️ No default model is configured in Odysseus yet. Set one in "
-                        "Settings → Models, then try again.")
-            convo = list(hist) + [{"role": "user", "content": text}]
+                return ("⚠️ No model is configured for this bot. Pick one under the "
+                        "Telegram plugin's settings (or set a default in Settings → Models).")
+            # Use the PERSISTED session as the shared history so the same
+            # conversation is visible + continuable in the Mentor web UI.
+            hist_msgs = None
+            if sm:
+                persisted = self._ensure_session(sm, sid, url, model)
+                if persisted:
+                    hist_msgs = self._session_history(sm, sid)
+            if hist_msgs is None:
+                hist_msgs = list(self._hist(chat_id))
+            convo = hist_msgs + [{"role": "user", "content": text}]
+            # Persist the user turn up front so the UI shows it immediately.
+            if persisted:
+                self._persist(sm, sid, "user", text)
             if self.mode == "agent":
                 reply = await self._agent_reply(url, model, headers, convo, chat_id)
             else:
@@ -77,8 +159,12 @@ class ChatBridge:
             return f"⚠️ Sorry, I hit an error: {e}"
 
         reply = (reply or "").strip() or "(no response)"
-        hist.append({"role": "user", "content": text})
-        hist.append({"role": "assistant", "content": reply})
+        if persisted:
+            self._persist(sm, sid, "assistant", reply)
+        else:
+            hist = self._hist(chat_id)
+            hist.append({"role": "user", "content": text})
+            hist.append({"role": "assistant", "content": reply})
         return reply
 
     async def _chat_reply(self, url, model, headers, convo) -> str:
