@@ -12,7 +12,9 @@ telegram_owner (Odysseus owner whose model/data to use), telegram_mode (agent|ch
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 _api = None
@@ -131,10 +133,116 @@ def _diagnostic():
             "detail": f"token set, {len(allow)} allowed user(s), mode={_cfg('telegram_mode','agent')}"}
 
 
+# ── UI → Telegram relay (Layer B) ───────────────────────────────────────────
+# When the user types into the shared `telegram-<chat_id>` session from the
+# Mentor web UI, mirror those assistant replies (and the web-typed question) to
+# the phone. Echo-safe + deduped, following the bridge research (cache:
+# telegram-bot-bridge-twoway-sync): a SEPARATE sendMessage-only task (never a 2nd
+# getUpdates — that would steal updates), skip messages whose origin is telegram
+# (already sent inbound), and track a per-chat delivered marker so each message
+# goes out exactly once.
+
+def _delivery_path() -> str:
+    return os.path.join(_api.data_dir(), "telegram_delivery.json")
+
+
+def _load_delivery() -> dict:
+    try:
+        with open(_delivery_path(), "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return {str(k): int(v) for k, v in d.items()} if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_delivery(marker: dict) -> None:
+    try:
+        with open(_delivery_path(), "w", encoding="utf-8") as f:
+            json.dump(marker, f)
+    except Exception:
+        pass
+
+
+def _msg_field(m, key):
+    return m.get(key) if isinstance(m, dict) else getattr(m, key, None)
+
+
+def _msg_source(m) -> str:
+    md = _msg_field(m, "metadata")
+    return str(md.get("source") or "") if isinstance(md, dict) else ""
+
+
+def _pending_pushes(hist, seen):
+    """Pure relay logic: given a session history and the per-chat delivered
+    marker, return (outgoing_texts, new_marker). Echo-safe — skips any message
+    whose origin is telegram (already sent to the phone). `seen is None` = first
+    sight → baseline the existing history (no backfill). Capped per pass."""
+    if seen is None:
+        return [], len(hist)
+    out, idx = [], seen
+    for m in hist[seen:]:
+        role, content = _msg_field(m, "role"), _msg_field(m, "content")
+        if role in ("user", "assistant") and content and _msg_source(m) != "telegram":
+            out.append(content if role == "assistant" else "🌐 (from web): " + content)
+        idx += 1
+        if len(out) >= 15:        # per-pass safety cap; the rest go next pass
+            break
+    return out, idx
+
+
+async def _deliver_service():
+    """Push web-UI-typed turns of the shared session out to Telegram. sendMessage
+    only — NOT a second getUpdates poller. Echo guard: never push a message whose
+    origin is telegram (it came from, and was already sent to, the phone)."""
+    import httpx
+    logger.info("telegram delivery service started (UI→Telegram push, idle until configured)")
+    marker = _load_delivery()
+    async with httpx.AsyncClient() as client:
+        while True:
+            await asyncio.sleep(5)
+            token = (_cfg("telegram_bot_token", "") or "").strip()
+            if not token:
+                continue
+            try:
+                from src.ai_interaction import get_session_manager
+                sm = get_session_manager()
+                if not sm:
+                    continue
+                owner = str(_cfg("telegram_owner", "admin") or "admin")
+                sessions = sm.get_sessions_for_user(owner) or {}
+            except Exception as e:
+                logger.debug("telegram delivery: session list failed: %s", e)
+                continue
+            changed = False
+            for sid in list(sessions.keys()):
+                if not str(sid).startswith("telegram-"):
+                    continue
+                chat_id = str(sid)[len("telegram-"):]
+                try:
+                    hist = list(getattr(sm.get_session(sid), "history", None) or [])
+                except Exception:
+                    continue
+                seen = marker.get(chat_id)
+                outs, new_marker = _pending_pushes(hist, seen)
+                if new_marker == seen:
+                    continue
+                for out in outs:
+                    try:
+                        await _send(client, token, chat_id, out)
+                        await asyncio.sleep(1.1)   # rate guard: ≤ ~1 msg/s per chat
+                    except Exception as e:
+                        logger.debug("telegram delivery send failed: %s", e)
+                marker[chat_id] = new_marker
+                changed = True
+            if changed:
+                _save_delivery(marker)
+
+
 def register(api):
     global _api
     _api = api
     api.register_service(_service)
+    api.register_service(_deliver_service)   # UI → Telegram push (Layer B)
     api.register_hook("diagnostic", _diagnostic)
     api.register_settings([
         {"key": "telegram_bot_token", "label": "Bot token (@BotFather)", "type": "text",
