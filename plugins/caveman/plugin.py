@@ -109,6 +109,41 @@ def _min_chars() -> int:
         return 600
 
 
+def _policy():
+    """The per-turn caveman policy set by matched skills (or None)."""
+    try:
+        from src import runtime_policy
+        return runtime_policy.get_caveman_policy()
+    except Exception:
+        return None
+
+
+def _eff_enabled() -> bool:
+    """Enabled for THIS turn: a matched skill can force caveman off (e.g. on
+    code / precision-critical work) even when the global switch is on."""
+    p = _policy()
+    if p and p.get("disabled"):
+        return False
+    return _enabled()
+
+
+def _eff_level() -> str:
+    """Compression level for THIS turn: a matched skill can override the global
+    level (e.g. 'caveman' on bulky research, lighter elsewhere)."""
+    p = _policy()
+    if p and p.get("level"):
+        return p["level"]
+    return _level()
+
+
+def _eff_terse() -> bool:
+    """Terse output if the global setting OR a matched skill asks for it."""
+    if _api.get_setting("caveman_terse_output", False):
+        return True
+    p = _policy()
+    return bool(p and p.get("terse"))
+
+
 def _compress_tools() -> set:
     tools = _api.get_setting("caveman_compress_tools",
                              ["web_search", "trigger_research", "manage_research",
@@ -122,11 +157,11 @@ def _compress_tools() -> set:
 
 def _post_tool(tool, content, result):
     """Compress bulky text fields of an allowlisted tool result, in place."""
-    if not _enabled() or not isinstance(result, dict):
+    if not _eff_enabled() or not isinstance(result, dict):
         return
     if tool not in _compress_tools():
         return
-    level = _level()
+    level = _eff_level()
     floor = _min_chars()
     # Keys aligned with what agent_loop reads into history (output/results/stdout)
     # + response — so the compression PERSISTS in the session history and saves
@@ -147,11 +182,11 @@ def _post_response(content):
     what future turns see in the context window, saving tokens on every
     subsequent round. Protected: code blocks, URLs, inline code.
     """
-    if not _enabled():
+    if not _eff_enabled():
         return content
     if not isinstance(content, str) or len(content) < 80:
         return content
-    level = _level()
+    level = _eff_level()
     comp, o, c = cc.compress(content, level)
     if c < o:
         _record(o, c, tool="ai_response")
@@ -166,14 +201,14 @@ def _prompt_hook(prompt, context):
       2. caveman_terse_output — append the terse directive so the MODEL answers
          in caveman-speak, cutting output tokens at the source.
     Both OFF by default — they change instruction grammar / visible style."""
-    if not _enabled():
+    if not _eff_enabled():
         return prompt
     if _api.get_setting("caveman_compress_system_prompt", False):
-        comp, o, c = cc.compress(prompt or "", _level())
+        comp, o, c = cc.compress(prompt or "", _eff_level())
         if c < o:
             _record(o, c, tool="system_prompt")
             prompt = comp
-    if _api.get_setting("caveman_terse_output", False):
+    if _eff_terse():
         prompt = (prompt or "") + "\n\n" + _TERSE_DIRECTIVE
     return prompt
 
@@ -183,11 +218,11 @@ def _compress_context(text, kind=""):
     persona) at the chosen level — the IN-CONTEXT copy only; the stored data
     stays human-readable. These blocks ride along on EVERY turn, so compressing
     them pays repeatedly. Returns compressed text, or None for no change."""
-    if not _enabled() or not _api.get_setting("caveman_compress_context", True):
+    if not _eff_enabled() or not _api.get_setting("caveman_compress_context", True):
         return None
     if not isinstance(text, str) or len(text) < 150:
         return None
-    comp, o, c = cc.compress(text, _level())
+    comp, o, c = cc.compress(text, _eff_level())
     if c < o:
         _record(o, c, tool="context:" + (kind or "?"))
         return comp

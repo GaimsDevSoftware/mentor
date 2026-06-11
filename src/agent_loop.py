@@ -859,6 +859,13 @@ def _build_system_prompt(
                 max_items=_skill_max_injected,
                 min_confidence=_skill_min_conf,
             ) if _skill_max_injected > 0 else []
+            # Let matched skills tune caveman for this turn (off on code/precision,
+            # max on bulky research, etc.) — a no-op if no skill carries a policy.
+            try:
+                from src import runtime_policy
+                runtime_policy.set_caveman_policy(runtime_policy.resolve_from_skills(relevant_skills))
+            except Exception:
+                pass
             lines = [""]
             if relevant_skills:
                 # Bump the "uses" counter on every skill we actually surface
