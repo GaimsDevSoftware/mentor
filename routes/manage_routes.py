@@ -1202,13 +1202,22 @@ def setup_manage_routes() -> APIRouter:
                 (aider_model or "not set"), ollama, nagents)
         )
         system = (
-            "You are Atlas, Mentor's built-in setup guide. Your ONE job: get the user's setup FINISHED — giving advice "
-            "that uses all the context below — then wrap up. You are PROACTIVE and take charge: you can do "
-            "everything yourself; the user just tells you what they want after you ask.\n\n"
-            "STYLE: warm, confident, brief (1-3 sentences). EVERY reply MUST end with either an action OR a "
-            "single clear question/instruction — NEVER leave the user unsure what to do next. Keep the "
-            "conversation going until setup is DONE; if it isn't, state exactly what's needed next and offer "
-            "to do it for them.\n\n"
+            "OUTPUT CONTRACT (read first, absolute): You MUST format EVERY reply as exactly three parts in order — "
+            "(1) optional brief thinking, (2) a line containing exactly ===REPLY=== on its own, (3) the user-facing "
+            "message. ONLY the text AFTER ===REPLY=== is shown to the user; everything before it is discarded. "
+            "The user-facing message is your CONCLUSION, never your reasoning: state the recommendation/result and "
+            "the next step — do NOT narrate how you figured it out, what you're 'considering', or what you're "
+            "'about to do'. BANNED openers in the user message: 'Let me', 'I'll now', 'Looking at', 'Based on', "
+            "'First,', 'Okay,', 'So,', 'I think', 'It seems'. Max 2 sentences. Always emit the ===REPLY=== line, "
+            "even if you did no thinking.\n\n"
+            "WHO YOU ARE: You are Atlas, Mentor's setup expert. The user is NOT an expert — that's why you're here. "
+            "YOU make the technical decisions (which model, which quant, which role gets what) using the context "
+            "below; the user only decides two things: (a) privacy vs cloud, and (b) spending money. For everything "
+            "else, pick the best option and tell them what you picked — never ask them to choose between technical "
+            "options they have no way to judge. Lead. Recommend and act in the same breath.\n\n"
+            "STYLE: warm, confident, brief (1-2 sentences). EVERY reply MUST end with either an action OR a single "
+            "clear question/instruction — NEVER leave the user unsure what to do next. Keep going until setup is "
+            "DONE; if it isn't, state the single next step and do it (or offer to).\n\n"
             "Do an action by ending your reply with EXACTLY ONE fenced block:\n"
             "```action\n{\"type\":\"<name>\",\"args\":{...}}\n```\n"
             "Actions: detect_system; install_ollama; setup_free_helper; recommend_local; "
@@ -1221,12 +1230,13 @@ def setup_manage_routes() -> APIRouter:
             "toggle_paid_models {\"enabled\":true|false} (show/hide per-request paid API models like Claude, GPT, Gemini from OpenCode — "
             "these cost EXTRA on top of a subscription; warn the user about this before enabling); "
             "done (setup complete).\n"
-            "IMPORTANT — unfilled roles: if any important role is empty (especially the default model or the "
-            "vision model for images), proactively raise it and ASK the user how they'd like to handle it: "
-            "\"Want me to pick the best models for these roles automatically, or shall we choose them together "
-            "(I suggest, you confirm)?\" Do NOT silently auto-pick — wait for their choice, THEN run auto_roles "
-            "(automatic) or set_role one by one (together). If a role can't be filled from connected models "
-            "(e.g. no multimodal model for vision), say so and offer to connect one. Aim to leave NO role empty.\n"
+            "UNFILLED ROLES — lead, don't ask: if important roles are empty (especially the default model or the "
+            "vision model for images) and models are connected, DEFAULT to filling them yourself — say in one line "
+            "what you're assigning and run auto_roles in the same reply. Do NOT ask 'want me to pick automatically "
+            "or together?' — you're the expert, just pick and report, then offer to swap anything they dislike. "
+            "Only fill role-by-role with set_role if the user explicitly said they want to choose together. If a "
+            "role can't be filled from connected models (e.g. no multimodal model for vision), say so in one line "
+            "and offer to connect one. Aim to leave NO role empty.\n"
             "MULTI-SOURCE — context-aware, NOT a blanket rule. Only raise it when it's actually useful for THIS "
             "user, and ALWAYS explain WHY in plain language tailored to their setup. Use this matrix:\n"
             "  • Only ONE free-cloud source connected (free=1, no paid/subscription): DO urge a second free source. "
@@ -1289,21 +1299,43 @@ def setup_manage_routes() -> APIRouter:
             from src.ai_interaction import _resolve_model
             from src.llm_core import complete_with_continuation
             url, model, headers = _resolve_model(spec)
+            # Reasoning models (deepseek-*-pro etc.) burn the budget thinking; 700
+            # truncates mid-reasoning so they never reach the ===REPLY=== marker or
+            # the answer, and continuation just stitches more reasoning. Give them
+            # room to finish (4096 remote / local default) per _guide_max_tokens.
             reply = await complete_with_continuation(url, model, chat, headers=headers or {},
-                                                     max_tokens=700, timeout=90)
+                                                     max_tokens=_guide_max_tokens(model, url, base=700),
+                                                     timeout=120)
         except Exception as e:
             return {"ok": False, "detail": "Guide AI call failed: %s" % e}
         text = (reply or "").strip()
+        had_marker = "===REPLY===" in text
         thinking = ""
+        # OUTPUT CONTRACT: planning goes ABOVE the ===REPLY=== marker, the real
+        # message BELOW it. Reasoning models (e.g. deepseek-*-pro) otherwise
+        # narrate their plan straight into the content with no <think> tags,
+        # fused onto the answer — which strip_think cannot separate. Honor the
+        # marker first; keep only what follows the last one.
+        if had_marker:
+            head, _, tail = text.rpartition("===REPLY===")
+            if head.strip():
+                thinking = head.strip()
+            text = tail.strip()
         think_match = _re.search(r"<think>([\s\S]*?)</think>", text)
         if think_match:
-            thinking = think_match.group(1).strip()
+            thinking = (thinking + "\n" + think_match.group(1)).strip()
             text = _re.sub(r"<think>[\s\S]*?</think>\s*", "", text).strip()
         if "<think>" in text:
             unclosed = _re.search(r"<think>([\s\S]*)$", text)
             if unclosed:
                 thinking = (thinking + "\n" + unclosed.group(1)).strip()
             text = _re.sub(r"<think>[\s\S]*$", "", text).strip()
+        # If the model ignored the marker and leaked untagged reasoning prose,
+        # best-effort strip it — but never let stripping blank a real reply.
+        if not had_marker:
+            _cleaned = _strip_think(text)
+            if _cleaned:
+                text = _cleaned
         action = None
         m = _re.search(r"```action\s*(\{.*?\})\s*```", text, _re.DOTALL)
         if m:

@@ -1280,7 +1280,14 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
       </div>
       <div class="why" style="margin:0 0 8px;font-size:13px">Pick a model for Atlas above, then just tell it what you want — Atlas can install, download, connect and configure things for you, and you watch it happen.</div>
       <div id="asst-log" style="max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:8px"></div>
-      <div class="row" style="gap:8px"><input id="asst-input" class="fld" style="flex:1" placeholder="e.g. set me up for private local coding"><button class="btn primary" id="asst-send" type="button">Send</button></div>
+      <div id="asst-suggest" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+        <button class="btn mini" type="button" data-prompt="Set me up fully private — local models only in Ollama, picked for my hardware.">Private · local only</button>
+        <button class="btn mini" type="button" data-prompt="Set me up with free cloud models — fast, and add a second free provider as a fallback.">Free cloud · fast</button>
+        <button class="btn mini" type="button" data-prompt="Set me up with a mix: local Ollama models for everyday/private use, plus free cloud as a fallback for heavier tasks.">Mix · local + cloud fallback</button>
+        <button class="btn mini" type="button" data-prompt="I want the best quality — recommend a subscription setup (e.g. OpenCode Go) and fill the roles.">Best quality · subscription</button>
+        <button class="btn mini" type="button" data-prompt="What's the cheapest setup that's still genuinely capable for coding and chat? Set it up.">Cheapest capable</button>
+      </div>
+      <div class="row" style="gap:8px"><input id="asst-input" class="fld" style="flex:1" placeholder="…or tell Atlas in your own words"><button class="btn primary" id="asst-send" type="button">Send</button></div>
     </div>
 
     <div class="faint" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Your main work model (for chat, code, research)</div>
@@ -1558,14 +1565,17 @@ async function asstSend(){
     return;
   }
   asstStarted=true; asstBusy=true; $('#asst-send').disabled=true;
+  { const sg=$('#asst-suggest'); if(sg) sg.style.display='none'; }
   ASST.push({role:'user',content:text}); asstBubble('user', text); asstSave();
   await asstTurn(6);
   asstBusy=false; $('#asst-send').disabled=false; inp.focus();
 }
 // Render any conversation carried over from the floating widget / a previous visit.
-(function(){ const log=$('#asst-log'); if(log && ASST.length){ ASST.forEach(m=>{ if((m.role==='user'||m.role==='assistant')){ const t=String(m.content||'').replace(/^\[.*?\]\s*/,''); if(t.indexOf('[action result]')!==0) asstBubble(m.role,t); } }); asstStarted=true; } })();
+(function(){ const log=$('#asst-log'); if(log && ASST.length){ ASST.forEach(m=>{ if((m.role==='user'||m.role==='assistant')){ const t=String(m.content||'').replace(/^\[.*?\]\s*/,''); if(t.indexOf('[action result]')!==0) asstBubble(m.role,t); } }); asstStarted=true; const sg=$('#asst-suggest'); if(sg) sg.style.display='none'; } })();
 (function(){ const b=$('#asst-send'), i=$('#asst-input'); if(b) b.onclick=asstSend;
   if(i){ i.addEventListener('focus',()=>asstAttn(false)); i.addEventListener('keydown',e=>{ asstAttn(false); if(e.key==='Enter'){ e.preventDefault(); asstSend(); } }); }
+  // Starter-suggestion chips: clicking one fills the composer and sends it.
+  const sg=$('#asst-suggest'); if(sg) sg.addEventListener('click',e=>{ const c=e.target.closest('[data-prompt]'); if(!c)return; const inp=$('#asst-input'); if(inp){ inp.value=c.dataset.prompt; asstSend(); } });
   // Proactive: the assistant greets first and drives — it doesn't wait for you.
   setTimeout(()=>asstKickoff(false), 900); })();
 
