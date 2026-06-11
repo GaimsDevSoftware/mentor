@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import time
 from typing import Dict, Iterable, List, Optional
 
@@ -52,6 +53,40 @@ def _to_float(x, default: float = 0.0) -> float:
         return float(x)
     except (TypeError, ValueError):
         return default
+
+
+_BUILTIN_SKILLS_DIR = os.path.join(os.path.dirname(__file__), "builtin_skills")
+
+
+def seed_builtin_skills(data_dir: str) -> int:
+    """Copy bundled built-in skills into the user's skills dir on first run.
+
+    Only writes a skill whose target SKILL.md doesn't already exist, so user
+    edits and self-improvement-loop skills are never clobbered. Lets curated
+    defaults (e.g. the caveman per-situation policy skills) SHIP with the app
+    instead of living only in a gitignored data dir. Returns the count seeded."""
+    if not os.path.isdir(_BUILTIN_SKILLS_DIR):
+        return 0
+    dst_root = os.path.join(data_dir, "skills")
+    seeded = 0
+    try:
+        for cat in sorted(os.listdir(_BUILTIN_SKILLS_DIR)):
+            cat_dir = os.path.join(_BUILTIN_SKILLS_DIR, cat)
+            if not os.path.isdir(cat_dir):
+                continue
+            for name in sorted(os.listdir(cat_dir)):
+                src_md = os.path.join(cat_dir, name, "SKILL.md")
+                dst_md = os.path.join(dst_root, cat, name, "SKILL.md")
+                if not os.path.isfile(src_md) or os.path.exists(dst_md):
+                    continue
+                os.makedirs(os.path.dirname(dst_md), exist_ok=True)
+                shutil.copy2(src_md, dst_md)
+                seeded += 1
+    except Exception as e:  # never block startup on a seed failure
+        logger.debug("seed_builtin_skills failed: %s", e)
+    if seeded:
+        logger.info("seeded %d built-in skill(s) into %s", seeded, dst_root)
+    return seeded
 
 
 # ---------------------------------------------------------------------------

@@ -45,6 +45,13 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     # Initialize core managers
     memory_manager = MemoryManager(DATA_DIR)
     skills_manager = SkillsManager(DATA_DIR)
+    # Seed curated built-in skills (e.g. the caveman per-situation policies) on
+    # first run — only fills in ones the user doesn't already have.
+    try:
+        from services.memory.skills import seed_builtin_skills
+        seed_builtin_skills(DATA_DIR)
+    except Exception:
+        pass
     session_manager = SessionManager(SESSIONS_FILE)
     set_session_manager(session_manager)  # Enable Session.add_message() persistence
     upload_handler = UploadHandler(base_dir, UPLOAD_DIR)
