@@ -3530,7 +3530,7 @@ body.bg-pattern-sparkles {
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
       width:28px; height:28px; padding:0; cursor:pointer;
-      opacity:0; transition: opacity .15s, color .15s, border-color .15s;
+      opacity:0.45; transition: opacity .15s, color .15s, border-color .15s;
       display:flex; align-items:center; justify-content:center;
     }
     pre .copy-code { top:6px; }
@@ -9045,11 +9045,25 @@ body.hide-thinking .thinking-section { display: none !important; }
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
-  border-top: 1px solid color-mix(in srgb, var(--accent, #0a84ff) 25%, transparent);
-  background: color-mix(in srgb, var(--accent, #0a84ff) 6%, transparent);
+  padding: 10px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--accent, #0a84ff) 30%, transparent);
+  background: color-mix(in srgb, var(--accent, #0a84ff) 8%, transparent);
   font-size: 12px;
-  animation: queue-bar-in .2s ease-out;
+  animation: queue-bar-in .25s ease-out;
+  position: relative;
+}
+.chat-queue-bar::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--accent, #0a84ff);
+  border-radius: 0 2px 2px 0;
+  animation: queue-pulse 2s ease-in-out infinite;
+}
+@keyframes queue-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 @keyframes queue-bar-in {
   from { opacity: 0; transform: translateY(4px); }
@@ -9061,43 +9075,60 @@ body.hide-thinking .thinking-section { display: none !important; }
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .04em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.queue-label::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #0a84ff);
+  animation: queue-dot-pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes queue-dot-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
 }
 .queue-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
+  gap: 5px;
+  padding: 4px 10px;
   background: color-mix(in srgb, var(--accent, #0a84ff) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent, #0a84ff) 22%, transparent);
-  border-radius: 12px;
-  max-width: 240px;
-  transition: background .15s;
+  border: 1px solid color-mix(in srgb, var(--accent, #0a84ff) 25%, transparent);
+  border-radius: 99px;
+  max-width: 280px;
+  transition: background .15s, border-color .15s;
 }
 .queue-chip:hover {
   background: color-mix(in srgb, var(--accent, #0a84ff) 20%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #0a84ff) 40%, transparent);
 }
 .queue-chip-next {
-  border-color: color-mix(in srgb, var(--accent, #0a84ff) 45%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #0a84ff) 50%, transparent);
   background: color-mix(in srgb, var(--accent, #0a84ff) 18%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #0a84ff) 15%, transparent);
 }
 .queue-chip-badge {
   font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .06em;
-  color: var(--accent, #0a84ff);
-  background: color-mix(in srgb, var(--accent, #0a84ff) 22%, transparent);
-  padding: 1px 5px;
+  color: #fff;
+  background: var(--accent, #0a84ff);
+  padding: 1px 6px;
   border-radius: 6px;
 }
 .queue-chip-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--txt);
-  font-size: 11px;
+  color: var(--fg);
+  font-size: 12px;
 }
-.queue-chip-prio, .queue-chip-rm {
+.queue-chip-prio, .queue-chip-rm, .queue-chip-run {
   background: transparent;
   border: none;
   color: var(--faint);
@@ -9109,6 +9140,8 @@ body.hide-thinking .thinking-section { display: none !important; }
   border-radius: 4px;
   transition: color .1s, background .1s;
 }
+.queue-chip-run { font-size: 10px; }
+.queue-chip-run:hover { color: var(--ok, #30d158); background: color-mix(in srgb, var(--ok, #30d158) 15%, transparent); }
 .queue-chip-prio:hover { color: var(--accent, #0a84ff); background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .queue-chip-rm:hover { color: var(--err, #ff453a); background: color-mix(in srgb, var(--err, red) 12%, transparent); }
 
@@ -21614,6 +21647,18 @@ body:not(.welcome-ready) #welcome-screen {
     transform: translate(-50%, -50%);
   }
 }
+
+    .silence-indicator {
+      font-size: 12px;
+      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      font-style: italic;
+      padding: 6px 0;
+      animation: silence-pulse 2s ease-in-out infinite;
+    }
+    @keyframes silence-pulse {
+      0%, 100% { opacity: 0.35; }
+      50% { opacity: 0.7; }
+    }
 
 @keyframes msg-enter {
   from {
@@ -36029,4 +36074,152 @@ body.theme-frosted .modal {
   /* Email compose rich-body. Medium (15px) zooms, so bump it; large (17px)
      is already ≥16px and never zoomed — leave it so we don't shrink it. */
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
+}
+
+/* ── Popup chat: trigger button + popup-mode chrome ───────────────────── */
+
+/* "↗" icon next to "New Chat" in the sidebar. Subtle until hover so it
+   doesn't compete with the row's main label. */
+.sidebar-popup-btn {
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  margin-right: 2px;
+  cursor: pointer;
+  border-radius: 4px;
+  opacity: 0.45;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+.sidebar-popup-btn:hover {
+  opacity: 1;
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+.list-item:hover .sidebar-popup-btn { opacity: 0.85; }
+
+/* Popup mode: hide the SPA's sidebar/topbar so the chat fills the window. */
+body.popup-mode #sidebar,
+body.popup-mode #sidebar-mini,
+body.popup-mode .sidebar-mini,
+body.popup-mode #icon-rail,
+body.popup-mode .icon-rail,
+body.popup-mode #chat-header,
+body.popup-mode .top-bar,
+body.popup-mode .topbar,
+body.popup-mode #workspace-selector,
+body.popup-mode .topbar-workspace-pills,
+body.popup-mode #user-bar,
+body.popup-mode .user-bar {
+  display: none !important;
+}
+body.popup-mode #chat-container,
+body.popup-mode .main-content,
+body.popup-mode .app-shell,
+body.popup-mode .app-main {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  left: 0 !important;
+}
+
+/* ── Floating chat panel (lives inside the main Mentor window) ──────── */
+/* Each ↗ click spawns one of these. The iframe inside loads /?popup=1
+   so the chat runs as its own SPA instance with its own session/queue. */
+.chat-popup-window {
+  position: fixed;
+  background: var(--bg, var(--bg-elev, #181b22));
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.28));
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45),
+              0 4px 12px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 300px;
+  min-height: 280px;
+  z-index: 1000;
+}
+.chat-popup-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 4px 5px 8px;
+  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.18));
+  cursor: move;
+  user-select: none;
+  flex: 0 0 auto;
+}
+.chat-popup-grip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  opacity: 0.4;
+  margin-right: 4px;
+  pointer-events: none;
+}
+.chat-popup-grip span {
+  width: 16px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 1px;
+  display: block;
+}
+.chat-popup-title {
+  flex: 1;
+  font-size: 12px;
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.chat-popup-close {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  font-size: 18px;
+  line-height: 1;
+  color: inherit;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+.chat-popup-close:hover {
+  opacity: 1;
+  background: var(--bg-hover, rgba(127, 127, 127, 0.18));
+}
+.chat-popup-iframe {
+  flex: 1 1 auto;
+  border: none;
+  width: 100%;
+  background: transparent;
+  display: block;
+}
+/* SE-corner resize handle. */
+.chat-popup-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 50%, currentColor 50%, currentColor 60%,
+                    transparent 60%, transparent 75%, currentColor 75%,
+                    currentColor 85%, transparent 85%);
+  opacity: 0.35;
+}
+.chat-popup-resize:hover { opacity: 0.65; }
+/* While dragging/resizing, kill text selection across the page so the
+   cursor doesn't suddenly highlight everything in its path. */
+body.chat-popup-dragging,
+body.chat-popup-dragging * {
+  user-select: none !important;
+  cursor: move !important;
 }

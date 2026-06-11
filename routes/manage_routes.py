@@ -9,22 +9,187 @@ The page rides the logged-in browser session, so its same-origin fetches are
 authenticated exactly like the rest of the UI.
 """
 import getpass
+import hashlib
 import json
 import os
 import random
 import re
+import threading
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Request
 
 
+# ── AI-guide cache ────────────────────────────────────────────────────────
+# A guide call is deterministic given (model, prompt-context). The user
+# clicks "?" on the same setting repeatedly while configuring; without a
+# cache they'd burn a fresh 4-12k-token reasoning-model call each click.
+# Cache key = SHA256 of the canonical inputs. Cache miss happens
+# automatically when ANY input changes (model, descriptor, current value,
+# etc.) — no explicit invalidation needed.
+
+_GUIDE_CACHE_LOCK = threading.Lock()
+_GUIDE_CACHE_MAX = 500  # entries; ~250KB on disk at typical reply size
+_GUIDE_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def _guide_cache_path() -> str:
+    from src.constants import DATA_DIR
+    return os.path.join(DATA_DIR, "ai_guide_cache.json")
+
+
+def _guide_cache_load() -> Dict[str, Dict[str, Any]]:
+    """Load the JSON cache on first use, then keep it in memory."""
+    global _GUIDE_CACHE
+    if _GUIDE_CACHE is not None:
+        return _GUIDE_CACHE
+    try:
+        with open(_guide_cache_path(), "r", encoding="utf-8") as f:
+            _GUIDE_CACHE = json.load(f) or {}
+    except Exception:
+        _GUIDE_CACHE = {}
+    return _GUIDE_CACHE
+
+
+def _guide_cache_save(cache: Dict[str, Dict[str, Any]]) -> None:
+    path = _guide_cache_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        pass  # cache is best-effort; never break the request on disk error.
+
+
+def _guide_cache_key(kind: str, model: str, payload: Dict[str, Any]) -> str:
+    """Stable hash over the inputs that influence the answer.
+
+    ``kind`` discriminates which endpoint the entry came from (so
+    /guide and /explain-finding never collide). ``model`` is in the key
+    because the same setting on a different model is a different answer.
+    """
+    canonical = json.dumps(
+        {"kind": kind, "model": model, "payload": payload},
+        sort_keys=True, ensure_ascii=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _guide_cache_get(key: str) -> Optional[str]:
+    with _GUIDE_CACHE_LOCK:
+        entry = _guide_cache_load().get(key)
+    if not entry:
+        return None
+    return entry.get("explanation") or None
+
+
+def _guide_cache_put(key: str, explanation: str, model: str) -> None:
+    if not explanation:
+        return
+    with _GUIDE_CACHE_LOCK:
+        cache = _guide_cache_load()
+        cache[key] = {"explanation": explanation, "model": model, "ts": int(time.time())}
+        # Cap size — drop the oldest entries by ts when over the limit.
+        if len(cache) > _GUIDE_CACHE_MAX:
+            ordered = sorted(cache.items(), key=lambda kv: kv[1].get("ts", 0))
+            for old_key, _ in ordered[: len(cache) - _GUIDE_CACHE_MAX]:
+                cache.pop(old_key, None)
+        _guide_cache_save(cache)
+
+
 def _strip_think(text: str) -> str:
-    """Strip <think>…</think> reasoning blocks from LLM output."""
-    text = re.sub(r"<think>[\s\S]*?</think>\s*", "", text).strip()
-    if "<think>" in text:
-        text = re.sub(r"<think>[\s\S]*$", "", text).strip()
-    return text
+    """Strip reasoning leakage from LLM output.
+
+    Delegates to the centralized ``src.text_helpers.strip_think`` with
+    ``prose=True`` (drop leading "We need to…" / "Let me…" chain-of-thought
+    paragraphs) and ``prompt_echo=True`` (drop Qwen "Thinking Process:" and
+    "The user asks:" blocks). One source of truth across the app.
+    """
+    from src.text_helpers import strip_think
+    return strip_think(text or "", prose=True, prompt_echo=True)
+
+
+# Models that respect the ``/no_think`` soft-switch (Qwen3, DeepSeek-R, QwQ).
+# Match the matcher in src/agent_loop.py so behaviour stays consistent.
+_NO_THINK_MODELS = ("qwen3", "qwen-3", "deepseek-r", "qwq")
+
+
+def _is_local_endpoint(url: str) -> bool:
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return (host in ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+            or host.startswith(("192.168.", "10.", "172.")))
+
+
+def _apply_no_think(messages: list, model: str, url: str) -> list:
+    """Append ``/no_think`` to the system message for compatible local models.
+
+    Reasoning models (Qwen3/DeepSeek-R/QwQ) otherwise spend the entire output
+    budget thinking and return either empty content or a wall of reasoning.
+    Setting-gated by ``agent_local_no_think`` (same flag the agent loop uses).
+    """
+    try:
+        from src.settings import get_setting
+    except Exception:
+        return messages
+    if not get_setting("agent_local_no_think", True):
+        return messages
+    if not _is_local_endpoint(url):
+        return messages
+    mname = (model or "").lower()
+    if not any(p in mname for p in _NO_THINK_MODELS):
+        return messages
+    for m in messages:
+        if m.get("role") == "system" and isinstance(m.get("content"), str):
+            if "/no_think" not in m["content"]:
+                m["content"] = m["content"].rstrip() + "\n\n/no_think"
+            return messages
+    return [{"role": "system", "content": "/no_think"}] + messages
+
+
+# Reasoning-model name fragments. Includes Qwen3, DeepSeek-R, QwQ
+# (respect /no_think) AND DeepSeek-V*, gpt-oss, GLM-Z, MiniMax-M, anything
+# tagged "-thinking" or "reason" / "-r" / "-pro" reasoning variants — all
+# of which burn output tokens in a <think> block before answering.
+_REASONING_FRAGMENTS = _NO_THINK_MODELS + (
+    "gpt-oss", "gpt5", "gpt-5", "glm-z", "minimax-m", "-thinking", "reason",
+    "deepseek-v", "deepseek-r", "deepseek-coder",  # V-pro / R / coder all reason
+)
+
+
+def _is_reasoning_model(model: str) -> bool:
+    mname = (model or "").lower()
+    return any(p in mname for p in _REASONING_FRAGMENTS)
+
+
+def _guide_max_tokens(model: str, url: str, base: int = 1024) -> int:
+    """Pick a sane output budget for a guide call.
+
+    Reasoning models burn tokens in <think> before emitting content. The
+    AI-guide endpoints were hard-coded to 150 — way below the floor — so
+    the answer either came back empty or was truncated mid-reasoning.
+
+    - Non-reasoning model: ``base`` (default 1024) — plenty for a paragraph.
+    - Reasoning model: 4096 floor on remote, ``agent_local_reasoning_predict``
+      (default 12288) on local. Remote reasoning calls cost money/quota,
+      so we cap below the local default, but 4096 is enough for most
+      reasoning models to finish thinking and emit a paragraph.
+    """
+    if not _is_reasoning_model(model):
+        return base
+    if _is_local_endpoint(url):
+        try:
+            from src.settings import get_setting
+            return int(get_setting("agent_local_reasoning_predict", 12288) or 12288)
+        except Exception:
+            return 12288
+    return 4096
 from fastapi.responses import HTMLResponse
 
 from core.middleware import require_admin
@@ -52,8 +217,8 @@ MANAGE_SETTING_KEYS = {
 # added separately (it's a discovered-model dropdown — see core_settings()).
 CORE_SETTINGS_META = [
     {"key": "aegis_mode", "label": "Aegis firewall", "type": "select",
-     "options": ["off", "audit", "enforce"],
-     "desc": "Aegis is the prompt-injection / unsafe-action firewall that scores risky tool calls. off = no checks; audit = scores and logs but still runs the call; enforce = blocks any call scoring at/above the block threshold."},
+     "options": ["off", "audit", "ask", "enforce"],
+     "desc": "Aegis is the prompt-injection / unsafe-action firewall that scores risky tool calls. off = no checks; audit = scores and logs but still runs the call; ask = prompt user with prominent notification + blinking borders before executing risky actions; enforce = blocks any call scoring at/above the block threshold."},
     {"key": "fleet_mode", "label": "Fleet mode", "type": "select",
      "options": ["auto", "single", "fleet"],
      "desc": "How model serving is spread across machines. single = only this machine; fleet = use every configured node; auto = decide from what is reachable right now."},
@@ -378,6 +543,110 @@ def setup_manage_routes() -> APIRouter:
         from src import plugin_system
         return {"plugins": plugin_system.list_plugins()}
 
+    @router.get("/api/manage/plugins/registry")
+    async def get_plugins_registry(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Get the authoritative plugins registry (from data/plugins-registry.json)."""
+        try:
+            registry_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                        "data", "plugins-registry.json")
+            if os.path.exists(registry_path):
+                with open(registry_path, encoding="utf-8") as f:
+                    registry = json.load(f)
+                return {"ok": True, "registry": registry}
+            else:
+                return {"ok": False, "detail": "registry not yet generated"}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)}
+
+    @router.post("/api/manage/plugins/registry/refresh")
+    async def refresh_plugins_registry(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Force immediate registry regeneration."""
+        try:
+            from src.plugin_watcher import check_now
+            check_now()
+            return {"ok": True, "detail": "registry refreshed"}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)}
+
+    @router.get("/api/manage/github/auth-status")
+    async def github_auth_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Check if GitHub is authenticated."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["gh", "auth", "status"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            authenticated = result.returncode == 0
+            username = None
+            if authenticated:
+                # Try to extract username from "gh api user" call
+                try:
+                    user_result = subprocess.run(
+                        ["gh", "api", "user", "-q", ".login"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if user_result.returncode == 0:
+                        username = user_result.stdout.strip()
+                except:
+                    pass
+            return {
+                "ok": True,
+                "authenticated": authenticated,
+                "username": username,
+                "status": result.stdout.strip() if authenticated else "Not authenticated",
+                "gh_installed": True,
+            }
+        except FileNotFoundError:
+            return {
+                "ok": True,
+                "authenticated": False,
+                "status": "GitHub CLI (gh) not installed",
+                "gh_installed": False,
+            }
+        except Exception as e:
+            return {"ok": False, "detail": str(e)}
+
+    @router.post("/api/manage/github/login-device-flow")
+    async def github_login_device_flow(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """GitHub login guidance — direct user to token method."""
+        return {
+            "ok": False,
+            "detail": "Use personal token instead. Click 'Use Personal Token' to paste your token.",
+        }
+
+    @router.post("/api/manage/github/validate-token")
+    async def validate_github_token(payload: Dict[str, Any] = Body(...),
+                                    _admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Validate GitHub token and save if valid."""
+        token = (payload.get("token") or "").strip()
+        if not token:
+            return {"ok": False, "detail": "Missing token"}
+
+        import subprocess
+        try:
+            # Test token with gh cli
+            result = subprocess.run(
+                ["gh", "auth", "status"],
+                env={**os.environ, "GH_TOKEN": token},
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return {"ok": False, "detail": "Invalid token or gh not installed"}
+
+            # Save token to settings
+            from src.settings import set_setting
+            set_setting("github_token", token)
+            return {"ok": True, "detail": "Token saved and validated", "token": token}
+        except Exception as e:
+            return {"ok": False, "detail": f"Validation failed: {str(e)}"}
+
     @router.post("/api/manage/plugins/toggle")
     async def toggle_plugin(payload: Dict[str, Any] = Body(...),
                             _admin: str = Depends(require_admin)) -> Dict[str, Any]:
@@ -409,6 +678,16 @@ def setup_manage_routes() -> APIRouter:
             return {"heals": recent_heals()}
         except Exception:
             return {"heals": []}
+
+    @router.get("/api/manage/warnings")
+    async def get_warnings_summary(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Get summary of tracked warnings and suggested fixes."""
+        try:
+            from src.warning_handler import get_warning_summary
+            summary = await get_warning_summary()
+            return {"ok": True, "warnings": summary}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)}
 
     @router.get("/api/manage/quota")
     async def quota_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
@@ -446,17 +725,31 @@ def setup_manage_routes() -> APIRouter:
     @router.get("/api/manage/aider/models")
     async def aider_models(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         """List models Aider can use, in its provider/model format. Pulls local
-        Ollama tags + any logged-in remote source (opencode Zen, OpenRouter)."""
+        Ollama tags + any logged-in remote source (opencode Zen, OpenRouter).
+        Each entry carries kind (local/cloud) and tier (free/subscription/paid)
+        so the admin UI can filter by category."""
+        from routes.models_catalog_routes import classify as _classify
+        import re as _re
+        COD = r"coder|code|deepseek|devstral|codestral|qwen2\.5-coder|qwen3-coder"
+        seen = set()
         out = []
+        def _add(spec: str, base_url: str, ep_name: str):
+            if spec in seen:
+                return
+            seen.add(spec)
+            kind, tier = _classify(ep_name, base_url, spec)
+            is_coder = bool(_re.search(COD, spec.lower()))
+            out.append({"id": spec, "kind": kind, "tier": tier, "coder": is_coder})
         # 1) Local Ollama
         try:
             import httpx
             host = os.environ.get("LLM_HOST", "localhost")
-            r = httpx.get(f"http://{host}:11434/api/tags", timeout=3)
+            base = f"http://{host}:11434"
+            r = httpx.get(f"{base}/api/tags", timeout=3)
             if r.status_code == 200:
                 for m in r.json().get("models", []):
                     if m.get("name"):
-                        out.append(f"ollama/{m['name']}")
+                        _add(f"ollama/{m['name']}", base, "Ollama")
         except Exception:
             pass
         # 2) Remote sources from registered cookbook providers
@@ -473,14 +766,62 @@ def setup_manage_routes() -> APIRouter:
                     mid = m.get("model", "")
                     if not mid:
                         continue
-                    src = (m.get("source") or m.get("endpoint") or "").lower().replace(" ", "")
-                    if "openrouter" in src:
-                        out.append(f"openrouter/{mid}")
-                    elif "opencode" in src or "zen" in src:
-                        out.append(f"opencode/{mid}")
+                    src_name = (m.get("source") or m.get("endpoint") or "").lower().replace(" ", "")
+                    base_url = m.get("base_url") or m.get("url") or ""
+                    if "openrouter" in src_name:
+                        _add(f"openrouter/{mid}", base_url or "https://openrouter.ai", src_name)
+                    elif "opencode" in src_name or "zen" in src_name:
+                        _add(f"opencode/{mid}", base_url or "https://opencode.ai", src_name)
         except Exception:
             pass
-        return {"models": sorted(set(out))}
+        out.sort(key=lambda x: (x["kind"] != "local", not x["coder"], x["id"].lower()))
+        return {"models": out, "filterable": True}
+
+    @router.post("/api/manage/aider/models/ai-pick")
+    async def aider_ai_pick(payload: Dict[str, Any] = Body(default={}),
+                            _admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Let AI recommend the best coder model from available aider models.
+        Optional filter_ids: pre-filtered model IDs from the dialog."""
+        import re as _re
+        data = await aider_models(_admin)
+        models = data.get("models", [])
+        filter_ids = payload.get("filter_ids")
+        if filter_ids:
+            id_set = set(filter_ids)
+            models = [m for m in models if m["id"] in id_set]
+        if not models:
+            return {"ok": False, "error": "No models match your filters. Try widening the selection."}
+        COD = r"coder|code|deepseek|devstral|codestral|qwen2\.5-coder|qwen3-coder|mimo"
+        BIG = r"70b|72b|120b|235b|405b|opus|large|gpt-5|sonnet|qwen3\.|glm-4|32b|34b"
+        def score(m):
+            mid = m["id"].lower()
+            s = 0
+            if _re.search(COD, mid):
+                s += 100
+            if _re.search(BIG, mid):
+                s += 50
+            if m["kind"] == "local":
+                s += 20
+            if m["tier"] == "free":
+                s += 10
+            elif m["tier"] == "subscription":
+                s += 5
+            return s
+        ranked = sorted(models, key=score, reverse=True)
+        pick = ranked[0]
+        reason_parts = []
+        mid = pick["id"].lower()
+        if _re.search(COD, mid):
+            reason_parts.append("code-optimized")
+        if _re.search(BIG, mid):
+            reason_parts.append("large model")
+        if pick["kind"] == "local":
+            reason_parts.append("local (free, private)")
+        elif pick["tier"] == "free":
+            reason_parts.append("free tier")
+        reason = ", ".join(reason_parts) if reason_parts else "best available"
+        return {"ok": True, "pick": pick["id"], "reason": reason,
+                "runners_up": [r["id"] for r in ranked[1:4]]}
 
     @router.get("/api/manage/fs/git-repos")
     async def git_repos(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
@@ -560,31 +901,56 @@ def setup_manage_routes() -> APIRouter:
             spec = ""
         if not spec:
             return {"ok": False, "detail": "No AI configured. Set teacher_model (a local coder is free)."}
-        prompt = (f"You are a concise UI helper. The user is looking at a setting "
-                  f"in a self-hosted AI app called Odysseus (local-first, often running "
-                  f"small local models on one machine).\n\n"
+        prompt = (f"Setting in Odysseus (self-hosted, local-first AI app).\n\n"
                   f"Setting: {key}\n"
                   f"Plugin: {plugin or '(core)'}\n"
                   f"Type: {descriptor.get('type', '?')}\n"
                   f"Label: {descriptor.get('label', key)}\n"
                   f"Possible values: {descriptor.get('options') or '(free text)'}\n"
-                  f"What it does (reference): {descriptor.get('desc') or '(unknown)'}\n"
+                  f"What it does: {descriptor.get('desc') or '(unknown)'}\n"
                   f"Default: {descriptor.get('default')!r}\n"
                   f"Current value: {current!r}\n\n"
-                  f"In 3 short paragraphs, explain: (1) what this controls in plain language, "
-                  f"(2) what value is typically recommended and why, "
-                  f"(3) what the user's CURRENT value means for them. "
-                  f"Be concrete and brief; avoid filler." + _personal_touch())
+                  f"Answer in ONE short paragraph (3-4 sentences max): what does this control, "
+                  f"what's recommended, what does the current value mean? "
+                  f"Skip background. Be direct and actionable." + _personal_touch())
         try:
             from src.ai_interaction import _resolve_model
             from src.llm_core import complete_with_continuation
             url, model, headers = _resolve_model(spec)
-            reply = await complete_with_continuation(
-                url, model,
-                [{"role": "system", "content": "You are a concise, helpful UI assistant."},
+            # Cache key covers everything that influences the answer: the
+            # model, the setting key, the full descriptor (label/type/desc/
+            # options/default), and the current value. Click "?" twice on the
+            # same setting → hash matches → no LLM call.
+            cache_key = _guide_cache_key("explain", model, {
+                "key": key, "plugin": plugin, "current": current,
+                "descriptor": {k: descriptor.get(k) for k in
+                               ("label", "type", "desc", "options", "default")},
+            })
+            cached = _guide_cache_get(cache_key)
+            if cached:
+                return {"ok": True, "explanation": cached, "cached": True}
+            messages = _apply_no_think(
+                [{"role": "system", "content":
+                    "You are a terse, direct UI helper. Short answers only. No essays."},
                  {"role": "user", "content": prompt}],
-                headers=headers or {}, max_tokens=600, timeout=90)
-            return {"ok": True, "explanation": _strip_think(reply or "")}
+                model, url)
+            reply = await complete_with_continuation(
+                url, model, messages,
+                headers=headers or {},
+                max_tokens=_guide_max_tokens(model, url),
+                timeout=180)
+            cleaned = _strip_think(reply or "")
+            if not cleaned:
+                # The model rambled (pure reasoning, no answer reached) or
+                # produced output strip_think wiped entirely. Give a useful
+                # fallback from the descriptor rather than an empty box.
+                desc = descriptor.get("desc") or ""
+                lbl = descriptor.get("label", key)
+                cleaned = (f"**{lbl}** — {desc}" if desc else
+                           f"**{lbl}**: {current!r} (default {descriptor.get('default')!r}).")
+                return {"ok": True, "explanation": cleaned, "builtin": True}
+            _guide_cache_put(cache_key, cleaned, model)
+            return {"ok": True, "explanation": cleaned}
         except Exception as e:
             return {"ok": False, "detail": f"AI call failed: {e}"}
 
@@ -607,25 +973,40 @@ def setup_manage_routes() -> APIRouter:
             spec = ""
         if not spec:
             return {"ok": False, "detail": "No AI configured. Set teacher_model (a local coder is free)."}
-        prompt = (f"You are a concise ops helper for Odysseus, a self-hosted, local-first AI app "
-                  f"(often one machine, small local models, plus optional cloud sources).\n\n"
+        prompt = (f"You are a terse ops helper for Odysseus (self-hosted, local-first AI app).\n\n"
                   f"A health check reported:\n"
                   f"Area: {area}\nCheck: {name}\nStatus: {status}\n"
-                  f"Detail: {detail}\nSuggested hint: {hint or '(none)'}\n\n"
-                  f"In 3 short paragraphs explain: (1) what this finding means in plain language, "
-                  f"(2) whether it actually matters for a local-first single-machine setup and how "
-                  f"urgent it is, (3) the concrete steps to fix it (commands/settings). "
-                  f"Be specific and brief; no filler." + _personal_touch())
+                  f"Detail: {detail}\nHint: {hint or '(none)'}\n\n"
+                  f"Answer in ONE paragraph (3-4 sentences max): what does this mean, "
+                  f"is it urgent for a single-machine setup, what's the fix (if any)? "
+                  f"Be specific and actionable. Skip theory." + _personal_touch())
         try:
             from src.ai_interaction import _resolve_model
             from src.llm_core import complete_with_continuation
             url, model, headers = _resolve_model(spec)
-            reply = await complete_with_continuation(
-                url, model,
-                [{"role": "system", "content": "You are a concise, helpful operations assistant."},
+            cache_key = _guide_cache_key("explain-finding", model, {
+                "area": area, "name": name, "status": status,
+                "detail": detail, "hint": hint,
+            })
+            cached = _guide_cache_get(cache_key)
+            if cached:
+                return {"ok": True, "explanation": cached, "cached": True}
+            messages = _apply_no_think(
+                [{"role": "system", "content": "You are terse and direct. Short answers only."},
                  {"role": "user", "content": prompt}],
-                headers=headers or {}, max_tokens=600, timeout=90)
-            return {"ok": True, "explanation": _strip_think(reply or "")}
+                model, url)
+            reply = await complete_with_continuation(
+                url, model, messages,
+                headers=headers or {},
+                max_tokens=_guide_max_tokens(model, url),
+                timeout=180)
+            cleaned = _strip_think(reply or "")
+            if not cleaned:
+                fallback = (f"**{name}** ({status}). {detail or hint or ''}").strip()
+                return {"ok": True, "explanation": fallback or "(model produced no answer)",
+                        "builtin": True}
+            _guide_cache_put(cache_key, cleaned, model)
+            return {"ok": True, "explanation": cleaned}
         except Exception as e:
             return {"ok": False, "detail": f"AI call failed: {e}"}
 
@@ -696,23 +1077,34 @@ def setup_manage_routes() -> APIRouter:
             spec = ""
         if not spec:
             return {"ok": True, "explanation": _builtin, "builtin": True}
-        prompt = (f"You are a concise UI helper for Odysseus, a self-hosted, local-first AI app "
-                  f"(often one machine, small local models, plus optional cloud sources).\n\n"
-                  f"The user is looking at this part of the interface: {topic}\n"
-                  + (f"Their setup / current context: {context}\n" if context else "")
-                  + f"\nIn 2-3 short paragraphs, explain in plain language: what this section is for, "
-                  f"how the user would use it, and what it means for THEIR specific setup above. "
-                  f"Be concrete and brief; no filler, no markdown headers." + _personal_touch())
+        prompt = (f"You are a terse UI helper for Odysseus (self-hosted, local-first AI app).\n\n"
+                  f"The user is looking at: {topic}\n"
+                  + (f"Their setup: {context}\n" if context else "")
+                  + f"\nIn ONE short paragraph (2-3 sentences max), explain: what is this for, "
+                  f"when would the user use it, how does it apply to them? "
+                  f"Be direct and actionable. No filler, no headers." + _personal_touch())
         try:
             from src.ai_interaction import _resolve_model
             from src.llm_core import complete_with_continuation
             url, model, headers = _resolve_model(spec)
-            reply = await complete_with_continuation(
-                url, model,
-                [{"role": "system", "content": "You are a concise, helpful UI assistant."},
+            cache_key = _guide_cache_key("explain-topic", model, {
+                "topic": topic, "context": context,
+            })
+            cached = _guide_cache_get(cache_key)
+            if cached:
+                return {"ok": True, "explanation": cached, "cached": True}
+            messages = _apply_no_think(
+                [{"role": "system", "content": "Terse, direct answers only. No essays."},
                  {"role": "user", "content": prompt}],
-                headers=headers or {}, max_tokens=600, timeout=90)
+                model, url)
+            reply = await complete_with_continuation(
+                url, model, messages,
+                headers=headers or {},
+                max_tokens=_guide_max_tokens(model, url),
+                timeout=180)
             text = _strip_think(reply or "")
+            if text:
+                _guide_cache_put(cache_key, text, model)
             return {"ok": True, "explanation": text or _builtin}
         except Exception:
             # Model configured but unreachable → still help, with the built-in text.
@@ -940,11 +1332,14 @@ def setup_manage_routes() -> APIRouter:
 
     @router.get("/api/manage/teacher-model-options")
     async def teacher_model_options(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
-        """Discovered models as `model@endpoint` specs, for the teacher_model
-        dropdown. Pulls every enabled endpoint's cached model list (local/Ollama,
-        OpenCode, OpenRouter, …) so the admin can pick instead of typing a spec."""
+        """Discovered models as `model@endpoint` specs, with kind/tier metadata
+        so the admin UI can filter by category."""
+        import re as _re
         from core.database import SessionLocal, ModelEndpoint
-        specs, seen = [], set()
+        from routes.models_catalog_routes import classify as _classify
+        COD = r"coder|code|deepseek|devstral|codestral|qwen2\.5-coder|qwen3-coder|mimo"
+        VIS = r"vision|vl\b|llava|gpt-4o|gpt-4\.|gpt-5|gemini|claude-3|claude-4|pixtral|internvl|qwen.*vl"
+        seen, out = set(), []
         db = SessionLocal()
         try:
             for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
@@ -960,13 +1355,64 @@ def setup_manage_routes() -> APIRouter:
                     if not m or m in hidden:
                         continue
                     spec = f"{m}@{ep.name}"
-                    if spec not in seen:
-                        seen.add(spec)
-                        specs.append(spec)
+                    if spec in seen:
+                        continue
+                    seen.add(spec)
+                    kind, tier = _classify(ep.name, ep.base_url or "", m)
+                    ml = m.lower()
+                    out.append({"id": spec, "kind": kind, "tier": tier,
+                                "coder": bool(_re.search(COD, ml)),
+                                "vision": bool(_re.search(VIS, ml))})
         finally:
             db.close()
-        specs.sort(key=str.lower)
-        return {"models": specs}
+        out.sort(key=lambda x: (x["kind"] != "local", x["id"].lower()))
+        return {"models": out, "filterable": True}
+
+    @router.post("/api/manage/teacher-model-options/ai-pick")
+    async def teacher_ai_pick(payload: Dict[str, Any] = Body(default={}),
+                              _admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """AI-recommend the best model from available models, with optional pre-filter."""
+        import re as _re
+        data = await teacher_model_options(_admin)
+        models = data.get("models", [])
+        filter_ids = payload.get("filter_ids")
+        if filter_ids:
+            id_set = set(filter_ids)
+            models = [m for m in models if m["id"] in id_set]
+        if not models:
+            return {"ok": False, "error": "No models match your filters."}
+        COD = r"coder|code|deepseek|devstral|codestral|qwen2\.5-coder|qwen3-coder|mimo"
+        BIG = r"70b|72b|120b|235b|405b|opus|large|gpt-5|sonnet|qwen3\.|glm-4|32b|34b"
+        VIS = r"vision|vl\b|llava|gpt-4o|gpt-4\.|gpt-5|gemini|claude|pixtral"
+        def score(m):
+            mid = m["id"].lower()
+            s = 0
+            if _re.search(BIG, mid):
+                s += 50
+            if _re.search(COD, mid):
+                s += 30
+            if _re.search(VIS, mid):
+                s += 20
+            if m["kind"] == "local":
+                s += 15
+            if m["tier"] == "free":
+                s += 10
+            elif m["tier"] == "subscription":
+                s += 5
+            return s
+        ranked = sorted(models, key=score, reverse=True)
+        pick = ranked[0]
+        parts = []
+        mid = pick["id"].lower()
+        if _re.search(BIG, mid): parts.append("large model")
+        if _re.search(COD, mid): parts.append("code-optimized")
+        if _re.search(VIS, mid): parts.append("vision-capable")
+        if pick["kind"] == "local": parts.append("local (free, private)")
+        elif pick["tier"] == "free": parts.append("free tier")
+        elif pick["tier"] == "subscription": parts.append("subscription")
+        return {"ok": True, "pick": pick["id"],
+                "reason": ", ".join(parts) if parts else "best available",
+                "runners_up": [r["id"] for r in ranked[1:4]]}
 
     @router.get("/api/manage/core-settings")
     async def core_settings(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
@@ -1673,6 +2119,60 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  .mdbody code{ font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:12px;
    background:var(--tint-2); border:1px solid var(--sep); border-radius:4px; padding:1px 5px }
  .mdbody strong{ font-weight:600 }
+ /* Filter chips for model selectors */
+ .filter-chip{ padding:4px 10px; border-radius:99px; font:500 11px/1.2 inherit;
+   background:var(--tint); border:1px solid var(--sep); color:var(--dim);
+   cursor:pointer; transition: all .15s ease; letter-spacing:-0.003em }
+ .filter-chip:hover{ background:var(--tint-2); color:var(--txt); border-color:var(--sep-2) }
+ .filter-chip.active{ background:color-mix(in srgb,var(--accent) 14%,transparent);
+   color:var(--accent); border-color:color-mix(in srgb,var(--accent) 40%,transparent) }
+ .filter-chip.ai-pick-open{ background:linear-gradient(180deg,
+     color-mix(in srgb,var(--brass) 16%,transparent),
+     color-mix(in srgb,var(--brass) 6%,transparent));
+   border-color:color-mix(in srgb,var(--brass) 40%,transparent);
+   color:var(--brass); margin-left:auto }
+ .filter-chip.ai-pick-open:hover{ background:linear-gradient(180deg,
+     color-mix(in srgb,var(--brass) 24%,transparent),
+     color-mix(in srgb,var(--brass) 12%,transparent));
+   border-color:color-mix(in srgb,var(--brass) 60%,transparent) }
+ .filter-bar{ margin-top:6px }
+ /* AI pick floating dialog */
+ .ai-pick-dialog{ position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+   z-index:9999; width:420px; max-width:92vw; max-height:80vh; overflow-y:auto;
+   background:var(--surface); backdrop-filter:blur(24px) saturate(140%);
+   -webkit-backdrop-filter:blur(24px) saturate(140%);
+   border:1px solid var(--sep-2); border-radius:16px; padding:0;
+   box-shadow:0 24px 60px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.04) inset;
+   animation:aiPickIn .2s ease-out }
+ @keyframes aiPickIn{ from{opacity:0;transform:translate(-50%,-50%) scale(0.95)} to{opacity:1;transform:translate(-50%,-50%) scale(1)} }
+ .ai-pick-dialog .apd-header{ padding:16px 20px 12px; border-bottom:1px solid var(--sep);
+   display:flex; align-items:center; justify-content:space-between }
+ .ai-pick-dialog .apd-title{ font:600 15px/1.2 inherit; letter-spacing:-0.01em }
+ .ai-pick-dialog .apd-close{ background:none; border:none; color:var(--dim); font-size:18px;
+   cursor:pointer; padding:4px 8px; border-radius:6px; line-height:1 }
+ .ai-pick-dialog .apd-close:hover{ color:var(--txt); background:var(--tint-2) }
+ .ai-pick-dialog .apd-body{ padding:16px 20px }
+ .ai-pick-dialog .apd-filters{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:16px }
+ .ai-pick-dialog .apd-go{ width:100%; padding:10px; border-radius:10px; font:600 14px/1.2 inherit;
+   background:linear-gradient(180deg, color-mix(in srgb,var(--brass) 22%,transparent),
+     color-mix(in srgb,var(--brass) 10%,transparent));
+   border:1px solid color-mix(in srgb,var(--brass) 50%,transparent);
+   color:var(--brass); cursor:pointer; transition:all .15s; letter-spacing:-0.005em }
+ .ai-pick-dialog .apd-go:hover{ background:linear-gradient(180deg,
+     color-mix(in srgb,var(--brass) 30%,transparent),
+     color-mix(in srgb,var(--brass) 16%,transparent));
+   border-color:color-mix(in srgb,var(--brass) 70%,transparent) }
+ .ai-pick-dialog .apd-go:disabled{ opacity:.5; cursor:default }
+ .ai-pick-dialog .apd-result{ margin-top:14px; padding:12px 14px; border-radius:10px;
+   background:color-mix(in srgb,var(--ok) 6%,transparent); border:1px solid color-mix(in srgb,var(--ok) 25%,transparent) }
+ .ai-pick-dialog .apd-pick-name{ font:600 14px/1.3 inherit; margin-bottom:4px }
+ .ai-pick-dialog .apd-pick-reason{ font-size:12px; color:var(--dim); line-height:1.4 }
+ .ai-pick-dialog .apd-runners{ margin-top:10px; font-size:12px; color:var(--dim) }
+ .ai-pick-dialog .apd-runner-item{ padding:6px 10px; border-radius:8px; background:var(--tint);
+   border:1px solid var(--sep); margin-top:4px; cursor:pointer; transition:background .12s }
+ .ai-pick-dialog .apd-runner-item:hover{ background:var(--tint-2) }
+ .ai-pick-overlay{ position:fixed; inset:0; z-index:9998; background:rgba(0,0,0,0.4);
+   animation:fadeIn .15s ease }
  /* iOS-style toggle switch */
  .toggle{ position:relative; display:inline-block; width:44px; min-width:44px; height:26px; flex-shrink:0 }
  .toggle input{ opacity:0; width:0; height:0; position:absolute }
@@ -1763,6 +2263,7 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div class="tab" data-t="code">Vibe-code</div>
  <div class="tab" data-t="selfcoder">Self-coder</div>
  <div class="tab" data-t="forge">New plugin</div>
+ <div class="tab" data-t="github">GitHub</div>
  <div class="tab" data-t="settings">Settings</div>
 </div>
 <div id="plugins" class="panel on"><div id="plugins-list" class="muted">Loading…</div></div>
@@ -1835,7 +2336,46 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="forge" class="panel"><div class="card">
   <b>New plugin — guided</b>
   <div class="sub">Describe what you want in plain language. The AI asks a couple of questions, then generates a small plugin for your app, verifies it loads, and leaves it as a <b>disabled draft</b> for you to review and enable. Plugins can add a tool the AI can call, a health check, an HTTP route, or a model source.</div>
-  <div id="forge-stage"></div>
+  <div id="forge-stage"></div></div>
+<div id="github" class="panel"><div class="card">
+  <div class="row" style="margin-bottom:12px"><b>GitHub</b><span id="gh-auth-status" class="muted" style="font-size:12px;margin-left:8px">…</span></div>
+  <div class="sub" style="margin-bottom:12px">Connect GitHub for git workflows — commit, push, create PRs all from Mentor.</div>
+
+  <div id="gh-auth-section" style="margin-bottom:16px; padding:12px; background:var(--tint); border-radius:9px; border:1px solid var(--sep)">
+    <div id="gh-logged-out" style="display:none">
+      <div style="margin-bottom:12px">Not logged into GitHub. Choose an authentication method:</div>
+      <div class="row" style="gap:8px; flex-wrap:wrap">
+        <button class="go" id="gh-device-btn" data-act="ghDeviceFlow" style="flex:1; min-width:140px">Login with GitHub</button>
+        <button id="gh-token-toggle" style="flex:1; min-width:140px">Use Personal Token</button>
+      </div>
+      <div id="gh-token-section" style="display:none; margin-top:12px">
+        <input type="password" id="gh-token-input" placeholder="Paste your GitHub personal access token"
+               style="width:100%; padding:8px 10px; background:var(--surface); border:1px solid var(--sep); border-radius:6px; color:var(--txt); margin-bottom:8px">
+        <button class="go" id="gh-token-validate" style="width:100%">Validate & Save Token</button>
+        <div id="gh-token-status" class="muted" style="font-size:12px; margin-top:6px"></div>
+      </div>
+    </div>
+
+    <div id="gh-logged-in" style="display:none">
+      <div style="margin-bottom:12px">
+        <div style="color:var(--ok); font-weight:500; margin-bottom:4px">✓ Authenticated as <span id="gh-username">…</span></div>
+        <div class="muted" style="font-size:12px">GitHub integration ready. Tools available in agent chat.</div>
+      </div>
+      <button class="danger" id="gh-logout-btn" style="width:100%">Disconnect GitHub</button>
+    </div>
+  </div>
+
+  <div class="sub" style="margin-bottom:8px">Available tools:</div>
+  <div style="font-size:12px; color:var(--dim); line-height:1.6">
+    <div>• <code class="mono">git_status</code> — show repo status</div>
+    <div>• <code class="mono">git_commit</code> — stage &amp; commit changes</div>
+    <div>• <code class="mono">git_push</code> — push to remote</div>
+    <div>• <code class="mono">git_branch_*</code> — manage branches</div>
+    <div>• <code class="mono">gh_pr_create</code> — create pull request</div>
+    <div>• <code class="mono">gh_pr_list</code> — list open PRs</div>
+  </div>
+</div></div>
+<div id="settings" class="panel"></div>
 </div></div>
 <div id="settings" class="panel"></div>
 <script nonce="{{CSP_NONCE}}">
@@ -2286,6 +2826,109 @@ async function loadPlugins(){
     el.appendChild(c);
   });
 }
+function openAiPickDialog(allModels,aiPickUrl,selectCtrl){
+  // Close any existing dialog
+  document.querySelectorAll('.ai-pick-overlay,.ai-pick-dialog').forEach(e=>e.remove());
+  const overlay=document.createElement('div');overlay.className='ai-pick-overlay';
+  const dlg=document.createElement('div');dlg.className='ai-pick-dialog';
+  const FILTERS=[
+    {key:'local',label:'Local',test:m=>m.kind==='local'},
+    {key:'free',label:'Free',test:m=>m.tier==='free'},
+    {key:'sub',label:'Subscription',test:m=>m.tier==='subscription'},
+    {key:'paid',label:'Paid',test:m=>m.tier==='paid'},
+    {key:'coder',label:'Coder',test:m=>m.coder},
+    {key:'vision',label:'Vision',test:m=>m.vision},
+  ];
+  const chosen=new Set();
+  const resultEl=document.createElement('div');resultEl.style.display='none';
+  function close(){overlay.remove();dlg.remove();}
+  overlay.onclick=close;
+  // Header
+  const hdr=document.createElement('div');hdr.className='apd-header';
+  hdr.innerHTML='<span class="apd-title">✦ AI Model Advisor</span>';
+  const closeBtn=document.createElement('button');closeBtn.className='apd-close';closeBtn.textContent='✕';
+  closeBtn.onclick=close;hdr.appendChild(closeBtn);
+  dlg.appendChild(hdr);
+  // Body
+  const body=document.createElement('div');body.className='apd-body';
+  const desc=document.createElement('div');
+  desc.style.cssText='font-size:13px;color:var(--dim);margin-bottom:12px;line-height:1.45';
+  desc.textContent='Select which categories to consider, then let AI find the best model. Leave all unchecked to search everything.';
+  body.appendChild(desc);
+  // Filter chips (multi-select)
+  const filtersWrap=document.createElement('div');filtersWrap.className='apd-filters';
+  FILTERS.forEach(f=>{
+    const cnt=allModels.filter(f.test).length;
+    const chip=document.createElement('button');chip.type='button';
+    chip.className='filter-chip';
+    chip.textContent=f.label+(cnt?' ('+cnt+')':'');
+    if(!cnt){chip.disabled=true;chip.style.opacity='.35';}
+    chip.onclick=()=>{
+      if(chosen.has(f.key)){chosen.delete(f.key);chip.classList.remove('active');}
+      else{chosen.add(f.key);chip.classList.add('active');}
+    };
+    filtersWrap.appendChild(chip);
+  });
+  body.appendChild(filtersWrap);
+  // Go button
+  const goBtn=document.createElement('button');goBtn.type='button';goBtn.className='apd-go';
+  goBtn.textContent='✦ Choose best AI';
+  goBtn.onclick=async()=>{
+    goBtn.disabled=true;goBtn.textContent='Analyzing models…';resultEl.style.display='none';
+    try{
+      // Filter models client-side, then send filtered IDs to backend
+      let pool=allModels;
+      if(chosen.size>0)pool=allModels.filter(m=>[...chosen].some(k=>FILTERS.find(f=>f.key===k).test(m)));
+      const r=await j(aiPickUrl,{method:'POST',
+        body:JSON.stringify({filter_ids:pool.map(m=>m.id)})});
+      if(r.ok&&r.pick){
+        resultEl.style.display='block';
+        resultEl.className='apd-result';
+        let html='<div class="apd-pick-name">'+esc(r.pick)+'</div>';
+        if(r.reason)html+='<div class="apd-pick-reason">'+esc(r.reason)+'</div>';
+        // Use button
+        html+='<button class="go" style="margin-top:10px;width:100%" data-pick="'+esc(r.pick)+'">Use this model</button>';
+        if(r.runners_up&&r.runners_up.length){
+          html+='<div class="apd-runners"><div style="margin-bottom:4px;font-weight:500">Runners-up:</div>';
+          r.runners_up.forEach(ru=>{html+='<div class="apd-runner-item" data-pick="'+esc(ru)+'">'+esc(ru)+'</div>';});
+          html+='</div>';
+        }
+        resultEl.innerHTML=html;
+        resultEl.querySelectorAll('[data-pick]').forEach(el=>{
+          el.onclick=()=>{
+            selectCtrl.value=el.dataset.pick;
+            selectCtrl.dispatchEvent(new Event('change'));
+            close();
+          };
+        });
+      } else {
+        resultEl.style.display='block';resultEl.className='apd-result';
+        resultEl.innerHTML='<div class="apd-pick-reason" style="color:var(--err)">'+esc(r.error||'No models available')+'</div>';
+      }
+    }catch(e){resultEl.style.display='block';resultEl.className='apd-result';
+      resultEl.innerHTML='<div class="apd-pick-reason" style="color:var(--err)">Failed: '+esc(e)+'</div>';}
+    finally{goBtn.disabled=false;goBtn.textContent='✦ Choose best AI';}
+  };
+  body.appendChild(goBtn);
+  body.appendChild(resultEl);
+  dlg.appendChild(body);
+  document.body.appendChild(overlay);
+  document.body.appendChild(dlg);
+  // Close on Escape
+  const onKey=e=>{if(e.key==='Escape'){close();document.removeEventListener('keydown',onKey);}};
+  document.addEventListener('keydown',onKey);
+}
+function _renderFilteredSelect(sel,models,filterFn,current){
+  const list=filterFn?models.filter(filterFn):models;
+  if(!list.length){sel.innerHTML='<option value="">(no models match this filter)</option>';return;}
+  const TIER_ICON={free:'○',subscription:'◑',paid:'●'};
+  const KIND_ICON={local:'⌂',cloud:'☁'};
+  sel.innerHTML='<option value="">— choose —</option>'+list.map(m=>{
+    const badge=(KIND_ICON[m.kind]||'')+(TIER_ICON[m.tier]||'');
+    const label=(badge?badge+' ':'')+m.id+(m.coder?' ★':'')+(m.vision?' 👁':'');
+    return `<option value="${m.id}" ${String(current)===String(m.id)?'selected':''}>${label}</option>`;
+  }).join('');
+}
 function settingRow(d, pluginName){
   const wrap=document.createElement('div');wrap.className='row';wrap.style.marginTop='4px';wrap.style.alignItems='center';
   const lab=document.createElement('label');lab.textContent=d.label||d.key;wrap.appendChild(lab);
@@ -2296,10 +2939,57 @@ function settingRow(d, pluginName){
       ['true','false'].forEach(o=>{const op=document.createElement('option');op.textContent=o;if(String(d.current)===String(o))op.selected=true;ctrl.appendChild(op);});
     } else if(d.suggest_url){
       ctrl.innerHTML='<option>(loading…)</option>';
+      let _allModels=[];
       fetch(d.suggest_url,{credentials:'same-origin'}).then(r=>r.json()).then(data=>{
-        const opts=data.models||data.repos||data.options||[];
-        if(!opts.length){ctrl.innerHTML='<option value="">(none available — check status)</option>';return;}
-        ctrl.innerHTML='<option value="">— choose —</option>'+opts.map(o=>`<option value="${o}" ${String(d.current)===String(o)?'selected':''}>${o}</option>`).join('');
+        if(data.filterable&&Array.isArray(data.models)){
+          _allModels=data.models;
+          _renderFilteredSelect(ctrl,_allModels,null,d.current);
+          // Filter chips (multi-select) + AI pick dialog trigger
+          const bar=document.createElement('div');bar.className='filter-bar';
+          bar.style.cssText='display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;width:100%';
+          const FILTERS=[
+            {key:'local',  label:'Local',   test:m=>m.kind==='local'},
+            {key:'free',   label:'Free',    test:m=>m.tier==='free'},
+            {key:'sub',    label:'Sub',     test:m=>m.tier==='subscription'},
+            {key:'paid',   label:'Paid',    test:m=>m.tier==='paid'},
+            {key:'coder',  label:'Coder ★', test:m=>m.coder},
+            {key:'vision', label:'Vision',  test:m=>m.vision},
+          ];
+          const activeFilters=new Set();
+          function applyFilters(){
+            let filtered=_allModels;
+            if(activeFilters.size>0){
+              filtered=_allModels.filter(m=>
+                [...activeFilters].some(k=>FILTERS.find(f=>f.key===k).test(m)));
+            }
+            _renderFilteredSelect(ctrl,filtered,null,ctrl.value);
+          }
+          FILTERS.forEach(f=>{
+            const cnt=_allModels.filter(f.test).length;
+            if(!cnt)return;
+            const chip=document.createElement('button');chip.type='button';
+            chip.textContent=f.label+' ('+cnt+')';
+            chip.className='filter-chip';
+            chip.onclick=()=>{
+              if(activeFilters.has(f.key)){activeFilters.delete(f.key);chip.classList.remove('active');}
+              else{activeFilters.add(f.key);chip.classList.add('active');}
+              applyFilters();
+            };
+            bar.appendChild(chip);
+          });
+          // AI pick dialog trigger
+          const aiBtn=document.createElement('button');aiBtn.type='button';
+          aiBtn.className='filter-chip ai-pick-open';
+          aiBtn.innerHTML='✦ AI pick';
+          aiBtn.title='Open AI model advisor';
+          aiBtn.onclick=()=>openAiPickDialog(_allModels,d.suggest_url+'/ai-pick',ctrl);
+          bar.appendChild(aiBtn);
+          setTimeout(()=>{if(wrap.parentElement)wrap.after(bar);},0);
+        } else {
+          const opts=data.models||data.repos||data.options||[];
+          if(!opts.length){ctrl.innerHTML='<option value="">(none available — check status)</option>';return;}
+          ctrl.innerHTML='<option value="">— choose —</option>'+opts.map(o=>`<option value="${o}" ${String(d.current)===String(o)?'selected':''}>${o}</option>`).join('');
+        }
       }).catch(()=>{ctrl.innerHTML='<option value="">(failed to load)</option>';});
     } else {
       (d.options||[]).forEach(o=>{const op=document.createElement('option');op.textContent=o;if(String(d.current)===String(o))op.selected=true;ctrl.appendChild(op);});
@@ -2328,8 +3018,8 @@ function settingRow(d, pluginName){
   helpBtn.className='help-btn'; helpBtn.title='Ask AI about this setting';
   helpBtn.textContent='?';
   helpBtn.addEventListener('click', async()=>{
-    let pop=wrap.querySelector('.help-pop');
-    if(pop){pop.remove();return;}
+    let pop=wrap.nextElementSibling;
+    if(pop && pop.classList.contains('help-pop')){pop.remove();return;}
     pop=document.createElement('div'); pop.className='help-pop';
     pop.innerHTML='<div class="muted" style="font-size:12px">AI is reading the docs…</div>';
     wrap.parentElement.insertBefore(pop, wrap.nextSibling);
@@ -2403,24 +3093,31 @@ async function runTrace(){
   }).join('')+'</div>';
 }
 async function runDiag(){
-  const el=$('#diag-out'); el.innerHTML='<div class="sub">running diagnostics…</div>';
+  const el=$('#diag-out'); el.innerHTML='<div class=”sub”>running diagnostics…</div>';
   let d; try{ d=await j('/api/cookbook/debug'); }
-  catch(e){ el.innerHTML='<div class="card"><span class="pill err">error</span> diagnostics failed</div>'; return; }
+  catch(e){ el.innerHTML='<div class=”card”><span class=”pill err”>error</span> diagnostics failed</div>'; return; }
   const c=d.counts||{}; el.innerHTML='';
+  // Load dismissed warnings from localStorage
+  const dismissed=new Set(JSON.parse(localStorage.getItem('ody-dismissed-warnings')||'[]'));
   // summary + bulk actions
   const head=document.createElement('div'); head.className='card';
-  head.innerHTML=`<div class="row"><span class="pill ${d.overall==='ok'?'ok':d.overall==='error'?'err':'warn'}">${d.overall}</span>`
-    +`<span class="grow"><b>${c.ok||0}</b> ok · <b>${c.warn||0}</b> warn · <b>${c.error||0}</b> err</span>`
-    +`<button class="go" id="diag-rerun">Re-run</button> <button class="fix" id="diag-fixall">Fix all safe issues</button></div>`
-    +`<div class="sub" style="margin-top:6px">“Fix all safe issues” auto-applies only reversible <span class="mono">setting</span> changes. Service starts, reindexing and plugin repairs stay one-click so you stay in control. Tap <b>?</b> on any issue for an AI explanation + fix steps.</div>`;
+  head.innerHTML=`<div class=”row”><span class=”pill ${d.overall==='ok'?'ok':d.overall==='error'?'err':'warn'}”>${d.overall}</span>`
+    +`<span class=”grow”><b>${c.ok||0}</b> ok · <b>${c.warn||0}</b> warn · <b>${c.error||0}</b> err</span>`
+    +`<button class=”go” id=”diag-rerun”>Re-run</button> <button class=”fix” id=”diag-fixall”>Fix all safe issues</button>`
+    +`${dismissed.size>0?` <button class=”muted” id=”diag-clear-dismissed” style=”border:none;padding:4px 8px;cursor:pointer”>Clear dismissed (${dismissed.size})</button>`:''}</div>`
+    +`<div class=”sub” style=”margin-top:6px”>”Fix all safe issues” auto-applies only reversible <span class=”mono”>setting</span> changes. “Dismiss” hides warnings you've acknowledged. Tap <b>?</b> on any issue for an AI explanation.</div>`;
   el.appendChild(head);
   Object.entries(d.groups||{}).forEach(([area,items])=>{
     const card=document.createElement('div');card.className='card';card.innerHTML=`<b>${area}</b>`;
-    items.forEach(r=>{const cls=r.status==='ok'?'ok':r.status==='error'?'err':'warn';
+    items.forEach(r=>{
+      const key=area+':'+r.name; if(dismissed.has(key))return; // Skip dismissed warnings
+      const cls=r.status==='ok'?'ok':r.status==='error'?'err':'warn';
       const row=document.createElement('div');row.className='row';
-      const fix=r.fix?`<button class="fix" data-fix='${JSON.stringify(r.fix)}'>${r.fix.label||'Fix'}</button>`:'';
-      const why=r.status!=='ok'?`<button class="help-btn" title="Ask AI what this means" data-why='${JSON.stringify({area:area,name:r.name,status:r.status,detail:r.detail||'',hint:r.hint||''})}'>?</button>`:'';
-      row.innerHTML=`<span class="pill ${cls}">${r.status}</span><span class="grow">${r.name}: ${r.detail||''}${r.hint?` <span class="muted">→ ${r.hint}</span>`:''}</span>${why}${fix}`;
+      const fix=r.fix?`<button class=”fix” data-fix='${JSON.stringify(r.fix)}'>${r.fix.label||'Fix'}</button>`:'';
+      const why=r.status!=='ok'?`<button class=”help-btn” title=”Ask AI” data-why='${JSON.stringify({area:area,name:r.name,status:r.status,detail:r.detail||'',hint:r.hint||''})}'>?</button>`:'';
+      const dismiss=r.status!=='ok'?`<button class=”muted” title=”Dismiss this warning” style=”border:none;padding:4px 6px;cursor:pointer;font-size:12px”>✕</button>`:'';
+      row.innerHTML=`<span class=”pill ${cls}”>${r.status}</span><span class=”grow”>${r.name}: ${r.detail||''}${r.hint?` <span class=”muted”>→ ${r.hint}</span>`:''}</span>${why}${dismiss}${fix}`;
+      if(dismiss){row.querySelector('button.muted').onclick=()=>{dismissed.add(key);localStorage.setItem('ody-dismissed-warnings',JSON.stringify([...dismissed]));row.style.opacity='0.5';row.style.textDecoration='line-through';};}
       card.appendChild(row);});
     el.appendChild(card);
   });
@@ -2439,6 +3136,7 @@ async function runDiag(){
   }));
   // bulk actions
   const rerun=document.getElementById('diag-rerun'); if(rerun)rerun.onclick=runDiag;
+  const cd=document.getElementById('diag-clear-dismissed'); if(cd)cd.onclick=()=>{if(confirm('Restore all dismissed warnings?')){localStorage.removeItem('ody-dismissed-warnings');runDiag();}};
   const fa=document.getElementById('diag-fixall'); if(fa)fa.onclick=async()=>{
     const safe=[]; Object.values(d.groups||{}).forEach(items=>items.forEach(r=>{if(r.fix&&r.fix.kind==='setting')safe.push(r.fix);}));
     if(!safe.length){alert('No auto-fixable setting issues right now.');return;}
@@ -2648,8 +3346,91 @@ async function forgeEnable(e){
     msg.textContent=r.detail||(r.ok?'enabled':'failed'); if(r.ok) loadPlugins();
   }catch(e2){ msg.textContent='enable failed: '+e2; }
 }
+// ──────────────────────────────────────────────────────────────────────────
+// GITHUB INTEGRATION
+// ──────────────────────────────────────────────────────────────────────────
+async function ghDeviceFlow(){
+  // For now, just show the token input
+  const section=$('#gh-token-section');
+  section.style.display='block';
+  $('#gh-auth-status').textContent='Enter your personal access token below';
+}
+async function ghTokenValidate(){
+  const inp=$('#gh-token-input');
+  const token=(inp.value||'').trim();
+  const status=$('#gh-token-status');
+  if(!token){status.textContent='❌ Token is empty';return;}
+  status.textContent='Validating…';
+  try{
+    const r=await j('/api/manage/github/validate-token',{method:'POST',body:JSON.stringify({token:token})});
+    if(r.ok){
+      status.textContent='✓ Token saved! Reload the page to complete.';
+      status.style.color='var(--ok)';
+      inp.value='';
+      $('#gh-token-section').style.display='none';
+      await loadGitHubStatus();
+    }else{
+      status.textContent='❌ '+r.detail;
+      status.style.color='var(--err)';
+    }
+  }catch(e){
+    status.textContent='❌ Error: '+e;
+    status.style.color='var(--err)';
+  }
+}
+async function ghLogout(){
+  if(!confirm('Disconnect GitHub? You can always log back in.'))return;
+  try{
+    await j('/api/manage/setting',{method:'POST',body:JSON.stringify({key:'github_token',value:''})});
+    await loadGitHubStatus();
+  }catch(e){
+    alert('Logout failed: '+e);
+  }
+}
+async function loadGitHubStatus(){
+  try{
+    const r=await j('/api/manage/github/auth-status');
+    const loggedOut=$('#gh-logged-out');
+    const loggedIn=$('#gh-logged-in');
+    const status=$('#gh-auth-status');
+    if(r.authenticated){
+      loggedOut.style.display='none';
+      loggedIn.style.display='block';
+      $('#gh-username').textContent=r.username||'user';
+      status.textContent='✓ Connected';
+      status.style.color='var(--ok)';
+    }else{
+      loggedOut.style.display='block';
+      loggedIn.style.display='none';
+      status.textContent='Not connected';
+      status.style.color='var(--dim)';
+    }
+  }catch(e){
+    console.error('Failed to load GitHub status:',e);
+    $('#gh-auth-status').textContent='Status error';
+  }
+}
+// GitHub UI event listeners
+document.addEventListener('DOMContentLoaded',()=>{
+  const tokenToggle=$('#gh-token-toggle');
+  if(tokenToggle){
+    tokenToggle.addEventListener('click',()=>{
+      const section=$('#gh-token-section');
+      section.style.display=section.style.display==='none'?'block':'none';
+    });
+  }
+  const validateBtn=$('#gh-token-validate');
+  if(validateBtn){
+    validateBtn.addEventListener('click',ghTokenValidate);
+  }
+  const logoutBtn=$('#gh-logout-btn');
+  if(logoutBtn){
+    logoutBtn.addEventListener('click',ghLogout);
+  }
+});
 // Kick off the loaders for whichever tab is active on first paint, so the user
 // doesn't have to click the already-active tab to see its content.
+loadGitHubStatus();
 loadPlugins();
 </script>
 <script src="/static/js/concierge.js"></script>
