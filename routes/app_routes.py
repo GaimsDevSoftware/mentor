@@ -470,7 +470,23 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
     <option value="speed">Speed: fast → slow</option>
   </select>
 </div>
-<div class="card"><div id="fits" class="muted">ranking models against your hardware…</div></div>
+<div id="fits-filters" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:8px 0 4px;font-size:12px;color:var(--txt)">
+  <label style="display:flex;align-items:center;gap:5px" title="Hide models that need more VRAM than this">Max VRAM
+    <input type="range" id="fits-vram" min="1" max="24" step="1" value="21" style="width:120px;vertical-align:middle">
+    <output id="fits-vram-out" style="min-width:42px">21 GB</output></label>
+  <select id="fits-quant" style="font:inherit;font-size:11px;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:7px;padding:4px 8px;cursor:pointer">
+    <option value="">Quant: all</option><option value="awq">AWQ</option><option value="q4">Q4</option><option value="q5">Q5</option><option value="q6">Q6</option><option value="q8">Q8</option><option value="fp8">FP8</option><option value="fp4">FP4</option><option value="bf16">BF16/FP16</option></select>
+  <select id="fits-uc" style="font:inherit;font-size:11px;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:7px;padding:4px 8px;cursor:pointer">
+    <option value="">Use: all</option><option value="coding">coder</option><option value="reasoning">reasoning</option><option value="multimodal">vision</option><option value="general">chat/general</option></select>
+  <label style="display:flex;align-items:center;gap:5px" title="Hide models that only run by spilling to system RAM (slow)"><input type="checkbox" id="fits-fitonly" checked> Fits on GPU only</label>
+  <span style="flex:1"></span>
+  <label style="display:flex;align-items:center;gap:5px">Per page
+    <select id="fits-pagesize" style="font:inherit;font-size:11px;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:7px;padding:4px 8px;cursor:pointer">
+      <option value="12">12</option><option value="24" selected>24</option><option value="50">50</option><option value="0">All</option></select></label>
+</div>
+<div class="card"><div id="fits" class="muted">ranking models against your hardware…</div>
+  <div id="fits-pager" style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px;font-size:12px"></div>
+</div>
 
 <div class="sec-title">Downloaded &amp; ready <button class="help-btn" data-topic="The 'Downloaded & ready' list — models already in the local cache (Hugging Face / GGUF) that are ready to serve without downloading">?</button></div>
 <div class="card"><div id="cached" class="muted">scanning local model cache…</div></div>
@@ -656,46 +672,103 @@ const _sizeOf=m=>+(m.size_gb||m.required_gb||m.params_b||0);
 const _ctxOf=m=>+(m.context_length||m.context||0);
 const _spdOf=m=>+(m.speed_tps||m.tps||0);
 const _scoreOf=m=>+(m.score||0);
-function renderFits(){
-  const el=$('#fits');
-  const by=($('#fits-sort')&&$('#fits-sort').value)||'score';
+let _fitsPage=1;
+function _fitsEffV(){ return HW_VRAM>0 ? Math.max(0, +(HW_VRAM-VRAM_RESERVE).toFixed(1)) : 0; }
+// Apply every active filter to the full FITS list and return the matches.
+function _fitsFiltered(){
   let ms=FITS.slice();
-  // Free-text filter — match the model id/name anywhere, case-insensitive.
-  // Filter the FULL list BEFORE sort+slice so a search finds matches beyond
-  // the top-24 the list normally caps to.
   const q=(($('#fits-search')&&$('#fits-search').value)||'').trim().toLowerCase();
   if(q) ms=ms.filter(m=>String(m.model||m.name||'').toLowerCase().includes(q));
+  // VRAM cap (slider) — hide models needing more than the chosen budget.
+  const vramEl=$('#fits-vram'); const cap=vramEl?+vramEl.value:0;
+  if(cap>0) ms=ms.filter(m=>{const v=_vramOf(m); return !v || v<=cap;});
+  // Quant — substring match against the model's quant tag (Q4_K_M, AWQ-4bit…).
+  const quant=(($('#fits-quant')&&$('#fits-quant').value)||'').toLowerCase();
+  if(quant) ms=ms.filter(m=>String(m.quant||'').toLowerCase().includes(quant)
+    || (quant==='bf16' && /fp16|bf16/.test(String(m.quant||'').toLowerCase())));
+  // Use-case — match the ranker's inferred specialization.
+  const uc=(($('#fits-uc')&&$('#fits-uc').value)||'');
+  if(uc) ms=ms.filter(m=>{const u=String(m.use_case||'');return u===uc||(uc==='general'&&(u==='chat'||u===''));});
+  // Fits-on-GPU-only (default): drop models that would spill to system RAM.
+  // Exclude offload/no-fit run-modes EXPLICITLY (not just by VRAM number), then
+  // also require the VRAM fit within headroom when we know the budget.
+  const fitOnly=$('#fits-fitonly')?$('#fits-fitonly').checked:true;
+  if(fitOnly){ const effV=_fitsEffV();
+    ms=ms.filter(m=>{
+      const rm=(m.run_mode||'gpu');
+      if(rm==='cpu_offload'||rm==='no_fit') return false;
+      const v=_vramOf(m);
+      return effV>0 ? (v>0 && v<=effV) : (m.fit!==false);
+    }); }
+  // Sort
+  const by=($('#fits-sort')&&$('#fits-sort').value)||'score';
   if(by==='vram') ms.sort((a,b)=>_vramOf(a)-_vramOf(b));
   else if(by==='size') ms.sort((a,b)=>_sizeOf(a)-_sizeOf(b));
   else if(by==='ctx') ms.sort((a,b)=>_ctxOf(b)-_ctxOf(a));
   else if(by==='speed') ms.sort((a,b)=>_spdOf(b)-_spdOf(a));
   else ms.sort((a,b)=>_scoreOf(b)-_scoreOf(a));
-  ms=ms.slice(0,24);
-  const effV = HW_VRAM>0 ? Math.max(0, +(HW_VRAM-VRAM_RESERVE).toFixed(1)) : 0;
+  return ms;
+}
+function renderFits(){
+  const el=$('#fits'); const pager=$('#fits-pager'); if(!el) return;
+  const all=_fitsFiltered();
+  const effV=_fitsEffV();
   const banner = HW_VRAM>0
-    ? `<div class="muted" style="font-size:12px;margin-bottom:8px">Reserving <b>~${VRAM_RESERVE} GB VRAM</b> + <b>~${RAM_RESERVE} GB RAM</b> for your desktop + browser → recommending models up to <b>~${effV} GB</b> (of ${HW_VRAM} GB).</div>`
+    ? `<div class="muted" style="font-size:12px;margin-bottom:8px">Reserving <b>~${VRAM_RESERVE} GB VRAM</b> + <b>~${RAM_RESERVE} GB RAM</b> for your desktop + browser → headroom ~<b>${effV} GB</b> of ${HW_VRAM} GB.</div>`
     : '';
-  if(!ms.length){ el.innerHTML=banner+'<span class="muted" style="font-size:13px">'+(q?('No models match “'+esc(q)+'” — clear the search to see all that fit.'):'Nothing fits once desktop+browser headroom is reserved — try a smaller/quantized model, or free VRAM.')+'</span>'; return; }
-  el.innerHTML=banner+ms.map(m=>{
+  if(!all.length){
+    const anyFilter=!!(($('#fits-search')&&$('#fits-search').value)||'').trim();
+    el.innerHTML=banner+'<span class="muted" style="font-size:13px">'+(anyFilter?'No models match the current search/filters — clear them to see more.':'Nothing matches the current filters — widen the VRAM cap, change quant, or uncheck "Fits on GPU only".')+'</span>';
+    if(pager) pager.innerHTML=''; return;
+  }
+  // Paginate
+  let ps=parseInt(($('#fits-pagesize')&&$('#fits-pagesize').value)||'24',10); if(isNaN(ps)) ps=24;
+  const total=all.length;
+  const pages = ps>0 ? Math.max(1, Math.ceil(total/ps)) : 1;
+  if(_fitsPage>pages) _fitsPage=pages; if(_fitsPage<1) _fitsPage=1;
+  const start = ps>0 ? (_fitsPage-1)*ps : 0;
+  const slice = ps>0 ? all.slice(start, start+ps) : all;
+  el.innerHTML=banner+slice.map(m=>{
     const name=m.model||m.name||'?'; const v=_vramOf(m); const spd=_spdOf(m);
     return `<div class="item"><span class="badge fit">fits</span>`
       +`<span class="grow"><div class="name">${esc(name)}</div>`
-      +`<div class="meta">${v?`~${esc(v)} GB VRAM`:''}${_ctxOf(m)?` · ${esc(_ctxOf(m))} ctx`:''}${m.size_gb?` · ${esc(m.size_gb)} GB`:''}${spd?` · ~${esc(Math.round(spd))} tok/s`:''}</div></span>`
-      +`${m.score!=null?`<span class="badge" title="Fit score">${Math.round(_scoreOf(m))}</span>`:''}`
+      +`<div class="meta">${v?`~${esc(v)} GB VRAM`:''}${m.quant?` · ${esc(m.quant)}`:''}${_ctxOf(m)?` · ${esc(_ctxOf(m))} ctx`:''}${spd?` · ~${esc(Math.round(spd))} tok/s`:''}</div></span>`
+      +`${m.score!=null?`<span class="badge" title="Fit score 0–100: quality 45% · speed 30% · VRAM fit 15% · context 10%">${Math.round(_scoreOf(m))}</span>`:''}`
       +`${m.name?`<button class="btn mini" data-dl="${esc(m.name)}">Download</button>`:''}</div>`;
   }).join('');
+  // Pager
+  if(pager){
+    if(ps<=0||pages<=1){ pager.innerHTML=`<span class="muted" style="font-size:11px">${total} model${total===1?'':'s'}</span>`; }
+    else {
+      const from=start+1, to=Math.min(start+ps,total);
+      pager.innerHTML=`<button class="btn mini" data-pg="prev" ${_fitsPage<=1?'disabled':''}>‹ Prev</button>`
+        +`<span class="muted" style="font-size:11px">${from}–${to} of ${total} · page ${_fitsPage}/${pages}</span>`
+        +`<button class="btn mini" data-pg="next" ${_fitsPage>=pages?'disabled':''}>Next ›</button>`;
+    }
+  }
 }
+// Filter/sort/search/page-size changes reset to page 1; prev/next just move.
+function _fitsReset(){ _fitsPage=1; renderFits(); }
 function loadFits(){
-  const effV = HW_VRAM>0 ? Math.max(0, +(HW_VRAM-VRAM_RESERVE).toFixed(1)) : 0;
-  j('/api/hwfit/models?limit=80').then(d=>{
-    let ms=(d&&d.models)||[];
-    if(HW_VRAM>0) ms=ms.filter(m=>{const v=_vramOf(m);return v>0&&v<=effV;});
-    else ms=ms.filter(m=>m.fit);
-    FITS=ms; renderFits();
+  // Fetch a wide pool (250) and keep ALL of it — the client-side filters +
+  // pagination decide what's shown, so the VRAM slider / fits-only toggle can
+  // reveal more than the default headroom.
+  j('/api/hwfit/models?limit=250').then(d=>{
+    FITS=(d&&d.models)||[];
+    // Default the VRAM cap slider to this machine's headroom.
+    const vr=$('#fits-vram');
+    if(vr && HW_VRAM>0){ vr.max=Math.ceil(HW_VRAM); vr.value=Math.round(_fitsEffV()); const o=$('#fits-vram-out'); if(o)o.textContent=vr.value+' GB'; }
+    renderFits();
   }).catch(e=>{ $('#fits').innerHTML = e===401?adminNote:'<span class="muted">Could not rank models.</span>'; });
 }
-(function(){const s=$('#fits-sort'); if(s) s.addEventListener('change', renderFits);})();
-(function(){const s=$('#fits-search'); if(s) s.addEventListener('input', renderFits);})();
+(function(){const s=$('#fits-sort'); if(s) s.addEventListener('change', _fitsReset);})();
+(function(){const s=$('#fits-search'); if(s) s.addEventListener('input', _fitsReset);})();
+(function(){const s=$('#fits-quant'); if(s) s.addEventListener('change', _fitsReset);})();
+(function(){const s=$('#fits-uc'); if(s) s.addEventListener('change', _fitsReset);})();
+(function(){const s=$('#fits-fitonly'); if(s) s.addEventListener('change', _fitsReset);})();
+(function(){const s=$('#fits-pagesize'); if(s) s.addEventListener('change', _fitsReset);})();
+(function(){const s=$('#fits-vram'); if(s) s.addEventListener('input',()=>{const o=$('#fits-vram-out'); if(o)o.textContent=s.value+' GB'; _fitsReset();});})();
+(function(){const p=$('#fits-pager'); if(p) p.addEventListener('click',e=>{const b=e.target.closest('[data-pg]'); if(!b)return; _fitsPage+=(b.dataset.pg==='next'?1:-1); renderFits();});})();
 
 // 5) Downloaded & ready
 j('/api/model/cached').then(d=>{
