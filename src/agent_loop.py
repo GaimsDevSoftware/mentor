@@ -1748,6 +1748,10 @@ async def stream_agent_loop(
     _cont_used = 0
     _CONT_MAX = int(get_setting("agent_max_continuations", 3) or 3)
     _continue_on_trunc = bool(get_setting("agent_continue_on_truncation", True))
+    # One-shot recovery for a COMPLETELY empty round (no content, no tool call,
+    # no reasoning). Rare with weaker models in long agentic contexts; a single
+    # nudge usually recovers instead of dead-ending on "empty response".
+    _empty_retry_used = False
 
     # Track the plan-render the model already saw, so we only re-inject when it
     # actually changes between rounds (cheap; no dup bloat).
@@ -2170,6 +2174,24 @@ async def stream_agent_loop(
                     # never re-verify an unchanged state in a loop.
                     _effectful_used = False
                     continue
+            # ── Empty-round recovery (mechanism 3b) ───────────────────
+            # Reaching here with NO visible text, NO tool call this round, and
+            # NO reasoning means the model returned a completely empty turn.
+            # That used to dead-end immediately on "The model returned an empty
+            # response" — but a single nudge usually recovers (intermittent on
+            # weaker models deep in an agentic context). Retry once, bounded.
+            if (not _THINK_RE.sub("", cleaned_round).strip()
+                    and not round_reasoning.strip()
+                    and not _force_answer
+                    and not _empty_retry_used):
+                _empty_retry_used = True
+                logger.info("[agent] round %d returned empty — one retry with a nudge", round_num)
+                messages.append({"role": "assistant", "content": ""})
+                messages.append({"role": "user", "content": (
+                    "Your last response was empty. Continue the task with a tool "
+                    "call, or — if the task is already complete — reply with a "
+                    "one-line summary of what you changed.")})
+                continue
             break  # no tools — done
 
         # ── Loop-breaker (Terminus-style stall detector) ──────────────
