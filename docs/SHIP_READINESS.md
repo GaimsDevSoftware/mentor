@@ -20,7 +20,7 @@ reading code.
 - [x] No uncaught console errors on the chat page — cleared buffer, ran a fresh new-chat turn (reasoning model), 0 errors
 - [~] Full Python test suite: 1778 pass / 31 fail / 83 skip. Triaged — the 31 are PRE-EXISTING failures in unrelated subsystems (email, gallery, search, documents, context-compaction, webhook) in this heavily-WIP tree, plus a few test-isolation artifacts (pass when run alone). **None are caused by the queue/ship work**; all my own tests pass. → see "Blocked / needs decision".
 - [~] Graceful when a provider is down / key invalid — endpoint-health tracker + 2-pass resolver failover added earlier; not re-verified live this run.
-- [ ] Graceful first-run with NO models configured — needs a fresh/empty-DB instance to verify (see Blocked).
+- [~] Graceful first-run with NO models configured — code path verified graceful: with no teacher model the setup assistant returns `need_model` and the UI shows a friendly "pick a model in the card above — Groq (free, ~1 min)" + scrolls to the picker (no crash, no dead-end). Full fresh-DB browser walk still pending.
 
 ## B. Security
 - [x] Auth required by default — `AUTH_ENABLED` defaults `true`; middleware gates all routes except a tight allowlist (auth/health/version/login/static)
@@ -37,7 +37,7 @@ reading code.
 - [x] Settings AI-guide explains each setting (leakage bug fixed; verified live)
 - [x] Atlas setup guide is decisive + concise + offers starter suggestions (see G) — source-level review done; live test pending browser
 - [~] Path to first chat / setup wizard — code present; source-reviewed for cohesion/dead-ends (see notes below); not walked end-to-end in a browser (needs fresh/logged-out state)
-- [ ] No confusing dead-ends on core tabs — only chat audited live this run
+- [~] No confusing dead-ends on core tabs — chat audited live earlier; setup/onboarding flow source-reviewed this run (need_model handled, action loop maps every action to a real endpoint, `done` is server-gated against premature completion, and both success-screen links `/` + `/app/office` resolve). Other tabs not swept live.
 - [?] Default model tier — recommendation below (acting as guidance; no key shipped)
 
 ## D. Packaging & install
