@@ -86,18 +86,28 @@ async def recommend_roles(scope: Optional[str] = None,
     # Filter by the user's preference (which tiers they want considered) — so the
     # AI only sees candidates that match what the user actually wants to pay for.
     tier_set = {t.lower() for t in (tiers or []) if t}
-    if tier_set:
-        pool = [m for m in pool if m.get("tier") in tier_set]
+    tier_pool = [m for m in pool if (not tier_set or m.get("tier") in tier_set)]
     # Ready-only = the candidate is already usable right now (local models that are
     # cached/served, or cloud endpoints that are signed in / have a key). Providers
     # mark their entries with `ready=True` when applicable; default True for safety
     # so providers without the field still surface.
-    if ready_only:
-        pool = [m for m in pool if m.get("ready", True)]
+    pool = [m for m in tier_pool if (not ready_only or m.get("ready", True))]
     if not pool:
-        return {"ok": False, "scope": scope,
-                "detail": ("no candidate models match your filters — try widening the tier choice, "
-                           "turn off 'ready only', or connect a source first.")}
+        # Context-aware guidance — never tell the user to "turn off ready only"
+        # when it's already off, and point local-only users at the right action.
+        hints = []
+        if ready_only and tier_pool:
+            # There ARE tier matches, but all need setup → the toggle is the fix.
+            hints.append("turn off 'Only models that work right now' — the matches need setup first")
+        elif tier_set == {"local"}:
+            hints.append("download a local model from the 'Fits this machine' list below")
+        elif tier_set and "local" not in tier_set:
+            hints.append("connect a cloud source for that tier (sign in / add a key)")
+        if not hints or len(tier_set) <= 1:
+            hints.append("widen the tier choice (add another tier)")
+        detail = "No candidate models match your filters — " + ", or ".join(dict.fromkeys(hints)) + "."
+        return {"ok": False, "scope": scope, "detail": detail,
+                "counts": {"local": n_local, "remote": n_remote, "tier_matched": len(tier_pool)}}
 
     spec = (_get("improve_teacher_model", "") or _get("teacher_model", "") or "").strip()
     if not spec:
