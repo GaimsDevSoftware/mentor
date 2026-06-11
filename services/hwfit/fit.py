@@ -668,3 +668,160 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     results.sort(key=sort_fn, reverse=True)
     results = results[:limit]
     return results
+
+
+# ── Concurrent (co-resident) model planning ──────────────────────────────────
+# A single big GPU can host one strong INTERACTIVE model while a second,
+# complementary model runs entirely in system RAM on the CPU (or both fit on the
+# GPU when small). pair_fit() enumerates and ranks such 2-model combos so the
+# user can run several models AT ONCE instead of the slow one-at-a-time swap.
+
+_PAIR_SKIP_USE_CASES = {"tts", "stt", "image_gen"}
+
+
+def _pair_complement(uc_a, uc_b):
+    """0..1 — how well two model *types* complement each other in one setup.
+    Same role = redundant (low); a talker + a coder, or an LLM + embeddings/
+    vision, is the sweet spot (high)."""
+    a, b = uc_a or "general", uc_b or "general"
+    if a == b:
+        return 0.30
+    pair = frozenset((a, b))
+    if "embedding" in pair:
+        return 1.0
+    strong = (
+        frozenset(("coding", "chat")), frozenset(("coding", "general")),
+        frozenset(("coding", "reasoning")),
+    )
+    if pair in strong:
+        return 1.0
+    if "multimodal" in pair:
+        return 0.9
+    if pair in (frozenset(("chat", "reasoning")), frozenset(("general", "reasoning"))):
+        return 0.85
+    return 0.70
+
+
+def _combo_why(a, b, pb, prim_tps, sec_tps):
+    role = {"coding": "coding", "chat": "chat", "general": "everyday chat",
+            "reasoning": "reasoning/planning", "multimodal": "vision",
+            "embedding": "RAG/embeddings"}
+    ra = role.get(a["use_case"], a["use_case"])
+    rb = role.get(b["use_case"], b["use_case"])
+    if pb == "gpu":
+        return (f"Both fit on the GPU at once — {a['name']} for {ra} (~{round(prim_tps)} tok/s) "
+                f"and {b['name']} for {rb} (~{round(sec_tps)} tok/s). No swap between them.")
+    return (f"{a['name']} on the GPU for {ra} (~{round(prim_tps)} tok/s, stays fast) + "
+            f"{b['name']} in system RAM for {rb} (~{round(sec_tps)} tok/s, off the GPU). "
+            f"Two live models with no swap.")
+
+
+def _score_combo(a, pa, b, pb, vram_budget, ram_budget):
+    prim_tps = a["gpu_tps"]
+    sec_tps = b["gpu_tps"] if pb == "gpu" else b["cpu_tps"]
+    speed_term = _speed_score(prim_tps, "general")          # interactive model must be fast
+    diversity = _pair_complement(a["use_case"], b["use_case"]) * 100.0
+    combo = (0.42 * a["quality"] + 0.24 * b["quality"]
+             + 0.16 * speed_term + 0.18 * diversity)
+    vram_used = a["req_gb"] + (b["req_gb"] if pb == "gpu" else 0)
+    ram_used = b["req_gb"] if pb == "cpu" else 0
+    vram_free = vram_budget - vram_used
+    if vram_free < 0.5:
+        combo -= 12          # too tight — OOM risk once KV caches grow under load
+    elif vram_free < 1.5:
+        combo -= 4
+    if pb == "cpu" and sec_tps < 4:
+        combo -= 6           # secondary so slow on CPU it's barely usable
+    keys = ("name", "use_case", "params_b", "quant", "req_gb", "ctx")
+    return {
+        "primary": {**{k: a[k] for k in keys}, "placement": "gpu", "tps": round(prim_tps, 1)},
+        "secondary": {**{k: b[k] for k in keys}, "placement": pb, "tps": round(sec_tps, 1)},
+        "placement": "both on GPU" if pb == "gpu" else "GPU + CPU/RAM",
+        "vram_used_gb": round(vram_used, 1),
+        "ram_used_gb": round(ram_used, 1),
+        "combo_score": round(combo, 1),
+        "why": _combo_why(a, b, pb, prim_tps, sec_tps),
+    }
+
+
+def pair_fit(system, limit=8, pool=28):
+    """Rank 2-model combos that can run SIMULTANEOUSLY on `system` (see module
+    note). Returns {has_gpu, vram_gb, ram_gb, *_budget_gb, combos:[...]} sorted
+    best-first. Each combo names a GPU primary + a GPU-or-CPU secondary with
+    quant, memory, estimated tok/s, a complementarity-aware score and a plain
+    rationale — so the app surfaces *which two models and types* run best at once."""
+    has_gpu = bool(system.get("has_gpu")) and (system.get("gpu_vram_gb") or 0) > 0
+    vram = float(system.get("gpu_vram_gb") or 0)
+    ram = float(system.get("available_ram_gb") or 0)
+    vram_budget = max(0.0, vram - 1.0)      # runtime/fragmentation headroom
+    ram_budget = max(0.0, ram - 2.0)        # leave room for the OS + the app
+
+    cands = []
+    for m in get_models():
+        uc = infer_use_case(m)
+        if uc in _PAIR_SKIP_USE_CASES:
+            continue
+        a = analyze_model(m, system)
+        if not a or a.get("run_mode") == "no_fit":
+            continue
+        req = a.get("required_gb") or 0
+        if req <= 0:
+            continue
+        # CPU inference is bandwidth-bound; the raw estimate can over-read for
+        # tiny-active MoE, so cap the DISPLAYED secondary speed at a realistic
+        # consumer-DDR ceiling (it's a rough number either way).
+        cpu_tps = min(_estimate_speed(m, a["quant"], "cpu_only", system), 50.0)
+        cands.append({
+            "name": a["name"], "use_case": a["use_case"], "params_b": a["params_b"],
+            "is_moe": a["is_moe"], "quant": a["quant"], "req_gb": round(req, 2),
+            "ctx": a["context"], "quality": a["scores"]["quality"],
+            "gpu_tps": a["speed_tps"], "cpu_tps": round(cpu_tps, 1),
+            "fits_gpu": req <= vram_budget, "fits_ram": req <= ram_budget,
+        })
+    by_q = sorted(cands, key=lambda c: c["quality"], reverse=True)
+    # Two size-diverse pools: top-quality GPU PRIMARIES, and SECONDARIES that can
+    # actually co-reside (fit system RAM for the CPU slot, or are small enough to
+    # share the GPU). Capping by quality alone skews the pool to big models that
+    # can never pair — so we pull the small companions explicitly.
+    sec_cap = max(2.0, vram_budget * 0.5)
+    primaries = [c for c in by_q if c["fits_gpu"]][:pool]
+    secondaries = [c for c in by_q if c["fits_ram"] or c["req_gb"] <= sec_cap][:pool]
+    bset = {c["name"]: c for c in primaries}
+    for c in secondaries:
+        bset.setdefault(c["name"], c)
+    bcands = list(bset.values())
+
+    combos, seen = [], set()
+    for A in primaries:
+        for B in bcands:
+            if B["name"] == A["name"]:
+                continue
+            # Both resident on the GPU (order-independent → dedupe unordered).
+            if B["fits_gpu"] and (A["req_gb"] + B["req_gb"] <= vram_budget):
+                key = ("gpu",) + tuple(sorted((A["name"], B["name"])))
+                if key not in seen:
+                    seen.add(key)
+                    combos.append(_score_combo(A, "gpu", B, "gpu", vram_budget, ram_budget))
+            # A on GPU, B spilled to system RAM (order matters — different primary).
+            if B["fits_ram"]:
+                key = ("split", A["name"], B["name"])
+                if key not in seen:
+                    seen.add(key)
+                    combos.append(_score_combo(A, "gpu", B, "cpu", vram_budget, ram_budget))
+    combos.sort(key=lambda c: c["combo_score"], reverse=True)
+    # Diversify the shortlist: cap each GPU primary to twice, so the user sees
+    # genuinely different setups instead of one primary paired with N secondaries.
+    out, prim_count = [], {}
+    for c in combos:
+        pn = c["primary"]["name"]
+        if prim_count.get(pn, 0) >= 2:
+            continue
+        prim_count[pn] = prim_count.get(pn, 0) + 1
+        out.append(c)
+        if len(out) >= limit:
+            break
+    return {
+        "has_gpu": has_gpu, "vram_gb": round(vram, 1), "ram_gb": round(ram, 1),
+        "vram_budget_gb": round(vram_budget, 1), "ram_budget_gb": round(ram_budget, 1),
+        "combos": out,
+    }
