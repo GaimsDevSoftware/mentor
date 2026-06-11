@@ -1805,6 +1805,8 @@ export function _renderRunningTab() {
       }
       const startNow = el.querySelector('.cookbook-task-start-now');
       if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
+      const dlProg = el.querySelector('.cookbook-dl-progress');
+      if (dlProg) dlProg.style.display = (task.type === 'download' && task.status === 'running') ? '' : 'none';
       const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
       if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
     }
@@ -1836,6 +1838,7 @@ export function _renderRunningTab() {
         <button class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
       </div>
       <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || '~/.cache/huggingface/hub')}</span>` : ''}</div>
+      <div class="cookbook-dl-progress" style="display:${(task.type === 'download' && task.status === 'running') ? '' : 'none'}"><div class="cookbook-dl-bar"><div class="cookbook-dl-bar-fill indeterminate"></div></div><span class="cookbook-dl-pct"></span><span class="cookbook-dl-eta">starting…</span></div>
       <div class="cookbook-output-wrap cookbook-task-collapsible${_mobileCollapseDefault ? ' cookbook-task-collapsed' : ''}"><pre class="cookbook-output-pre">${esc(task.output || '')}</pre><button type="button" class="copy-code cookbook-output-copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
     `;
 
@@ -2369,6 +2372,61 @@ export function _renderRunningTab() {
 
 // ── Reconnect task (polling loop) ──
 
+// Human-friendly ETA: "45s", "3m 20s", "1h 12m". Caps the noise (no "0s").
+function _fmtEta(sec) {
+  if (!isFinite(sec) || sec < 0) return '';
+  if (sec < 60) return Math.max(1, Math.round(sec)) + 's';
+  if (sec < 3600) { const m = Math.floor(sec / 60), s = Math.round(sec % 60); return s ? `${m}m ${s}s` : `${m}m`; }
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+// Paint a download card's progress bar + ETA. `pct` is the TRUE overall percent
+// (already shard-corrected by the caller); `speed` is the raw "70MB/s" string.
+// ETA is derived from a rolling window of (pct, wall-clock) samples kept on the
+// element, so it reflects OVERALL throughput — robust to multi-shard downloads
+// and to the per-shard ETA tqdm prints. A backward jump (resume re-checking
+// cached files) clears the window so a stale rate can't linger.
+function _renderDownloadBar(el, pct, speed) {
+  const wrap = el && el.querySelector('.cookbook-dl-progress');
+  if (!wrap) return;
+  wrap.style.display = '';
+  const fill = wrap.querySelector('.cookbook-dl-bar-fill');
+  const pctEl = wrap.querySelector('.cookbook-dl-pct');
+  const etaEl = wrap.querySelector('.cookbook-dl-eta');
+  const now = Date.now();
+  const hasPct = typeof pct === 'number' && isFinite(pct) && pct >= 0;
+  if (!hasPct) {
+    if (fill) fill.classList.add('indeterminate');
+    if (pctEl) pctEl.textContent = '';
+    if (etaEl) etaEl.textContent = speed || 'starting…';
+    return;
+  }
+  const p = Math.max(0, Math.min(100, pct));
+  if (fill) { fill.classList.remove('indeterminate'); fill.style.width = p + '%'; }
+  if (pctEl) pctEl.textContent = Math.round(p) + '%';
+
+  const samples = el._pctSamples || (el._pctSamples = []);
+  const last = samples[samples.length - 1];
+  if (last && p < last.p - 3) samples.length = 0;            // resume/restart → forget stale rate
+  if (!last || last.p !== p) samples.push({ t: now, p });
+  while (samples.length > 2 && now - samples[0].t > 90000) samples.shift();
+
+  let eta = '';
+  if (p >= 100) {
+    eta = 'finishing…';
+  } else if (samples.length >= 2) {
+    const first = samples[0];
+    const dPct = p - first.p, dT = (now - first.t) / 1000;
+    if (dPct > 0 && dT > 2) eta = '~' + _fmtEta((100 - p) / (dPct / dT)) + ' left';
+  }
+  if (etaEl) {
+    const bits = [];
+    if (eta) bits.push(eta);
+    if (speed && p < 100) bits.push(speed);
+    etaEl.textContent = bits.join(' · ') || 'calculating…';
+  }
+}
+
 async function _reconnectTask(el, task) {
   const output = el.querySelector('.cookbook-output-pre');
   const controller = new AbortController();
@@ -2693,6 +2751,7 @@ async function _reconnectTask(el, task) {
             const _curShardNum = _lastShard ? parseInt(_lastShard[1], 10) : null;
             const _totalShards = _lastShard ? parseInt(_lastShard[2], 10) : null;
             const _useShardAgg = _curShardNum && _totalShards && _totalShards > 1;
+            let _renderPct = null;  // canonical overall % for the visual bar + ETA
 
             // HF's own "Fetching N files: X%" aggregate counts ALL files,
             // including ones already finished in a previous session (resume) —
@@ -2708,6 +2767,7 @@ async function _reconnectTask(el, task) {
                 : (lastPct ? parseInt(lastPct, 10) / 100 : 0);
               let overallPct = Math.round((((_curShardNum - 1) + curShardFrac) / _totalShards) * 100);
               if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
+              _renderPct = overallPct;
               let text = `${overallPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
               badge.textContent = text;
@@ -2716,6 +2776,7 @@ async function _reconnectTask(el, task) {
               // Real aggregate byte progress — most accurate; take the max of all signals.
               let pct = _dlAgg;
               if (_fetchPct != null) pct = Math.max(pct, _fetchPct);
+              _renderPct = pct;
               let text = `${pct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
               badge.textContent = text;
@@ -2724,12 +2785,14 @@ async function _reconnectTask(el, task) {
               const curFilePct = lastPct ? parseInt(lastPct) / 100 : 0;
               let overallPct = Math.round(((completed + curFilePct) / totalFiles) * 100);
               if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
+              _renderPct = overallPct;
               let text = `${overallPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
               badge.textContent = text;
               badge.className = 'cookbook-task-status cookbook-task-running';
             } else if (_fetchPct != null && _fetchPct < 100) {
               // Resume start: only the aggregate is meaningful yet.
+              _renderPct = _fetchPct;
               let text = `${_fetchPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
               badge.textContent = text;
@@ -2737,7 +2800,11 @@ async function _reconnectTask(el, task) {
             } else if (completed > 0 && completed >= totalFiles) {
               badge.textContent = 'finishing';
               badge.className = 'cookbook-task-status cookbook-task-running';
+              _renderPct = 100;
             }
+            // Paint the visual bar + ETA from whichever signal won above
+            // (null → indeterminate shimmer until a real % is known).
+            _renderDownloadBar(el, _renderPct, lastSpeed);
             if (snapshot.includes('DOWNLOAD_FAILED')) {
               // The wrapper prints DOWNLOAD_FAILED but exits 0, and per-file
               // "Download complete"/"100%" lines make it look successful — so
@@ -2790,6 +2857,7 @@ async function _reconnectTask(el, task) {
               _dlRetryCount.delete(task.payload?.repo_id || task.name);
               badge.textContent = _statusLabel('done', task.type);
               badge.className = 'cookbook-task-status cookbook-task-done';
+              _renderDownloadBar(el, 100, null);
               // Flip the type chip from "download" to the green "finished"
               // badge so the header reads as completed without a stale label.
               const _typeChip = el.querySelector('.cookbook-task-type');
