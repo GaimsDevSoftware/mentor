@@ -340,24 +340,69 @@ async def _run_codex_login():
         _codex_login_state.update(status="failed", log=str(e))
 
 
-# Free local helper model — a small, keyless Ollama model that powers the wizard,
-# the "?" explainers and basic chat at zero cost. ~1.3 GB.
+# Free local helper model — a keyless Ollama model that powers the wizard, the
+# "?" explainers and basic chat at zero cost. The model is the USER'S CHOICE from
+# a curated, hardware-sized ladder below — the guide (Atlas) emits ```action```
+# JSON blocks and follows multi-step setup instructions, so instruction-following
+# is what matters: a 1B model fumbles the do-it-for-me actions (and that error
+# compounds over a multi-step setup), while a 7-14B instruct model runs them
+# reliably. Sizes are the Ollama Q4 download sizes; vram_gb ≈ to run comfortably.
 _helper_state: Dict[str, Any] = {"status": "idle", "log": "", "model": ""}
-HELPER_MODEL = "llama3.2:1b"
+LOCAL_GUIDE_MODELS = [
+    {"id": "llama3.2:1b", "label": "Tiny", "size_gb": 1.3, "vram_gb": 2,
+     "blurb": "Lightest & fastest. Can answer questions, but often fumbles the do-it-for-me actions (may invent model names).",
+     "strong": False},
+    {"id": "llama3.2:3b", "label": "Small", "size_gb": 2.0, "vram_gb": 4,
+     "blurb": "Quick and light, and noticeably better at following instructions than Tiny.",
+     "strong": False},
+    {"id": "qwen2.5:7b", "label": "Balanced", "size_gb": 4.7, "vram_gb": 8,
+     "blurb": "Reliably runs the setup actions. A great all-round guide for most modern GPUs.",
+     "strong": True},
+    {"id": "qwen2.5:14b", "label": "Capable", "size_gb": 9.0, "vram_gb": 12,
+     "blurb": "Strongest guide — best at multi-step setup and clear explanations. Needs more VRAM & disk.",
+     "strong": True},
+]
+HELPER_MODEL = "llama3.2:1b"  # conservative fallback if detection/validation fails
+_HELPER_IDS = {m["id"] for m in LOCAL_GUIDE_MODELS}
 
 
-async def _run_helper_setup():
+def _detect_vram_gb() -> float:
+    try:
+        from services.hwfit.hardware import detect_system
+        return float((detect_system() or {}).get("gpu_vram_gb") or 0)
+    except Exception:
+        return 0.0
+
+
+def _recommended_guide_model(vram_gb: float) -> str:
+    """Best curated guide model that comfortably fits the detected VRAM."""
+    v = float(vram_gb or 0)
+    if v >= 12:
+        return "qwen2.5:14b"
+    if v >= 8:
+        return "qwen2.5:7b"
+    if v >= 4:
+        return "llama3.2:3b"
+    return "llama3.2:1b"
+
+
+async def _run_helper_setup(model=None):
     import asyncio
     import json as _json
     import shutil
     import uuid as _uuid
-    _helper_state.update(status="pulling", log="downloading " + HELPER_MODEL + " …", model=HELPER_MODEL)
+    # Honor the explicit choice; fall back to the hardware recommendation, then
+    # to the conservative default — never pull an un-vetted tag.
+    chosen = model if model in _HELPER_IDS else _recommended_guide_model(_detect_vram_gb())
+    if chosen not in _HELPER_IDS:
+        chosen = HELPER_MODEL
+    _helper_state.update(status="pulling", log="downloading " + chosen + " …", model=chosen)
     if not shutil.which("ollama"):
         _helper_state.update(status="failed", log="Ollama isn't installed yet — install it first.")
         return
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ollama", "pull", HELPER_MODEL,
+            "ollama", "pull", chosen,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=1800)
         log = (out or b"").decode(errors="replace")[-4000:]
@@ -376,14 +421,14 @@ async def _run_helper_setup():
             if not ep:
                 ep = ModelEndpoint(id=_uuid.uuid4().hex, name="Local (Ollama)",
                                    base_url="http://localhost:11434/v1", is_enabled=True,
-                                   cached_models=_json.dumps([HELPER_MODEL]), model_type="llm")
+                                   cached_models=_json.dumps([chosen]), model_type="llm")
                 db.add(ep)
             else:
                 try:
                     cm = set(_json.loads(ep.cached_models) if ep.cached_models else [])
                 except Exception:
                     cm = set()
-                cm.add(HELPER_MODEL)
+                cm.add(chosen)
                 ep.cached_models = _json.dumps(sorted(cm))
                 ep.is_enabled = True
             name = ep.name
@@ -397,7 +442,7 @@ async def _run_helper_setup():
     try:
         from src.settings import load_settings, save_settings
         s = load_settings()
-        spec = HELPER_MODEL + "@" + name
+        spec = chosen + "@" + name
         s["teacher_model"] = spec
         if not str(s.get("default_model", "") or "").strip():
             s["default_model"] = spec
@@ -1667,21 +1712,47 @@ def setup_manage_routes() -> APIRouter:
         return {**_ollama_state, "installed": bool(shutil.which("ollama"))}
 
     @router.post("/api/setup/free-helper")
-    async def free_helper(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
-        """One-click: download a small free local model (no key) and set it as the
-        helper/teacher model — so the wizard, the '?' guides and chat all work for free."""
+    async def free_helper(payload: Dict[str, Any] = Body(default={}),
+                          _admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Download a free local model (no key) and set it as the helper/teacher
+        model — so the wizard, the '?' guides and chat all work for free. The model
+        is the caller's choice from the curated ladder (`/api/setup/local-guide-
+        options`); with none given we pick the best fit for the detected VRAM."""
         import asyncio
         import shutil
         if not shutil.which("ollama"):
             return {"ok": False, "need_ollama": True}
         if _helper_state.get("status") == "pulling":
-            return {"ok": True, "status": "pulling"}
-        asyncio.create_task(_run_helper_setup())
-        return {"ok": True, "status": "pulling"}
+            return {"ok": True, "status": "pulling", "model": _helper_state.get("model", "")}
+        req = str((payload or {}).get("model") or "").strip()
+        chosen = req if req in _HELPER_IDS else _recommended_guide_model(_detect_vram_gb())
+        asyncio.create_task(_run_helper_setup(chosen))
+        return {"ok": True, "status": "pulling", "model": chosen}
 
     @router.get("/api/setup/free-helper/status")
     async def free_helper_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         return _helper_state
+
+    @router.get("/api/setup/local-guide-options")
+    async def local_guide_options(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Curated local (Ollama) models for the Atlas guide, annotated with what
+        fits the detected hardware + which is recommended. The download is the
+        user's choice — bigger = better at the do-it-for-me actions."""
+        import shutil
+        vram = _detect_vram_gb()
+        gpu = ""
+        try:
+            from services.hwfit.hardware import detect_system
+            gpu = str((detect_system() or {}).get("gpu_name") or "")
+        except Exception:
+            pass
+        rec = _recommended_guide_model(vram)
+        options = [{**m,
+                    "fits": (vram <= 0) or (vram >= m["vram_gb"]),
+                    "recommended": m["id"] == rec}
+                   for m in LOCAL_GUIDE_MODELS]
+        return {"ok": True, "gpu": gpu, "vram_gb": round(vram, 1),
+                "ollama": bool(shutil.which("ollama")), "options": options}
 
     @router.post("/api/setup/auto-roles")
     async def auto_roles(payload: Dict[str, Any] = Body(default={}),

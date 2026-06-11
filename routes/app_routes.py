@@ -1310,7 +1310,7 @@ _SETUP = r"""<!doctype html><html><head><meta charset="utf-8">
       <div id="ollama-note"></div>
       <div class="card" id="free-helper-card" style="border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:color-mix(in srgb,var(--ok) 6%,transparent);margin:0 0 14px">
         <div style="font-weight:600;margin-bottom:3px">✨ Easiest: a free local AI — no key, no cost</div>
-        <div class="why" style="margin:0 0 10px">One click downloads a small model (~1.3 GB) that runs on your own machine — free, private, no API key. It powers chat and the in-app guides right away. You can add a bigger/cloud model anytime.</div>
+        <div class="why" style="margin:0 0 10px">One click sets up a free local model — automatically <b>sized to your machine</b> — that runs privately on your own hardware, no API key. It powers chat and the in-app guides right away. Want to choose the exact size yourself (Tiny → Capable)? Use the <b>Local (Ollama)</b> option in the “pick a model for Atlas” box above.</div>
         <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn primary" id="free-helper-btn" type="button">Set up free local AI</button><span id="free-helper-msg" class="faint" style="font-size:12px"></span></div>
       </div>
       <div class="faint" style="font-size:12px;margin:0 0 8px">…or pick a specific model below:</div>
@@ -1433,15 +1433,36 @@ function renderConciergeTiers(){
 function cgSelect(c){
   const a=$('#cg-action'); a.style.display='';
   if(c.local){
-    a.innerHTML='<div class="why" style="font-size:12px;margin:0 0 8px">Downloads a small model (~1.3 GB) that runs on your machine — free, private, no key.<br><span style="color:var(--warn)">Heads-up: a small local model can answer questions, but it often <b>can\'t reliably run the do-it-for-me actions</b> (it may invent model names). For the active assistant, a free cloud guide — <b>Groq</b> or <b>OpenCode Zen</b> — works much better. Local is great for privacy.</span></div>'
-      +'<button class="btn primary" id="cg-local-go" type="button">Set up Atlas locally</button>';
-    $('#cg-local-go').onclick=async()=>{ const m=$('#cg-msg'); $('#cg-local-go').disabled=true; m.textContent='Setting up — downloading (~1.3 GB)…'; m.style.color='var(--dim)';
-      let r; try{ r=await j('/api/setup/free-helper',{method:'POST'}); }catch(e){ m.textContent='Could not start.'; $('#cg-local-go').disabled=false; return; }
-      if(r&&r.need_ollama){ m.textContent='Install Ollama first (in the Local tab below), then retry.'; $('#cg-local-go').disabled=false; return; }
-      const poll=setInterval(async()=>{ let s; try{ s=await j('/api/setup/free-helper/status'); }catch(e){ return; }
-        if(s.log) m.textContent=String(s.log).slice(-120);
-        if(s.status==='done'){ clearInterval(poll); m.textContent='✓ Atlas is ready (local).'; m.style.color='var(--ok)'; conciergeReady(); }
-        else if(s.status==='failed'){ clearInterval(poll); m.textContent=String(s.log||'Failed').slice(-160); m.style.color='var(--err)'; $('#cg-local-go').disabled=false; } }, 3000); };
+    a.innerHTML='<div class="why" id="cg-local-box" style="font-size:12px;margin:0 0 8px">Loading local model options…</div>';
+    (async()=>{
+      let d; try{ d=await j('/api/setup/local-guide-options'); }catch(e){ d=null; }
+      const box=$('#cg-local-box'); if(!box) return;
+      if(!d||!d.ok||!Array.isArray(d.options)){ box.innerHTML='Could not load local options — <b>Ollama</b> may not be installed yet. Open the <b>Local</b> tab below to install it, then pick Local again.'; return; }
+      const opts=d.options, vram=d.vram_gb||0;
+      const row=o=>`<label class="cg-lm" data-id="${esc(o.id)}" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin:0 0 6px;cursor:pointer">`
+        +`<input type="radio" name="cg-lm" value="${esc(o.id)}"${o.recommended?' checked':''} style="margin-top:3px">`
+        +`<span style="flex:1;line-height:1.35"><b>${esc(o.label)}</b> <span class="faint" style="font-size:11px">· ${esc(o.id)} · ~${o.size_gb} GB download</span>`
+        +`${o.recommended?' <span style="color:var(--ok);font-size:11px;font-weight:600">· recommended for your GPU</span>':''}`
+        +`${o.fits?'':` <span style="color:var(--warn);font-size:11px">· needs ~${o.vram_gb} GB VRAM</span>`}`
+        +`<br><span class="faint" style="font-size:11px">${esc(o.blurb)}</span></span></label>`;
+      box.innerHTML=`<div style="margin:0 0 8px">Pick the local model for Atlas — <b>bigger = smarter</b> (better at the do-it-for-me actions), smaller = faster &amp; less disk.${vram?` Your GPU has <b>${vram} GB</b> VRAM.`:''}</div>`
+        +opts.map(row).join('')
+        +`<div id="cg-lm-note" style="font-size:11px;margin:6px 0 8px"></div>`
+        +`<button class="btn primary" id="cg-local-go" type="button">Set up Atlas locally</button>`;
+      const noteEl=$('#cg-lm-note');
+      const sync=()=>{ const sel=box.querySelector('input[name=cg-lm]:checked'); const id=sel?sel.value:''; const o=opts.find(x=>x.id===id)||{};
+        box.querySelectorAll('.cg-lm').forEach(l=>{ const on=l.dataset.id===id; l.style.borderColor=on?'var(--cyan,#4af)':'var(--border)'; l.style.background=on?'color-mix(in srgb, var(--cyan,#4af) 8%, transparent)':'transparent'; });
+        if(noteEl) noteEl.innerHTML=o.strong?'<span style="color:var(--ok)">✓ Strong enough to run the setup actions reliably.</span>':'<span style="color:var(--warn)">Small models answer questions fine but may stumble on the do-it-for-me actions — great for privacy; pick Balanced or Capable for reliable automation.</span>'; };
+      box.querySelectorAll('input[name=cg-lm]').forEach(r=>r.addEventListener('change',sync)); sync();
+      $('#cg-local-go').onclick=async()=>{ const m=$('#cg-msg'); const sel=box.querySelector('input[name=cg-lm]:checked'); const id=sel?sel.value:''; const o=opts.find(x=>x.id===id)||{};
+        $('#cg-local-go').disabled=true; m.textContent=`Setting up — downloading ${o.label||id} (~${o.size_gb||'?'} GB)…`; m.style.color='var(--dim)';
+        let r; try{ r=await j('/api/setup/free-helper',{method:'POST',body:JSON.stringify({model:id})}); }catch(e){ m.textContent='Could not start.'; $('#cg-local-go').disabled=false; return; }
+        if(r&&r.need_ollama){ m.textContent='Install Ollama first (in the Local tab below), then retry.'; $('#cg-local-go').disabled=false; return; }
+        const poll=setInterval(async()=>{ let s; try{ s=await j('/api/setup/free-helper/status'); }catch(e){ return; }
+          if(s.log) m.textContent=String(s.log).slice(-120);
+          if(s.status==='done'){ clearInterval(poll); m.textContent='✓ Atlas is ready (local).'; m.style.color='var(--ok)'; conciergeReady(); }
+          else if(s.status==='failed'){ clearInterval(poll); m.textContent=String(s.log||'Failed').slice(-160); m.style.color='var(--err)'; $('#cg-local-go').disabled=false; } }, 3000); };
+    })();
     return;
   }
   a.innerHTML='<div class="why" style="font-size:12px;margin:0 0 6px">Get a <b>free</b> key (no card needed) → <a href="'+esc(c.get)+'" target="_blank" rel="noopener" style="color:var(--cyan)">'+esc(c.get.replace(/^https?:\/\//,''))+'</a>, then paste it:</div>'
@@ -1726,7 +1747,7 @@ $('#serve-skip').onclick=()=>{ markConnected('Skipped — assuming a model is al
 // helper/teacher model, so chat + the "?" guides work for free, instantly.
 (function(){ const fhb=$('#free-helper-btn'); if(!fhb) return;
   fhb.onclick=async()=>{ const m=$('#free-helper-msg'); fhb.disabled=true;
-    m.textContent='Setting up — downloading the model (~1.3 GB, a few minutes)…';
+    m.textContent='Setting up — downloading a local model sized to your machine (a few minutes)…';
     let r; try{ r=await j('/api/setup/free-helper',{method:'POST'}); }catch(e){ m.textContent='Could not start.'; fhb.disabled=false; return; }
     if(r && r.need_ollama){ m.textContent='Install Ollama first (button above), then try again.'; fhb.disabled=false; renderOllamaNote(false); return; }
     const poll=setInterval(async()=>{ let s; try{ s=await j('/api/setup/free-helper/status'); }catch(e){ return; }
