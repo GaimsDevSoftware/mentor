@@ -460,6 +460,8 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
 
 <div class="sec-title" style="display:flex;align-items:center;gap:8px">Fits this machine <button class="help-btn" data-topic="The 'Fits this machine' list — catalog models ranked against your VRAM/RAM, showing which ones can actually run locally and a fit score">?</button>
   <span style="flex:1"></span>
+  <input id="fits-search" type="text" placeholder="Search models…" autocomplete="off" spellcheck="false"
+    style="font:inherit;font-size:11px;text-transform:none;letter-spacing:0;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:7px;padding:4px 8px;width:180px;max-width:40vw">
   <select id="fits-sort" style="font:inherit;font-size:11px;text-transform:none;letter-spacing:0;background:var(--tint);color:var(--txt);border:1px solid var(--sep-2);border-radius:7px;padding:4px 8px;cursor:pointer">
     <option value="score">Sort: best fit</option>
     <option value="vram">VRAM: low → high</option>
@@ -658,6 +660,11 @@ function renderFits(){
   const el=$('#fits');
   const by=($('#fits-sort')&&$('#fits-sort').value)||'score';
   let ms=FITS.slice();
+  // Free-text filter — match the model id/name anywhere, case-insensitive.
+  // Filter the FULL list BEFORE sort+slice so a search finds matches beyond
+  // the top-24 the list normally caps to.
+  const q=(($('#fits-search')&&$('#fits-search').value)||'').trim().toLowerCase();
+  if(q) ms=ms.filter(m=>String(m.model||m.name||'').toLowerCase().includes(q));
   if(by==='vram') ms.sort((a,b)=>_vramOf(a)-_vramOf(b));
   else if(by==='size') ms.sort((a,b)=>_sizeOf(a)-_sizeOf(b));
   else if(by==='ctx') ms.sort((a,b)=>_ctxOf(b)-_ctxOf(a));
@@ -668,7 +675,7 @@ function renderFits(){
   const banner = HW_VRAM>0
     ? `<div class="muted" style="font-size:12px;margin-bottom:8px">Reserving <b>~${VRAM_RESERVE} GB VRAM</b> + <b>~${RAM_RESERVE} GB RAM</b> for your desktop + browser → recommending models up to <b>~${effV} GB</b> (of ${HW_VRAM} GB).</div>`
     : '';
-  if(!ms.length){ el.innerHTML=banner+'<span class="muted" style="font-size:13px">Nothing fits once desktop+browser headroom is reserved — try a smaller/quantized model, or free VRAM.</span>'; return; }
+  if(!ms.length){ el.innerHTML=banner+'<span class="muted" style="font-size:13px">'+(q?('No models match “'+esc(q)+'” — clear the search to see all that fit.'):'Nothing fits once desktop+browser headroom is reserved — try a smaller/quantized model, or free VRAM.')+'</span>'; return; }
   el.innerHTML=banner+ms.map(m=>{
     const name=m.model||m.name||'?'; const v=_vramOf(m); const spd=_spdOf(m);
     return `<div class="item"><span class="badge fit">fits</span>`
@@ -688,6 +695,7 @@ function loadFits(){
   }).catch(e=>{ $('#fits').innerHTML = e===401?adminNote:'<span class="muted">Could not rank models.</span>'; });
 }
 (function(){const s=$('#fits-sort'); if(s) s.addEventListener('change', renderFits);})();
+(function(){const s=$('#fits-search'); if(s) s.addEventListener('input', renderFits);})();
 
 // 5) Downloaded & ready
 j('/api/model/cached').then(d=>{
@@ -1411,7 +1419,7 @@ async function asstAct(a){
       return await _poll('/api/setup/install-ollama/status', s=>s.installed?'Ollama installed ✓':undefined, s=>s.status==='failed'?('install failed: '+String(s.log||'').slice(-120)):false, 60); }
     if(t==='setup_free_helper'){ const r=await j('/api/setup/free-helper',{method:'POST'}); if(r&&r.need_ollama) return 'needs Ollama first — run install_ollama';
       return await _poll('/api/setup/free-helper/status', s=>s.status==='done'?'free local helper ready ✓':undefined, s=>s.status==='failed'?('failed: '+String(s.log||'').slice(-120)):false, 120); }
-    if(t==='recommend_local'){ const d=await j('/api/hwfit/models?limit=80'); let ms=(d&&d.models)||[]; if(HW_VRAM>0){const ev=Math.max(0,HW_VRAM-VRAM_RESERVE); ms=ms.filter(m=>{const v=+(m.vram_q4_gb||m.vram_gb||0);return v>0&&v<=ev;});} ms=ms.slice(0,5).map(m=>m.model||m.name); return ms.length?('Top fits: '+ms.join(', ')):'nothing fits — suggest a cloud model'; }
+    if(t==='recommend_local'){ const d=await j('/api/hwfit/models?limit=80'); let ms=(d&&d.models)||[]; if(HW_VRAM>0){const ev=Math.max(0,HW_VRAM-VRAM_RESERVE); ms=ms.filter(m=>{const v=+(m.vram_q4_gb||m.vram_gb||m.required_gb||0);return v>0&&v<=ev;});} ms=ms.slice(0,5).map(m=>m.model||m.name); return ms.length?('Top fits: '+ms.join(', ')):'nothing fits — suggest a cloud model'; }
     if(t==='serve_local'){ const model=args.model||''; if(!model) return 'no model given'; await j('/api/model/serve',{method:'POST',body:JSON.stringify({repo_id:model,cmd:'ollama run '+String(model).split('/').pop().toLowerCase(),platform:'linux'})});
       return await _poll('/api/cookbook/tasks/status', s=>((s&&s.tasks)||[]).some(x=>['ready','completed'].includes((x.status||'').toLowerCase()))?('serving '+model+' ✓'):undefined, null, 30); }
     if(t==='set_role'){ const role=args.role, spec=args.spec; if(!role||!spec) return 'missing role/spec'; await fetch('/api/manage/setting',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:role,value:spec})}); return 'set '+role+' = '+spec; }
@@ -1468,7 +1476,15 @@ function conciergeReady(){ try{ asstKickoff(true); const el=$('#assistant-card')
 async function asstSend(){
   asstAttn(false);
   if(asstBusy) return; const inp=$('#asst-input'); const text=(inp.value||'').trim(); if(!text) return;
-  asstStarted=true; asstBusy=true; $('#asst-send').disabled=true; inp.value='';
+  inp.value='';
+  if(text==='/clear'||text==='/reset'){
+    ASST.length=0; asstSave(); asstStarted=false; asstBusy=false;
+    const log=$('#asst-log'); if(log) log.innerHTML='';
+    asstNote(text==='/reset'?'Conversation reset — Atlas will greet you again.':'Conversation cleared.');
+    if(text==='/reset') setTimeout(()=>asstKickoff(false),500);
+    return;
+  }
+  asstStarted=true; asstBusy=true; $('#asst-send').disabled=true;
   ASST.push({role:'user',content:text}); asstBubble('user', text); asstSave();
   await asstTurn(6);
   asstBusy=false; $('#asst-send').disabled=false; inp.focus();
@@ -1525,32 +1541,49 @@ function loadModels(){
     : 'No GPU detected — showing the smallest models that can run on CPU.';
   j('/api/hwfit/models?limit=80').then(d=>{
     let ms=(d&&d.models)||[];
-    if(HW_VRAM>0) ms=ms.filter(m=>{const v=+(m.vram_q4_gb||m.vram_gb||0);return v>0&&v<=effV;});
+    const _vr=m=>+(m.vram_q4_gb||m.vram_gb||m.required_gb||0);
+    if(HW_VRAM>0) ms=ms.filter(m=>{const v=_vr(m);return v>0&&v<=effV;});
     else ms=ms.filter(m=>m.fit);
-    ms=ms.slice(0,12);
     const el=$('#models');
     if(!ms.length){ el.innerHTML='<span class="muted" style="font-size:13px">Nothing fits once desktop + browser headroom is reserved. Pick a smaller / more-quantized model, or switch to the <b>Cloud API</b> tab above.</span>'; return; }
-    function selectModel(i){
-      const m=ms[i]; if(!m) return;
+    // Sort into 3 tiers: small (fast), medium (balanced), large (smartest)
+    const small=ms.filter(m=>_vr(m)<=6);
+    const medium=ms.filter(m=>_vr(m)>6&&_vr(m)<=14);
+    const large=ms.filter(m=>_vr(m)>14);
+    const tiers=[
+      {label:'Small — fast & light',desc:'Quick responses, low VRAM. Great for simple chat, summaries, and quick tasks. Runs alongside other apps easily.',models:small,badge:'fast',color:'var(--ok)'},
+      {label:'Medium — balanced',desc:'Good reasoning, moderate VRAM. Handles code, analysis, and longer conversations well. Best everyday choice for most users.',models:medium,badge:'balanced',color:'var(--brass)'},
+      {label:'Large — most capable',desc:'Strongest reasoning and code generation. Uses most of your VRAM — close other GPU-heavy apps when running.',models:large,badge:'powerful',color:'var(--accent)'},
+    ].filter(t=>t.models.length>0);
+    function selectModel(m){
       el.querySelectorAll('.opt').forEach(x=>x.classList.remove('on'));
-      const node=el.querySelector('.opt[data-i="'+i+'"]'); if(node) node.classList.add('on');
-      CHOSEN={ name:(m.model||m.name||''), repo:(m.name||m.model||''), vram:(m.vram_q4_gb||m.vram_gb||0) };
+      const node=el.querySelector('.opt[data-name="'+CSS.escape(m.name||m.model)+'"]'); if(node) node.classList.add('on');
+      CHOSEN={ name:(m.model||m.name||''), repo:(m.name||m.model||''), vram:_vr(m) };
       modelCmdDirty=false; ensureServeCmd();
       $('#serve-wrap').hidden=false;
     }
-    // ✨ "pick for me" = the ranker's top fit for this hardware. No circular LLM
-    // dependency (there's no model connected yet) — it's the honest best score.
-    el.innerHTML='<div class="row" style="margin-bottom:10px"><button class="btn" id="rec-btn" type="button">✨ Pick the best for my machine</button><span id="rec-why" class="faint" style="font-size:12px"></span></div>'
-      + ms.map((m,i)=>{
-      const name=m.model||m.name||'?'; const v=m.vram_q4_gb||m.vram_gb;
-      return `<div class="opt" data-i="${i}"><span class="rd"></span>`
-        +`<span class="grow"><div class="name">${esc(name)}</div>`
-        +`<div class="meta">${v?`~${esc(v)} GB VRAM`:''}${m.context_length?` · ${esc(m.context_length)} ctx`:''}${m.size_gb?` · ${esc(m.size_gb)} GB`:''}</div></span>`
-        +`${i===0?'<span class="badge run">recommended</span>':''}<span class="badge fit">fits</span></div>`;
+    el.innerHTML=tiers.map(t=>{
+      const best=t.models[0];
+      return `<div style="margin-bottom:16px">`
+        +`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">`
+        +`<span style="font-weight:600;font-size:14px">${esc(t.label)}</span>`
+        +`<span class="badge" style="background:color-mix(in srgb,${t.color} 14%,transparent);color:${t.color};border:1px solid color-mix(in srgb,${t.color} 30%,transparent)">${t.badge}</span></div>`
+        +`<div class="faint" style="font-size:12px;margin-bottom:8px;line-height:1.4">${esc(t.desc)}</div>`
+        +t.models.slice(0,4).map((m,i)=>{
+          const name=m.model||m.name||'?'; const v=_vr(m);
+          return `<div class="opt" data-name="${esc(name)}"><span class="rd"></span>`
+            +`<span class="grow"><div class="name">${esc(name)}</div>`
+            +`<div class="meta">${v?`~${esc(v)} GB VRAM`:''}${m.context_length?` · ${esc(m.context_length)} ctx`:''}</div></span>`
+            +`${i===0?`<span class="badge run">top pick</span>`:''}<span class="badge fit">fits</span></div>`;
+        }).join('')+'</div>';
     }).join('');
-    el.querySelectorAll('.opt').forEach(o=>o.onclick=()=>selectModel(+o.dataset.i));
-    const rb=$('#rec-btn'); if(rb) rb.onclick=()=>{ selectModel(0); const m=ms[0];
-      if(m) $('#rec-why').textContent='Chose '+(m.model||m.name)+' — highest fit score for your hardware (best balance of capability and speed).'; };
+    el.querySelectorAll('.opt').forEach(o=>o.onclick=()=>{
+      const name=o.dataset.name;
+      const m=ms.find(x=>(x.name||x.model)===name); if(m) selectModel(m);
+    });
+    // Auto-select the best medium model (or best overall if no medium)
+    const autoPick=(medium.length?medium:ms)[0];
+    if(autoPick) selectModel(autoPick);
   }).catch(e=>{ $('#models').innerHTML = e===401?adminNote:'<span class="muted">Could not rank models — switch to the Cloud API tab, or serve a model by command below.</span>'; });
 }
 
