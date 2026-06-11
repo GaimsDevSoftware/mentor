@@ -22,6 +22,8 @@ import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
 import turnManager from './turnManager.js';
+// Expose TurnManager for debugging/inspection (read-only use).
+try { window.turnManager = turnManager; } catch (_) {}
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -829,7 +831,16 @@ import turnManager from './turnManager.js';
     // Reset tracking variables at start
     currentAccumulated = '';
     currentHolder = null;
-    
+    // "Still thinking…" silence-indicator handles. Declared at FUNCTION scope
+    // (not inside the try) because the `finally` block cleans them up — a
+    // `let` inside the try is block-scoped and invisible to the finally, so
+    // the finally threw `ReferenceError: _silenceTimer is not defined` on its
+    // FIRST line, aborting before updateSubmitButton('idle') / _setStreaming
+    // (false). That left isStreaming stuck true after every turn → all later
+    // messages queued forever → run-now re-sent the first message → loop.
+    let _silenceTimer = null;
+    let _silenceEl = null;
+
     try {
       // Re-enable auto-scroll when user sends a message
       uiModule.setAutoScroll(true);
@@ -1525,8 +1536,9 @@ import turnManager from './turnManager.js';
       let _streamSawDone = false;
 
       // ── "Still thinking..." silence indicator ──
-      let _silenceTimer = null;
-      let _silenceEl = null;
+      // (_silenceTimer / _silenceEl are declared at function scope above so the
+      // finally can clean them up — do NOT re-declare with `let` here, or the
+      // finally's references resolve to the outer, never-updated bindings.)
       const _SILENCE_MS = 8000;
       function _resetSilenceTimer() {
         if (_silenceTimer) clearTimeout(_silenceTimer);
