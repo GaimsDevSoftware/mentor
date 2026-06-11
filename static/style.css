@@ -19845,6 +19845,84 @@ body.gallery-selecting .gallery-dl-btn,
   flex-shrink: 0;
   white-space: nowrap;
 }
+
+/* ── Global Downloads drawer (rail button → slide-in panel, on every page) ── */
+.dl-rail-badge {
+  position: absolute; top: 1px; right: 1px;
+  min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box;
+  border-radius: 7px; background: var(--green, #50fa7b); color: #06210f;
+  font-size: 9px; font-weight: 700; line-height: 14px; text-align: center;
+  font-family: 'Fira Code', monospace; pointer-events: none;
+}
+#rail-downloads { position: relative; }
+#rail-downloads.dl-rail-active { color: var(--green, #50fa7b); }
+
+.dl-drawer { position: fixed; inset: 0; z-index: 280; visibility: hidden; pointer-events: none; }
+.dl-drawer.on { visibility: visible; pointer-events: auto; }
+.dl-drawer-scrim {
+  position: absolute; inset: 0; background: rgba(0,0,0,0.42);
+  opacity: 0; transition: opacity 0.25s ease;
+}
+.dl-drawer.on .dl-drawer-scrim { opacity: 1; }
+.dl-drawer-panel {
+  position: absolute; top: 0; right: 0; height: 100%;
+  width: min(420px, 92vw);
+  display: flex; flex-direction: column;
+  background: var(--bg-elev, var(--panel, var(--bg)));
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 36px rgba(0,0,0,0.35);
+  transform: translateX(100%); transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+}
+.dl-drawer.on .dl-drawer-panel { transform: translateX(0); }
+.dl-drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.dl-drawer-title { font-size: 15px; font-weight: 600; color: var(--fg); }
+.dl-drawer-close {
+  background: none; border: none; color: var(--fg-muted); cursor: pointer;
+  font-size: 15px; padding: 4px 6px; border-radius: 6px; line-height: 1;
+}
+.dl-drawer-close:hover { background: var(--bg-hover, rgba(255,255,255,0.06)); color: var(--fg); }
+.dl-drawer-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+.dl-drawer-foot { padding: 10px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.dl-linkbtn { background: none; border: none; color: var(--accent, var(--cyan, #4af)); cursor: pointer; font-size: 12px; padding: 0; }
+.dl-linkbtn:hover { text-decoration: underline; }
+
+.dl-empty { color: var(--fg-muted); font-size: 13px; text-align: center; padding: 36px 12px; line-height: 1.5; }
+.dl-empty span { font-size: 11.5px; opacity: 0.8; }
+
+.dl-item {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin: 0 0 10px;
+  background: color-mix(in srgb, var(--fg, #fff) 2.5%, transparent);
+}
+.dl-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.dl-name { flex: 1; font-size: 13px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-badge { font-size: 9px; font-weight: 700; padding: 1px 7px; border-radius: 4px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.3px; }
+.dl-badge-run { background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent); color: var(--green, #50fa7b); }
+.dl-badge-done { background: color-mix(in srgb, var(--green, #50fa7b) 15%, transparent); color: var(--green, #50fa7b); }
+.dl-badge-bad { background: color-mix(in srgb, var(--color-warning, #f0ad4e) 22%, transparent); color: var(--color-warning, #f0ad4e); }
+
+.dl-bar { position: relative; height: 6px; border-radius: 4px; background: color-mix(in srgb, var(--fg-muted, #888) 18%, transparent); overflow: hidden; }
+.dl-bar-fill { position: absolute; inset: 0 auto 0 0; width: 0%; border-radius: 4px; background: linear-gradient(90deg, color-mix(in srgb, var(--green, #50fa7b) 65%, transparent), var(--green, #50fa7b)); transition: width 0.6s ease; }
+.dl-bar-fill.indeterminate { width: 32%; background: linear-gradient(90deg, transparent, var(--green, #50fa7b), transparent); animation: cookbook-dl-indet 1.4s ease-in-out infinite; }
+.dl-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 5px; font-family: 'Fira Code', monospace; }
+.dl-pct { font-size: 11px; font-weight: 700; color: var(--green, #50fa7b); }
+.dl-eta { font-size: 10px; color: var(--fg-muted); opacity: 0.9; white-space: nowrap; }
+
+.dl-done-info { font-size: 12px; color: var(--green, #50fa7b); font-weight: 600; }
+.dl-dir { font-size: 10px; color: var(--fg-muted); font-family: 'Fira Code', monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+.dl-actions { margin-top: 8px; }
+.dl-act-serve {
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  padding: 5px 11px; border-radius: 7px;
+  background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent);
+  color: var(--green, #50fa7b); border: 1px solid color-mix(in srgb, var(--green, #50fa7b) 40%, transparent);
+}
+.dl-act-serve:hover { background: color-mix(in srgb, var(--green, #50fa7b) 26%, transparent); }
+.dl-baddy { font-size: 12px; color: var(--color-warning, #f0ad4e); }
+
 .cookbook-task-status {
   font-size: 9px;
   padding: 1px 6px;

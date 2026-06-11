@@ -38,6 +38,7 @@ import themeModule from './js/theme.js';
 // _envState objects), which broke server selection. Keep all cookbook imports
 // unversioned so this can't recur.
 import cookbookModule from './js/cookbook.js';
+import downloadsPanelModule from './js/downloadsPanel.js';
 import groupModule from './js/group.js';
 import * as researchPanelModule from './js/research/panel.js';
 import ttsModule from './js/tts-ai.js';
@@ -52,6 +53,7 @@ window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
+window.downloadsPanelModule = downloadsPanelModule;
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
@@ -3439,6 +3441,8 @@ function startOdysseusApp() {
     compareModule.init(API_BASE);
   }
   researchPanelModule.init(API_BASE, markdownModule, sessionModule);
+  // Global Downloads panel (rail button + drawer, present on every page)
+  try { downloadsPanelModule.init(); } catch (_) {}
   // Initialize document editor module
   if (documentModule) {
     documentModule.init(API_BASE);
