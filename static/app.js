@@ -3571,11 +3571,21 @@ function startOdysseusApp() {
 
   function handleSubmit(e) {
     if (e) e.preventDefault();
-    // Debounce: prevent double-submit while a request is being initiated
-    if (_submitting) return;
-    _submitting = true;
-    // Release after a short delay (stream start sets its own isStreaming guard)
-    setTimeout(() => { _submitting = false; }, 300);
+    // Programmatic queue-drain submit (TurnManager → drain executor in chat.js)
+    // bypasses the anti-double-click debounce. The drain is already serialized
+    // (draining lock + streaming guard), and the 300ms guard was eating the
+    // drain's requestSubmit() that immediately follows a "run now" abort —
+    // dropping the promoted message and sending the wrong one. One-shot flag,
+    // read-and-cleared here (requestSubmit fires onsubmit synchronously).
+    let _isDrainSubmit = false;
+    try { _isDrainSubmit = !!window._odysseusDrainSubmit; window._odysseusDrainSubmit = false; } catch (_) {}
+    if (!_isDrainSubmit) {
+      // Debounce: prevent double-submit while a request is being initiated
+      if (_submitting) return;
+      _submitting = true;
+      // Release after a short delay (stream start sets its own isStreaming guard)
+      setTimeout(() => { _submitting = false; }, 300);
+    }
 
     // Compare mode: route submit to compare handler (same message to all panes)
     if (compareModule && compareModule.isActive()) {

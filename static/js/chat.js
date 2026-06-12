@@ -383,13 +383,24 @@ try { window.turnManager = turnManager; } catch (_) {}
 
   // The actual drain executor — TurnManager owns the lock + scheduling; this
   // is just the DOM-coupled "put the next message in the composer and submit"
-  // step it calls back into. requestSubmit() goes straight through the form's
-  // onsubmit, avoiding the 300ms click-debounce race in app.js.
+  // step it calls back into.
+  //
+  // Both requestSubmit() and submitBtn.click() route through the form's
+  // onsubmit (handleSubmit in app.js), which has a 300ms `_submitting`
+  // anti-double-click debounce. That debounce was SWALLOWING this drain: after
+  // a "run now" interrupts a stream, the abort goes through handleSubmit (sets
+  // _submitting=true), then the turn ends and we drain WITHIN that 300ms window
+  // — so the promoted message got queue.shift()-ed out but its requestSubmit()
+  // was debounced away, dropping it and advancing the queue to the wrong
+  // message. The drain is already fully serialized (TurnManager's draining lock
+  // + streaming guard), so it never needs that human-double-click guard. Flag
+  // this submit as a drain so handleSubmit bypasses the debounce.
   turnManager.setDrainExecutor((next) => {
     const msgInput = uiModule.el('message');
     if (!msgInput) return;
     msgInput.value = next.text;
     const form = document.getElementById('chat-form');
+    try { window._odysseusDrainSubmit = true; } catch (_) {}
     if (form && typeof form.requestSubmit === 'function') {
       form.requestSubmit();
     } else {
