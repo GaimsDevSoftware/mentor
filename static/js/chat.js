@@ -1333,6 +1333,11 @@ try { window.turnManager = turnManager; } catch (_) {}
       // so running it for them hid normal replies opening with "I can…/The
       // question…". The backend sets this on the model_info event.
       let _plainReasoningModel = false;
+      // Turn-sentinel: the classification of how this turn ended (set from the
+      // backend `turn_end` event just before [DONE]) and a guard so we never
+      // auto-resume the same episode twice.
+      let _turnEndInfo = null;
+      let _turnEndResumed = false;
       // Streaming TTS: synthesize sentence-by-sentence during streaming
       const streamingTTS = !!(window.aiTTSManager && window.aiTTSManager.autoPlay && window.aiTTSManager.available);
       if (streamingTTS) window.aiTTSManager.streamingStart();
@@ -2168,6 +2173,12 @@ try { window.turnManager = turnManager; } catch (_) {}
                   sessionModule.updateModelPicker();
                 }
                 continue;
+              } else if (json.type === 'turn_end') {
+                // Turn-sentinel classification, sent just before [DONE]. Store
+                // it; the success/finally path decides whether to auto-resume.
+                _turnEndInfo = json;
+                console.info('[turn-sentinel]', json.end_reason,
+                             'resumable=' + json.resumable, 'mode=' + json.mode);
               } else if (json.type === 'model_info') {
                 _plainReasoningModel = !!json.plain_reasoning;
                 // Update role label with model name as soon as we know it
@@ -3363,6 +3374,12 @@ try { window.turnManager = turnManager; } catch (_) {}
         // Reset button to idle state
         updateSubmitButton('idle', submitBtn);
 
+        // Turn-sentinel: in detect mode this just surfaces an unexpected end;
+        // in resume mode it auto-continues the safe cases (guarded by cap /
+        // queued-message / pending-approval / judge). Fire-and-forget so the
+        // finally never blocks; the resume itself defers via setTimeout.
+        try { _maybeAutoResumeFromTurnEnd(holder, accumulated, streamSessionId); } catch (_) {}
+
         // Re-enable message input; on mobile blur to dismiss keyboard
         if (messageInput) {
           messageInput.disabled = false;
@@ -3519,6 +3536,80 @@ try { window.turnManager = turnManager; } catch (_) {}
       sb.click();
     }, 200);
     return true;
+  }
+
+  // ── Turn-sentinel: surface + (guarded) auto-resume ──────────────────────
+  // Append a small, dim note to a finished message when it ended UNEXPECTEDLY
+  // (cut off / stalled / errored). Clean / awaiting-you / you-stopped ends get
+  // nothing — no noise for the normal cases.
+  function _surfaceTurnEnd(te, holder, extra) {
+    if (!te || !holder) return;
+    const unexpected = ['truncated', 'stalled', 'errored_transient', 'errored_deterministic'];
+    if (!unexpected.includes(te.end_reason)) return;
+    const body = holder.querySelector('.body');
+    if (!body || body.querySelector('.turn-end-note')) return;
+    const note = document.createElement('div');
+    note.className = 'turn-end-note';
+    note.style.cssText = 'margin-top:6px;font-size:11px;opacity:0.55;font-style:italic;';
+    note.textContent = '⚠ ' + (te.label || te.end_reason) + (extra ? ' — ' + extra : '');
+    body.appendChild(note);
+  }
+
+  // Step 3: ambiguous ends (a complete-looking answer that trails off on a
+  // question) get a one-shot model verdict — was it really cut off, or is it
+  // waiting for you? Only called in resume mode, only for ambiguous ends.
+  async function _judgeTurnEnd(sessionId, accumulated, te) {
+    try {
+      const r = await fetch(`${API_BASE}/api/turn/judge`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, end_reason: te.end_reason,
+                               tail: (accumulated || '').slice(-1200) }),
+      });
+      if (!r.ok) return null;
+      return await r.json();        // { resume: bool, verdict: str, reason: str }
+    } catch (_) { return null; }
+  }
+
+  // Decide + act on the turn-sentinel classification once a turn has settled.
+  // Detect mode: surface only. Resume mode: auto-continue the safe cases behind
+  // the same guardrails as the backend policy (cap, queued-message, pending
+  // approval), plus the judge for ambiguous ends. Reuses _tryAutoRecover (and
+  // its _AUTO_NUDGE_CAP) as the continuation mechanism.
+  async function _maybeAutoResumeFromTurnEnd(holder, accumulated, sessionId) {
+    const te = _turnEndInfo;
+    if (!te) return false;
+    if (te.mode !== 'resume') { _surfaceTurnEnd(te, holder); return false; }
+    if (_turnEndResumed) return false;
+
+    // Never resume into the wrong conversation.
+    if (sessionId && sessionModule.getCurrentSessionId() !== sessionId) return false;
+
+    const approvalPending = !!document.querySelector('.aegis-approval-overlay');
+    // A genuine user message waiting in the queue always wins over auto-resume
+    // (resumed-task and nudge entries don't count as "the user is waiting").
+    const queueHasUserMsg = _msgQueue.some(it => it && it.text && it.text !== NUDGE_TEXT && !it._resumed);
+
+    let resume = false, reason = '';
+    if (approvalPending) reason = 'an approval is pending — leaving it to you';
+    else if (queueHasUserMsg) reason = 'a queued message takes priority';
+    else if (_autoNudges >= _AUTO_NUDGE_CAP) reason = `auto-continue cap reached (${_autoNudges}/${_AUTO_NUDGE_CAP})`;
+    else if (te.ambiguous) {
+      const v = await _judgeTurnEnd(sessionId, accumulated, te);
+      // Re-check guards after the await (state may have changed).
+      if (document.querySelector('.aegis-approval-overlay')) reason = 'an approval is pending — leaving it to you';
+      else if (sessionModule.getCurrentSessionId() !== sessionId) return false;
+      else if (v && v.resume) { resume = true; reason = v.reason || 'continuing (judged cut off)'; }
+      else reason = (v && v.reason) || 'looks complete';
+    } else if (te.resumable) {
+      resume = true;
+      reason = `${te.label} — continuing automatically (${_autoNudges + 1}/${_AUTO_NUDGE_CAP})`;
+    } else reason = `ended '${te.end_reason}'`;
+
+    if (!resume) { _surfaceTurnEnd(te, holder, reason); return false; }
+    _turnEndResumed = true;
+    try { uiModule.showToast('↻ Auto-continued — ' + reason, 5000); } catch (_) {}
+    return _tryAutoRecover(holder, accumulated, sessionId);
   }
 
   function _removeStallBanner() {

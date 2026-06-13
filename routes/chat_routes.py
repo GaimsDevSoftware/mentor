@@ -1132,6 +1132,45 @@ def setup_chat_routes(
         stopped = agent_runs.stop(session_id)
         return {"stopped": stopped}
 
+    # ------------------------------------------------------------------ #
+    # POST /api/turn/judge — turn-sentinel step 3: for an AMBIGUOUS turn end
+    # (a complete-looking answer that trails off on a question), ask a small
+    # utility-model whether it was actually CUT OFF (→ resume) or COMPLETE /
+    # awaiting the user (→ don't). Best-effort: any failure → don't resume.
+    # ------------------------------------------------------------------ #
+    @router.post("/api/turn/judge")
+    async def turn_judge(request: Request, payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
+        session_id = str(payload.get("session_id", "") or "")
+        if session_id:
+            _verify_session_owner(request, session_id)
+        tail = str(payload.get("tail", "") or "")[-1500:]
+        if not tail.strip():
+            return {"resume": False, "verdict": "empty", "reason": "nothing to judge"}
+        try:
+            from src.endpoint_resolver import resolve_endpoint
+            url, model, headers = resolve_endpoint("utility", owner=get_current_user(request))
+            if not url or not model:
+                return {"resume": False, "verdict": "no_model", "reason": "no judge model configured"}
+            judge_msgs = [
+                {"role": "system", "content": (
+                    "You classify whether an assistant's reply ENDED CLEANLY or was CUT OFF. "
+                    "Answer with exactly one word: COMPLETE if it finished its thought or is "
+                    "intentionally asking the user a question / waiting for input; CUTOFF if it "
+                    "was truncated mid-sentence or mid-task and should continue. One word only.")},
+                {"role": "user", "content": f"The reply ended with:\n\n{tail}"},
+            ]
+            verdict_txt = (await llm_call_async(url, model, judge_msgs, temperature=0.0,
+                                                max_tokens=8, headers=headers) or "").strip().lower()
+            cut = "cutoff" in verdict_txt or "cut off" in verdict_txt or "cut-off" in verdict_txt
+            return {
+                "resume": bool(cut),
+                "verdict": "cutoff" if cut else "complete",
+                "reason": "judged cut off — continuing" if cut else "judged complete",
+            }
+        except Exception as e:
+            logger.debug("turn judge skipped: %s", e)
+            return {"resume": False, "verdict": "error", "reason": "judge unavailable"}
+
     @router.post("/api/chat/sudo/{session_id}")
     async def chat_sudo(request: Request, session_id: str,
                         payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
