@@ -1917,6 +1917,10 @@ async def stream_agent_loop(
     # Track the plan-render the model already saw, so we only re-inject when it
     # actually changes between rounds (cheap; no dup bloat).
     _last_plan_render = ""
+    # ask_user (#638) sets this when the agent posed a multiple-choice question
+    # and the turn must END to await the user's pick. Initialised here so the
+    # round-loop break can read it even on rounds where ask_user never fired.
+    _awaiting_user = False
     for round_num in range(1, max_rounds + 1):
         # Re-inject the live plan at the top of each round (after round 1) when
         # it has been drafted/revised, so the model always sees its own north
@@ -2765,6 +2769,13 @@ async def stream_agent_loop(
 
         # If budget was hit, stop the loop
         if budget_hit:
+            break
+
+        # ask_user posed a question — END the turn here and wait for the user's
+        # pick (it comes back as their next message). Without this the flag was
+        # set but never honoured, so the loop kept running and could talk over
+        # the pending choice (#638).
+        if _awaiting_user:
             break
 
         # Feed results back to LLM for next round

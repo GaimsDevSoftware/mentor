@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List
 
-from fastapi import APIRouter, Body, Request, HTTPException, Form, Query
+from fastapi import APIRouter, Body, Request, HTTPException, Form, Query, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -22,7 +22,7 @@ from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_user
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
@@ -1171,7 +1171,8 @@ def setup_chat_routes(
     # awaiting the user (→ don't). Best-effort: any failure → don't resume.
     # ------------------------------------------------------------------ #
     @router.post("/api/turn/judge")
-    async def turn_judge(request: Request, payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
+    async def turn_judge(request: Request, payload: Dict[str, Any] = Body(default={}),
+                         _u: str = Depends(require_user)) -> Dict[str, Any]:
         session_id = str(payload.get("session_id", "") or "")
         if session_id:
             _verify_session_owner(request, session_id)

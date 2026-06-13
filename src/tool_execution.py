@@ -19,6 +19,16 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 
+# Default cwd for agent shell/subprocess tools when no workspace is set (mirrors
+# upstream #2586: run in the data dir, not the server's cwd). Defined defensively
+# so a constants-import hiccup degrades to inheriting the cwd (cwd=None is valid)
+# instead of NameError-crashing every bash/python call — the workspace cherry-pick
+# (#1103) referenced this without bringing its definition.
+try:
+    from src.constants import DATA_DIR as _AGENT_WORKDIR
+except Exception:
+    _AGENT_WORKDIR = None
+
 MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
 MAX_DIFF_LINES = 400  # cap unified-diff size returned to the UI
