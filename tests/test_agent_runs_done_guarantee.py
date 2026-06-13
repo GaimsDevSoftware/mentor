@@ -72,3 +72,50 @@ def test_meta_event_carries_contract_fields():
     assert payload["v"] == agent_runs.SSE_PROTOCOL_VERSION
     assert payload["session_id"] == "test-sess"
     assert payload["run_id"].startswith("run-")
+
+
+def test_runnow_not_wedged_by_hung_previous_run(monkeypatch):
+    """Run-now / rapid re-send: a NEW run must not be blocked forever behind a
+    previous run whose cancellation is wedged (e.g. stuck in a long tool call so
+    aclose() never returns). Regression for the run-now stuck-on-"Thinking…"
+    state — the new run waits at most _PREV_RUN_DRAIN_TIMEOUT_S, then proceeds
+    and still emits its meta + exactly one [DONE]."""
+    # Shrink the cross-run wait so the test is fast; the production value is 8s.
+    monkeypatch.setattr(agent_runs, "_PREV_RUN_DRAIN_TIMEOUT_S", 0.1)
+
+    async def _go():
+        agent_runs._RUNS.clear()
+        sid = "test-sess"
+
+        # Run A: when cancelled, its aclose() hangs (simulates a generator wedged
+        # in a not-promptly-interruptible tool call).
+        async def hangs_on_close():
+            try:
+                while True:
+                    yield 'data: {"delta": "A"}\n\n'
+                    await asyncio.sleep(0.01)
+            except (GeneratorExit, asyncio.CancelledError):
+                await asyncio.sleep(100)   # wedged cleanup
+                raise
+
+        async def quick_b():
+            yield 'data: {"delta": "B"}\n\n'
+
+        agent_runs.start(sid, hangs_on_close())
+        await asyncio.sleep(0.05)          # let A start streaming
+        agent_runs.start(sid, quick_b())   # run-now replaces A
+
+        # B must finish within a bound (timeout + a margin), NOT hang forever.
+        out = []
+        try:
+            async def _collect():
+                async for ev in agent_runs.subscribe(sid):
+                    out.append(ev)
+            await asyncio.wait_for(_collect(), timeout=3.0)
+        except asyncio.TimeoutError:
+            pass
+        return out
+
+    events = asyncio.run(_go())
+    _assert_contract(events)               # B still emits meta + exactly one [DONE]
+    assert any('"delta": "B"' in e for e in events), "the new run's own output should stream"

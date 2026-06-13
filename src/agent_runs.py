@@ -43,6 +43,19 @@ _DONE_EVENT = "data: [DONE]\n\n"
 # isn't killed — the client's own stall UX (nudge at 60s) fires first.
 _RUN_IDLE_TIMEOUT_S = 300.0
 
+# When a new run replaces an in-flight one (run-now / rapid re-send), the new
+# run briefly waits for the previous one to finish cancelling so the two turns'
+# session saves stay sequential rather than interleaved. That wait MUST be
+# bounded: if the previous run's cancellation is wedged — e.g. its generator is
+# deep in a long, not-promptly-interruptible tool call so aclose() doesn't
+# return quickly — an unbounded wait blocks the NEW turn forever. The client
+# subscribes to the new run, receives nothing, and sits on "Thinking…" until the
+# conversation is restarted (the run-now stuck-state). Sequential saves are a
+# nicety, not a correctness requirement (the previous run's own finally still
+# persists its partial whenever it eventually unwinds), so past this timeout the
+# new run proceeds regardless rather than stay wedged behind the old one.
+_PREV_RUN_DRAIN_TIMEOUT_S = 8.0
+
 
 class _Run:
     __slots__ = ("buffer", "subscribers", "status", "task", "evict_task", "run_id")
@@ -147,11 +160,20 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
     # keeps the two runs' session saves sequential instead of interleaved.
     if prev_task is not None and not prev_task.done():
         try:
-            await asyncio.wait({prev_task})
+            await asyncio.wait({prev_task}, timeout=_PREV_RUN_DRAIN_TIMEOUT_S)
         except asyncio.CancelledError:
             raise            # our own cancellation — propagate
         except Exception:
             pass
+        if not prev_task.done():
+            # Previous run didn't finish cancelling in time (likely wedged in a
+            # long tool call). Proceed anyway so THIS turn isn't blocked behind
+            # it forever — its own finally still persists its partial when it
+            # eventually unwinds. This is the fix for the run-now stuck-on-
+            # "Thinking…" state.
+            logger.warning("[agent-run] %s: previous run did not finish cancelling within "
+                           "%ss — proceeding so this turn isn't wedged behind it.",
+                           session_id, int(_PREV_RUN_DRAIN_TIMEOUT_S))
 
     # Opening contract event. Unknown event types are ignored by older clients,
     # so this is backward compatible.
