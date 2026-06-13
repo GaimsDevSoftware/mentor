@@ -916,7 +916,14 @@ def setup_gallery_routes() -> APIRouter:
                 # Match by image_id OR by filename — older messages
                 # (saved before we threaded image_id through the SSE)
                 # only carry image_url containing the filename.
+                # Scope to THIS user's own sessions — without this the LIKE
+                # match scans every user's chat messages and could delete/modify
+                # another owner's history that referenced the same image id /
+                # filename (cross-owner leak).
+                from core.database import Session as _Sess
+                _own_sids = db.query(_Sess.id).filter(_Sess.owner == user)
                 msgs = db.query(_ChatMessage).filter(
+                    _ChatMessage.session_id.in_(_own_sids),
                     _ChatMessage.meta_data.isnot(None),
                     _or(
                         _ChatMessage.meta_data.like(f"%{image_id}%"),

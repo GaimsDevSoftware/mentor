@@ -744,7 +744,12 @@ class TaskScheduler:
                 )
                 run_obj = db.query(TaskRun).filter(TaskRun.id == run_id).first()
                 if run_obj:
-                    db.delete(run_obj)
+                    # Keep the run as an auditable record (status=deferred) instead
+                    # of deleting it, so the user can still SEE the task was
+                    # attempted and why it was deferred (traceability).
+                    run_obj.status = "deferred"
+                    run_obj.finished_at = _utcnow()
+                    run_obj.result = (f"Deferred {delay_seconds}s after quiet-window hit: {defer}")[:2000]
                 task.next_run = when
                 db.commit()
                 return

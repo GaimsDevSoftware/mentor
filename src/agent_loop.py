@@ -2609,8 +2609,11 @@ async def stream_agent_loop(
 
             # ask_user: the agent posed a multiple-choice question. Emit it so the
             # frontend renders clickable options, then end the turn (below) and
-            # wait — the user's pick becomes the next message.
-            if "ask_user" in result:
+            # wait — the user's pick becomes the next message. Guard against a
+            # malformed payload (non-dict / no question or options): treat it as
+            # not-an-ask so the turn doesn't end and silently hang forever.
+            if ("ask_user" in result and isinstance(result.get("ask_user"), dict)
+                    and (result["ask_user"].get("question") or result["ask_user"].get("options"))):
                 # The question lives in the tool args. ChatMessage.to_dict()
                 # replays only role+content to the model next turn — tool_event
                 # metadata is dropped — so if the question is never in the saved
