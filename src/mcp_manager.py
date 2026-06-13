@@ -8,9 +8,29 @@ Each server exposes tools that are made available to the agent loop.
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Caps/sanitization for splicing untrusted MCP-provided strings (tool names,
+# descriptions) into the agent prompt. MCP servers are third-party/user-added,
+# so these are untrusted input — bound them so an odd or hostile schema can't
+# inject newlines or run on and distort the prompt. Adapted from upstream #2682
+# (our prompt rendering exposes names/descriptions, not raw param schemas).
+_MCP_TOKEN_MAX = 80    # max chars for a rendered name/label token
+_MCP_DESC_MAX = 120    # max chars for a rendered tool description
+
+
+def _sanitize_prompt_token(value: Any, limit: int = _MCP_TOKEN_MAX) -> str:
+    """Strip control chars / newlines, collapse whitespace, and length-cap an
+    untrusted MCP string before it goes into the prompt. Normal short
+    identifiers pass through unchanged."""
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value if value is not None else ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "…"
+    return text
 
 def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
     """Return a user-actionable MCP connection error message."""
@@ -435,11 +455,11 @@ class McpManager:
             sid = server_tools[0]["server_id"] if server_tools else ""
             identity = self._connections.get(sid, {}).get("identity", "")
             label = f"{server_name} ({identity})" if identity else server_name
-            lines.append(f"\n**{label}:**")
+            lines.append(f"\n**{_sanitize_prompt_token(label)}:**")
             for t in server_tools:
-                # Truncate long descriptions
-                desc = t['description'][:120] + '...' if len(t['description']) > 120 else t['description']
-                lines.append(f"  - {t['qualified_name']}: {desc}")
+                # Sanitize + cap untrusted MCP-provided name/description (#2682).
+                desc = _sanitize_prompt_token(t.get('description', ''), _MCP_DESC_MAX)
+                lines.append(f"  - {_sanitize_prompt_token(t.get('qualified_name', ''))}: {desc}")
 
         result = "\n".join(lines)
         self._cached_prompt_desc = result
