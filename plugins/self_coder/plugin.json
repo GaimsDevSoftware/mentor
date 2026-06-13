@@ -1,7 +1,7 @@
 {
   "name": "self_coder",
-  "version": "0.1.0",
-  "description": "Autonomous self-improvement of the app's own CODE. Signals (debugger findings, failed turns) become Aider-edited branches that are verified (compile + boot + optional tests) before they can land. Core changes need human approval; small plugin-only changes can auto-merge. Canary deploy auto-rolls-back if the app doesn't come up. Disabled by default.",
+  "version": "0.2.0",
+  "description": "Autonomous self-improvement of the app's own CODE. Signals (debugger findings, failed turns) become Aider-edited branches that are verified (compile + boot + optional tests) before they can land. Auto-stashes dirty working trees so a session never blocks the loop; retries on verify failure with the error fed back to Aider. Core changes need human approval; small plugin-only changes can auto-merge. Canary deploy auto-rolls-back if the app doesn't come up.",
   "permissions": [
     "routes",
     "hooks"
@@ -14,6 +14,12 @@
       "label": "Autonomy level (0=propose only \u00b7 1=one-click merge \u00b7 2=auto-merge scoped+small)",
       "type": "int",
       "default": 1
+    },
+    {
+      "key": "self_coder_max_retries",
+      "label": "Max retries when verification fails (Aider sees the error and tries again)",
+      "type": "int",
+      "default": 2
     },
     {
       "key": "self_coder_run_tests",

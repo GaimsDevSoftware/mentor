@@ -58,9 +58,16 @@ def _path() -> str:
 
 
 def _get_int(key: str, default: int) -> int:
+    # NB: honour an explicit 0. The old `value or default` form treated 0 as
+    # falsy and silently fell back to the default, so setting a per-window cap
+    # to 0 did NOT block automated calls — it used the default allowance. Now
+    # 0 means 0 (a real kill switch for automated Claude calls).
     try:
         from src.settings import get_setting
-        return int(get_setting(key, default) or default)
+        v = get_setting(key, default)
+        if v is None or v == "":
+            return default
+        return int(v)
     except Exception:
         return default
 

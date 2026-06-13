@@ -25,13 +25,22 @@ cat > "$UNIT" <<EOF
 [Unit]
 Description=Mentor tray applet
 PartOf=graphical-session.target
-After=graphical-session.target
+# Order after plasmashell so the compositor + XWayland (:0) are actually ready.
+# Without this the GTK tray races session startup and dies with
+# "Error reading events from display: Broken pipe" before recovering.
+After=graphical-session.target plasma-plasmashell.service
+Wants=plasma-plasmashell.service
+# Never give up on transient early-session display hiccups.
+StartLimitIntervalSec=120
+StartLimitBurst=20
 
 [Service]
 Type=simple
+# Small settle margin for XWayland on a cold session; harmless if already up.
+ExecStartPre=/usr/bin/sleep 2
 ExecStart=/usr/bin/python3 $TRAY
 Restart=on-failure
-RestartSec=3
+RestartSec=2
 
 [Install]
 WantedBy=graphical-session.target

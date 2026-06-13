@@ -8,6 +8,9 @@
         "Category": "Utilities",
         "Authors": [{ "Name": "Mentor" }],
         "Version": "0.1",
+        "License": "MIT",
+        "FormFactors": ["desktop"],
         "EnabledByDefault": true
-    }
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
 }

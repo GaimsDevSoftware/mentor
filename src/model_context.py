@@ -87,6 +87,23 @@ KNOWN_CONTEXT_WINDOWS = {
     'gemma-3': 128000,
     'gemma-2': 8192,
 
+    # --- Gemma 4 on local Ollama (no hyphen: "gemma4:26b" etc.) ---
+    # gemma4 is a vision MoE (~4B active) with a native 256K window, but the full
+    # KV cache only fits our 24GB GPU when it has the card to itself. Context ladder
+    # (longest key wins): everyday 32K leaves headroom for the desktop; -long (128K)
+    # fits 100% on GPU with ~1.3GB margin; -max (256K) needs a dedicated GPU.
+    # The 12b is light (~8GB) so it can afford a large window.
+    'gemma4:26b-max': 262144,
+    'gemma4:26b-long': 131072,
+    'gemma4:26b': 32768,
+    'gemma4:12b': 131072,
+    'gemma4': 32768,
+
+    # --- Mentor persona tags (built FROM gemma4:26b) ---
+    'mentor:26b-long': 131072,
+    'mentor:26b': 32768,
+    'mentor': 32768,
+
     # --- Mistral ---
     'mistral-large': 128000,
     'mistral-medium': 32000,

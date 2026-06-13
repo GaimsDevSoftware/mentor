@@ -289,5 +289,21 @@ export function initKeyboardShortcuts(modules) {
       if (inp) inp.focus();
       return;
     }
+
+    // Auto-focus chat input when user starts typing a printable character
+    // and no other input/textarea/contenteditable is focused.
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const active = document.activeElement;
+      const tag = (active && active.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (active && active.isContentEditable) return;
+      // Don't steal focus if a modal is open
+      if (document.querySelector('.modal:not(.hidden), .ai-pick-dialog, .sudo-overlay')) return;
+      const inp = el('message');
+      if (inp && !inp.disabled) {
+        inp.focus();
+        // The character will be typed into the now-focused input naturally
+      }
+    }
   });
 }

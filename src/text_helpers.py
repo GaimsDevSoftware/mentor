@@ -34,9 +34,13 @@ _QWEN_THINKING_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 # Leaked prompt-echo headers (a few models replay the request before answering).
+# Stop at any paragraph break — the answer that follows usually starts with a
+# capital letter, a markdown header (`#`), or bold (`**`). The earlier
+# version's open-ended lookahead would swallow the answer too when the model
+# wrote the reply as plain prose with no markdown separator.
 _PROMPT_ECHO_RES = (
-    re.compile(r"^The user asks:.*?(?=\n\n#|\n\n\*\*[A-Z]|\Z)", re.DOTALL),
-    re.compile(r"^We need to.*?(?=\n\n#|\n\n\*\*[A-Z]|\Z)", re.DOTALL),
+    re.compile(r"^The user asks:[\s\S]*?(?=\n\s*\n|\Z)", re.MULTILINE),
+    re.compile(r"^We need to[\s\S]*?(?=\n\s*\n|\Z)", re.MULTILINE),
 )
 
 # Aggressive heuristic for untagged reasoning prose (models that don't wrap

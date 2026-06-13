@@ -42,9 +42,35 @@ def _data_dir() -> str:
     return d
 
 
-def _git(*args, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", _repo(), *args],
+def _git(*args, check: bool = True, timeout: int = 60, cwd: Optional[str] = None) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", cwd or _repo(), *args],
                           capture_output=True, text=True, timeout=timeout, check=check)
+
+
+# ── isolated worktree (builds never touch the live checkout) ──────────────────
+
+def _worktree_dir(pid: str) -> str:
+    """Per-proposal worktree under the gitignored data dir, so a build never
+    disturbs the user's active branch or working tree, and a mid-build app
+    restart can't break the running app."""
+    return os.path.join(_data_dir(), "wt", pid)
+
+
+def _add_worktree(pid: str, branch: str, base: str) -> str:
+    wt = _worktree_dir(pid)
+    os.makedirs(os.path.dirname(wt), exist_ok=True)
+    # Clear any stale worktree/branch left from a previous aborted run.
+    _git("worktree", "remove", "--force", wt, check=False)
+    _git("worktree", "prune", check=False)
+    _git("branch", "-D", branch, check=False)
+    _git("worktree", "add", "-b", branch, wt, base, check=True)
+    return wt
+
+
+def _remove_worktree(pid: str) -> None:
+    wt = _worktree_dir(pid)
+    _git("worktree", "remove", "--force", wt, check=False)
+    _git("worktree", "prune", check=False)
 
 
 def _get(key: str, default: Any) -> Any:
@@ -59,6 +85,37 @@ def _get(key: str, default: Any) -> Any:
 def _clean_tree() -> bool:
     try:
         return _git("status", "--porcelain").stdout.strip() == ""
+    except Exception:
+        return False
+
+
+def _stash_push(label: str) -> bool:
+    """Stash dirty working tree (including untracked) so self-coder can branch
+    safely. Returns True if something was stashed."""
+    if _clean_tree():
+        return False
+    try:
+        r = _git("stash", "push", "--include-untracked", "-m", f"self-coder/{label}",
+                 check=False)
+        return r.returncode == 0 and "No local changes" not in (r.stdout or "")
+    except Exception:
+        return False
+
+
+def _stash_pop() -> bool:
+    """Restore the most recent self-coder stash. Best-effort; conflicts leave
+    the stash intact so the user can resolve manually."""
+    try:
+        # Find the topmost self-coder stash.
+        r = _git("stash", "list", check=False)
+        if not r.stdout or "self-coder/" not in r.stdout:
+            return False
+        for line in r.stdout.splitlines():
+            if "self-coder/" in line:
+                ref = line.split(":", 1)[0]  # e.g. "stash@{0}"
+                pop = _git("stash", "pop", ref, check=False)
+                return pop.returncode == 0
+        return False
     except Exception:
         return False
 
@@ -131,28 +188,31 @@ def get_proposal(pid: str) -> Optional[Dict[str, Any]]:
 
 # ── verification ─────────────────────────────────────────────────────────────
 
-def _verify(changed_py: List[str]) -> Dict[str, Any]:
+def _verify(changed_py: List[str], cwd: Optional[str] = None) -> Dict[str, Any]:
     """py_compile changed files + boot-check (`import app`). Ruthless: any failure
-    means the change is rejected. (pytest can be added via self_coder_run_tests.)"""
+    means the change is rejected. (pytest can be added via self_coder_run_tests.)
+    Runs in ``cwd`` (the proposal's isolated worktree) so it checks the edited
+    code, not the live tree."""
     import sys
     py = sys.executable or "python3"
+    root = cwd or _repo()
     steps = []
     ok = True
     if changed_py:
         r = subprocess.run([py, "-m", "py_compile", *changed_py],
-                           cwd=_repo(), capture_output=True, text=True, timeout=120)
+                           cwd=root, capture_output=True, text=True, timeout=120)
         steps.append({"step": "py_compile", "ok": r.returncode == 0, "out": (r.stderr or r.stdout)[-1500:]})
         ok = ok and r.returncode == 0
     # boot/import check — catches the most common breakage (bad imports/wiring)
-    r2 = subprocess.run([py, "-c", "import app"], cwd=_repo(),
+    r2 = subprocess.run([py, "-c", "import app"], cwd=root,
                         capture_output=True, text=True, timeout=180,
-                        env={**os.environ, "PYTHONPATH": _repo()})
+                        env={**os.environ, "PYTHONPATH": root})
     steps.append({"step": "import app", "ok": r2.returncode == 0, "out": (r2.stderr or r2.stdout)[-2000:]})
     ok = ok and r2.returncode == 0
     if ok and _get("self_coder_run_tests", False):
-        r3 = subprocess.run([py, "-m", "pytest", "-q", "--timeout=120"], cwd=_repo(),
+        r3 = subprocess.run([py, "-m", "pytest", "-q", "--timeout=120"], cwd=root,
                             capture_output=True, text=True, timeout=600,
-                            env={**os.environ, "PYTHONPATH": _repo()})
+                            env={**os.environ, "PYTHONPATH": root})
         steps.append({"step": "pytest", "ok": r3.returncode == 0, "out": (r3.stdout or r3.stderr)[-2000:]})
         ok = ok and r3.returncode == 0
     return {"verified": ok, "steps": steps}
@@ -175,9 +235,6 @@ async def propose(instruction: str, files: List[str], *, source: str = "manual",
     instruction = (instruction or "").strip()
     if not instruction:
         return {"ok": False, "detail": "no instruction"}
-    if not _clean_tree():
-        return {"ok": False, "detail": "working tree is dirty — commit/stash your changes first "
-                                       "(self-coder needs a clean tree to branch safely)"}
     from src.plugin_forge import aider_bin
     if not aider_bin():
         return {"ok": False, "detail": "aider not installed (use the Install Aider button)"}
@@ -195,11 +252,112 @@ async def propose(instruction: str, files: List[str], *, source: str = "manual",
             "detail": "Working — Aider is editing on a branch. Watch progress live."}
 
 
+async def _run_aider(p: Dict[str, Any], instruction: str, safe_files: List[str],
+                     wt: str) -> bool:
+    """Spawn aider once with ``instruction`` inside the isolated worktree ``wt``,
+    STREAM its output into ``p['aider_log']`` (so the model's tokens give a real
+    heartbeat), and supervise it. If no output arrives for ``stall_seconds`` the
+    state flips to ``'stalled'`` (yellow) while it keeps waiting; if the silence
+    reaches ``hard_timeout`` the process is killed and ``status`` flips to
+    ``'failed'`` (red). ``p['last_activity_ts']`` is kept fresh throughout so the
+    UI can show "last activity Ns ago" and a traffic-light state."""
+    import asyncio
+    from src.plugin_forge import aider_bin
+    from src.settings import get_setting
+    from src.code_edit import resolve_aider_model
+
+    stall_s = int(_get("self_coder_stall_seconds", 90) or 90)
+    hard_s = int(_get("self_coder_hard_timeout", 300) or 300)
+
+    model = (get_setting("aider_model", "") or "").strip()
+    aider_model, aider_env = resolve_aider_model(model)
+    try:
+        # NOTE: streaming is intentionally ON (no --no-stream) so silence is a
+        # genuine signal that the model/Ollama is stuck, not just mid-generation.
+        proc = await asyncio.create_subprocess_exec(
+            aider_bin(), "--model", aider_model, "--yes-always", "--no-auto-commits",
+            "--no-show-model-warnings",
+            "--no-pretty", "--message", instruction, *safe_files,
+            cwd=wt, env=aider_env,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    except Exception as e:
+        p.update(status="failed", state="failed", detail=f"could not start aider: {e}")
+        _save(p)
+        return False
+
+    now = time.time()
+    last_output = now
+    last_save = 0.0
+    stalled = False
+    p["last_activity_ts"] = now
+    p.update(state="working")
+    _save(p)
+
+    if proc.stdout is not None:
+        while True:
+            try:
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=5)
+            except asyncio.TimeoutError:
+                idle = time.time() - last_output
+                if idle >= hard_s:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    p.update(status="failed", state="failed",
+                             detail=f"aider stuck — no output for {int(idle)}s "
+                                    f"(hard limit {hard_s}s). The model may be too "
+                                    f"slow or Ollama is hung.")
+                    p["last_activity_ts"] = last_output
+                    _progress(p, "killed_stalled", idle=int(idle))
+                    _save(p)
+                    return False
+                if idle >= stall_s and not stalled:
+                    stalled = True
+                    p.update(state="stalled")
+                    _progress(p, "stalled", idle=int(idle))
+                    _save(p)
+                elif time.time() - last_save > 3:
+                    # heartbeat save so the UI's "last activity" age keeps ticking
+                    _save(p)
+                    last_save = time.time()
+                continue
+            if not line:
+                break
+            last_output = time.time()
+            p["last_activity_ts"] = last_output
+            if stalled:
+                stalled = False
+                p.update(state="working")
+                _progress(p, "resumed")
+            txt = line.decode(errors="replace")
+            p["aider_log"] = ((p.get("aider_log") or "") + txt)[-20000:]
+            if time.time() - last_save > 2:
+                _save(p)
+                last_save = time.time()
+    await proc.wait()
+    p["aider_log"] = (p.get("aider_log") or "")[-20000:]
+    p["last_activity_ts"] = time.time()
+    _save(p)
+    return True
+
+
+def _verify_summary(vr: Dict[str, Any]) -> str:
+    """Compact failure summary suitable for feeding back to aider as a fix
+    instruction. Only includes the failing step's output, capped tight."""
+    for step in vr.get("steps", []):
+        if not step.get("ok"):
+            out = (step.get("out") or "").strip()
+            return f"{step['step']}: {out[-800:]}"
+    return "verification failed (no per-step output)"
+
+
 async def _do_propose(pid: str) -> None:
     """The real work — runs in the background. Streams Aider stdout into the
     proposal's aider_log so the UI sees what the AI is doing, and records each
-    verify step on the progress timeline. Always returns to the base branch and
-    auto-merges only when the policy allows it."""
+    verify step on the progress timeline. Auto-stashes dirty state, retries on
+    verify failure with the error fed back to aider, and only auto-merges when
+    the policy allows it."""
     p = get_proposal(pid)
     if not p:
         return
@@ -207,7 +365,8 @@ async def _do_propose(pid: str) -> None:
     base_branch = _current_branch()
     base_commit = _current_commit()
     branch = f"selfimprove/{pid}"
-    p.update(branch=branch, base_branch=base_branch, base_commit=base_commit)
+    p.update(branch=branch, base_branch=base_branch, base_commit=base_commit,
+             state="building", last_activity_ts=time.time())
 
     # filter file list to real files inside the repo
     safe_files = [f for f in p.get("files", []) if isinstance(f, str)
@@ -216,92 +375,122 @@ async def _do_propose(pid: str) -> None:
     p["files"] = safe_files
     _save(p)
 
+    # Build in an ISOLATED worktree off the base commit. The live checkout and
+    # the user's working tree are never touched — no stash, no branch switch —
+    # so a mid-build app restart can't break the running app.
     try:
-        _git("checkout", "-b", branch)
+        wt = _add_worktree(pid, branch, base_commit)
     except Exception as e:
-        p.update(status="failed", detail=f"could not create branch: {e}")
+        p.update(status="failed", state="failed", detail=f"could not create worktree: {e}")
+        _progress(p, "worktree_failed", detail=str(e))
         _save(p)
         return
-    _progress(p, "branch_created", branch=branch, base=base_commit[:8])
+    p["worktree"] = wt
+    _progress(p, "worktree_created", branch=branch, base=base_commit[:8])
 
-    from src.plugin_forge import aider_bin
+    # All git ops during the build target the worktree, not the live repo.
+    def g(*args, **kw):
+        return _git(*args, cwd=wt, **kw)
+
     from src.settings import get_setting
     model = (get_setting("aider_model", "") or "").strip()
-    _progress(p, "aider_starting", model=model, files=safe_files)
+    max_retries = int(_get("self_coder_max_retries", 2) or 0)
+    _progress(p, "aider_starting", model=model, files=safe_files, max_retries=max_retries)
 
-    import asyncio
-    from src.code_edit import resolve_aider_model
-    aider_model, aider_env = resolve_aider_model(model)
     try:
-        proc = await asyncio.create_subprocess_exec(
-            aider_bin(), "--model", aider_model, "--yes-always", "--no-auto-commits",
-            "--no-show-model-warnings",
-            "--no-pretty", "--no-stream", "--message", instruction, *safe_files,
-            cwd=_repo(), env=aider_env,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        # stream stdout line-by-line into the proposal so the UI shows it live
-        last_save = time.time()
-        log_chars = 0
-        if proc.stdout is not None:
-            while True:
-                try:
-                    line = await asyncio.wait_for(proc.stdout.readline(), timeout=600)
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    p.update(status="failed", detail="aider timed out")
-                    _save(p)
-                    break
-                if not line:
-                    break
-                txt = line.decode(errors="replace")
-                p["aider_log"] += txt
-                log_chars += len(txt)
-                # save every ~2s OR every 800 chars so the UI sees live progress
-                if time.time() - last_save > 2 or log_chars > 800:
-                    _save(p)
-                    last_save = time.time()
-                    log_chars = 0
-        await proc.wait()
-        if p.get("status") == "failed":
-            return
-        # cap log + record finish
-        p["aider_log"] = (p["aider_log"] or "")[-12000:]
-        _progress(p, "aider_done", exit_code=proc.returncode)
+        current_instruction = instruction
+        attempt = 0
+        vr: Dict[str, Any] = {"verified": False, "steps": []}
+        decision: Dict[str, str] = {}
+        risk: Dict[str, Any] = {}
+        changed: List[str] = []
+        diff = ""
 
-        # what changed
-        changed = _git("diff", "--name-only").stdout.split()
-        diff = _git("diff").stdout
-        p["changed"] = changed
-        p["diff"] = diff[:30000]
-        if not changed:
-            p.update(status="empty", verified=False,
-                     decision={"action": "rejected", "why": "no changes made"})
-            _progress(p, "no_changes")
-        else:
-            _git("add", "-A")
-            _git("commit", "-m", f"self-improve: {instruction[:60]}", check=False)
-            _progress(p, "committed_on_branch", files=len(changed))
+        while attempt <= max_retries:
+            attempt += 1
+            _progress(p, "aider_attempt", n=attempt)
 
-            _progress(p, "verify_starting", run_tests=bool(_get("self_coder_run_tests", False)))
-            vr = _verify([f for f in changed if f.endswith(".py")])
+            ok = await _run_aider(p, current_instruction, safe_files, wt)
+            if not ok or p.get("status") == "failed":
+                return
+            _progress(p, "aider_done", attempt=attempt)
+
+            changed = g("diff", "--name-only").stdout.split() or \
+                      g("diff", "HEAD", "--name-only").stdout.split()
+            # If the previous attempt committed, the diff is empty — pull from HEAD
+            if not changed:
+                # walk back to base to see cumulative changes from this branch
+                changed = g("diff", f"{base_commit}..HEAD", "--name-only").stdout.split()
+            diff = g("diff", f"{base_commit}..HEAD").stdout
+            p["changed"] = changed
+            p["diff"] = diff[:30000]
+
+            if not changed:
+                p.update(status="empty", state="empty", verified=False,
+                         decision={"action": "rejected", "why": "no changes made"})
+                _progress(p, "no_changes")
+                return
+
+            # commit pending worktree edits from this attempt
+            if g("diff", "--name-only").stdout.strip():
+                g("add", "-A")
+                g("commit", "-m",
+                  f"self-improve attempt {attempt}: {instruction[:50]}", check=False)
+                _progress(p, "committed_on_branch", files=len(changed), attempt=attempt)
+
+            _progress(p, "verify_starting",
+                      run_tests=bool(_get("self_coder_run_tests", False)),
+                      attempt=attempt)
+            p.update(state="verifying")
+            _save(p)
+            vr = _verify([f for f in changed if f.endswith(".py")], cwd=wt)
             for s in vr.get("steps", []):
                 _progress(p, "verify_" + s["step"].replace(" ", "_"),
-                          ok=s["ok"], out=(s["out"] or "")[-400:])
+                          ok=s["ok"], out=(s["out"] or "")[-400:], attempt=attempt)
 
-            risk = assess_risk(changed, diff)
-            autonomy = int(_get("self_coder_autonomy", 1) or 1)
-            decision = decide(risk, vr["verified"], autonomy)
-            p.update(status="verified" if vr["verified"] else "failed",
-                     verify=vr, risk=risk, decision=decision)
-            _progress(p, "decided", action=decision["action"], why=decision["why"])
+            if vr["verified"]:
+                break
+
+            # verification failed — if retries left, ask aider to fix with the
+            # exact error context. This is the "smarter at fixing itself" bit:
+            # the model now SEES what broke and can target the fix.
+            if attempt > max_retries:
+                _progress(p, "out_of_retries")
+                break
+
+            err = _verify_summary(vr)
+            current_instruction = (
+                f"Your previous edit broke verification. Read the error below and "
+                f"fix the code that caused it. Do not revert; keep the intent of "
+                f"the original task: {instruction!r}\n\n"
+                f"Error:\n{err}"
+            )
+            p["retry_reason"] = err[:1500]
+            _progress(p, "retry_planned", error=err[:300], next_attempt=attempt + 1)
+
+        risk = assess_risk(changed, diff)
+        autonomy = int(_get("self_coder_autonomy", 1) or 1)
+        decision = decide(risk, vr["verified"], autonomy)
+        _ok = vr["verified"]
+        p.update(status="verified" if _ok else "failed",
+                 state="verified" if _ok else "failed",
+                 verify=vr, risk=risk, decision=decision, attempts=attempt)
+        _progress(p, "decided", action=decision["action"], why=decision["why"],
+                  attempts=attempt)
     except Exception as e:
-        p.update(status="failed", verified=False, detail=str(e))
+        p.update(status="failed", state="failed", verified=False, detail=str(e))
         _progress(p, "error", detail=str(e))
     finally:
+        # Tear down the isolated worktree. The branch is KEPT so apply_proposal
+        # can still merge it; the live checkout was never touched.
         try:
-            _git("checkout", base_branch, check=False)
+            _remove_worktree(pid)
         except Exception:
             pass
+        p.pop("worktree", None)
+        if p.get("state") not in ("verified", "failed", "empty"):
+            p["state"] = p.get("status") or "failed"
+        p["last_activity_ts"] = time.time()
         _save(p)
 
     # autonomous apply only when policy explicitly says so
@@ -320,13 +509,19 @@ def apply_proposal(pid: str) -> Dict[str, Any]:
         return {"ok": False, "detail": "no such proposal"}
     if p.get("status") != "verified":
         return {"ok": False, "detail": f"proposal not verified (status={p.get('status')})"}
-    if not _clean_tree():
-        return {"ok": False, "detail": "working tree is dirty — commit/stash first"}
+    stashed = _stash_push(f"apply-{pid}")
     prev = _current_commit()
     try:
         _git("merge", "--no-ff", "-m", f"merge self-improve {pid}", p["branch"])
     except Exception as e:
+        if stashed:
+            _stash_pop()
         return {"ok": False, "detail": f"merge failed: {e}"}
+    if stashed:
+        popped = _stash_pop()
+        if not popped:
+            # merge succeeded but stash didn't pop cleanly — keep stash for user
+            p["stash_kept_after_apply"] = True
 
     # Launch the detached canary watchdog (survives the app restart it triggers).
     watchdog = os.path.join(_repo(), "scripts", "canary_deploy.sh")
@@ -350,6 +545,10 @@ def discard_proposal(pid: str) -> Dict[str, Any]:
     p = get_proposal(pid)
     if not p:
         return {"ok": False, "detail": "no such proposal"}
+    try:
+        _remove_worktree(pid)
+    except Exception:
+        pass
     try:
         _git("branch", "-D", p.get("branch", ""), check=False)
     except Exception:

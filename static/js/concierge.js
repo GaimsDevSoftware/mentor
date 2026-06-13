@@ -276,8 +276,15 @@
   async function send() {
     attn(false);
     var text = (inp.value || '').trim(); if (!text) return; inp.value = '';
+    if (text === '/clear' || text === '/reset') {
+      ASST.length = 0; save(); started = false; busy = false; waiting = false;
+      log.innerHTML = '';
+      note(text === '/reset' ? 'Conversation reset — Atlas will greet you again.' : 'Conversation cleared.');
+      if (text === '/reset') setTimeout(function () { started = false; }, 500);
+      return;
+    }
     ASST.push({ role: 'user', content: text }); bubble('user', text); save();
-    if (waiting) return; // captured as context during a long task — don't start a turn
+    if (waiting) return;
     if (busy) return; busy = true; work(1); try { await turn(6); } finally { busy = false; work(0); }
   }
   panel.querySelector('#mc-send').onclick = send;

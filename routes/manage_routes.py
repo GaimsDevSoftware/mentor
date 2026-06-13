@@ -217,8 +217,8 @@ MANAGE_SETTING_KEYS = {
 # added separately (it's a discovered-model dropdown — see core_settings()).
 CORE_SETTINGS_META = [
     {"key": "aegis_mode", "label": "Aegis firewall", "type": "select",
-     "options": ["off", "audit", "ask", "enforce"],
-     "desc": "Aegis is the prompt-injection / unsafe-action firewall that scores risky tool calls. off = no checks; audit = scores and logs but still runs the call; ask = prompt user with prominent notification + blinking borders before executing risky actions; enforce = blocks any call scoring at/above the block threshold."},
+     "options": ["off", "audit", "warn", "ask", "enforce"],
+     "desc": "Aegis is the prompt-injection / unsafe-action firewall that scores risky tool calls. off = no checks; audit = scores and logs silently but still runs the call; warn = runs the call anyway but shows a prominent non-blocking red banner (Cowork-style 'do it but tell me'); ask = stops and prompts you with a blinking-border dialog to approve/deny before executing; enforce = blocks any call scoring at/above the block threshold. warn and ask are the two halves of the Cowork model — proceed-and-flag vs stop-and-ask."},
     {"key": "fleet_mode", "label": "Fleet mode", "type": "select",
      "options": ["auto", "single", "fleet"],
      "desc": "How model serving is spread across machines. single = only this machine; fleet = use every configured node; auto = decide from what is reachable right now."},
@@ -2439,7 +2439,7 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="forge" class="panel"><div class="card">
   <b>New plugin — guided</b>
   <div class="sub">Describe what you want in plain language. The AI asks a couple of questions, then generates a small plugin for your app, verifies it loads, and leaves it as a <b>disabled draft</b> for you to review and enable. Plugins can add a tool the AI can call, a health check, an HTTP route, or a model source.</div>
-  <div id="forge-stage"></div></div>
+  <div id="forge-stage"></div></div></div>
 <div id="github" class="panel"><div class="card">
   <div class="row" style="margin-bottom:12px"><b>GitHub</b><span id="gh-auth-status" class="muted" style="font-size:12px;margin-left:8px">…</span></div>
   <div class="sub" style="margin-bottom:12px">Connect GitHub for git workflows — commit, push, create PRs all from Mentor.</div>
@@ -2477,8 +2477,6 @@ _PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
     <div>• <code class="mono">gh_pr_create</code> — create pull request</div>
     <div>• <code class="mono">gh_pr_list</code> — list open PRs</div>
   </div>
-</div></div>
-<div id="settings" class="panel"></div>
 </div></div>
 <div id="settings" class="panel"></div>
 <script nonce="{{CSP_NONCE}}">

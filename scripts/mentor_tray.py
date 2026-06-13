@@ -6,6 +6,7 @@ Diagnostics, restart the server, and see at a glance whether it's running.
 Uses SYSTEM python3 (gi: Gtk3 + AppIndicator3) — not the app venv.
 """
 import os
+import shutil
 import subprocess
 import urllib.request
 
@@ -27,12 +28,33 @@ _SERVICE = "odysseus-ui"
 
 
 def _open(path=None, ask=None):
-    args = ["bash", _LAUNCHER]
+    url = f"http://127.0.0.1:{_PORT}"
     if ask:
-        args += ["--ask", ask]
+        import urllib.parse
+        url += f"/?ask={urllib.parse.quote(ask)}"
     elif path:
-        args += ["--path", path]
-    subprocess.Popen(args, start_new_session=True,
+        url += path
+    else:
+        url += "/app"
+    profile = os.path.join(os.path.expanduser("~"), ".local", "share", "odysseus-app")
+    # Focus existing window if running
+    existing = subprocess.run(
+        ["pgrep", "-f", f"--user-data-dir={profile}"],
+        capture_output=True, text=True)
+    if existing.stdout.strip():
+        subprocess.Popen(["bash", _LAUNCHER, "--path", path or "/app"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    # Launch Chrome directly — the bash launcher hangs under some session configs
+    for browser in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        if shutil.which(browser):
+            subprocess.Popen([
+                browser, f"--app={url}", "--class=Mentor",
+                f"--user-data-dir={profile}",
+                "--no-first-run", "--no-default-browser-check",
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+    subprocess.Popen(["xdg-open", url],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -88,7 +110,7 @@ class Tray:
 
     def _refresh(self):
         up = _running()
-        self.status_item.set_label("● Running" if up else "○ Server stopped")
+        self.status_item.set_label("\U0001f7e2 Running" if up else "\U0001f534 Server stopped")
         return True
 
 

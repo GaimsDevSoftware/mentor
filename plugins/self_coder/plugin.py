@@ -17,7 +17,6 @@ _api = None
 def _diagnostic():
     from src import self_coder as sc
     n = len(sc.list_proposals())
-    # surface the most recent canary outcome, if any
     canary = ""
     try:
         results = sorted([f for f in os.listdir(sc._data_dir()) if f.endswith(".result")])
@@ -26,13 +25,10 @@ def _diagnostic():
                 canary = f" · last canary: {f.read().strip()}"
     except Exception:
         pass
-    clean = sc._clean_tree()
-    if not clean:
-        return {"name": "self-coder", "status": "warn",
-                "detail": f"working tree dirty — can't branch safely ({n} proposals on file)",
-                "hint": "commit/stash your changes; self-coder needs a clean tree"}
+    # Dirty tree is no longer blocking — self-coder auto-stashes. Just inform.
+    tree_note = "" if sc._clean_tree() else " · dirty tree (will auto-stash)"
     return {"name": "self-coder", "status": "ok",
-            "detail": f"ready · {n} proposal(s){canary}"}
+            "detail": f"ready · {n} proposal(s){canary}{tree_note}"}
 
 
 def _stats():
@@ -133,6 +129,33 @@ def register(api):
             from src import self_coder as sc
             p = sc.get_proposal(pid)
             return p or {"ok": False, "detail": "no such proposal"}
+
+        @router.get("/api/plugins/self_coder/status")
+        async def status(admin: str = Depends(require_admin)):
+            """Compact global status for the sidebar traffic-light. Derives a
+            green/amber/red/blue/idle light from the newest proposal's live
+            state and how long since it last did anything."""
+            from src import self_coder as sc
+            import time
+            props = sc.list_proposals()
+            if not props:
+                return {"light": "idle", "state": "none", "active": False}
+            p = props[0]
+            state = p.get("state") or p.get("status") or "none"
+            active = state in ("building", "working", "verifying", "stalled")
+            last = p.get("last_activity_ts") or p.get("ts")
+            age = (time.time() - last) if last else None
+            light = ("amber" if state == "stalled"
+                     else "red" if state == "failed"
+                     else "green" if state in ("verified", "applied")
+                     else "blue" if active
+                     else "idle")
+            return {"light": light, "state": state, "status": p.get("status"),
+                    "active": active, "pid": p.get("id"),
+                    "instruction": (p.get("instruction") or "")[:120],
+                    "last_activity_ts": last,
+                    "age_seconds": round(age) if age is not None else None,
+                    "detail": (p.get("detail") or "")[:200]}
 
         @router.post("/api/plugins/self_coder/proposals/{pid}/apply")
         async def apply_one(pid: str, admin: str = Depends(require_admin)):

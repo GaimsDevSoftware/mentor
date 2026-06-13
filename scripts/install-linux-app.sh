@@ -103,4 +103,10 @@ echo "  $ICONS_DIR/<size>/apps/mentor.png         (theme entries)"
 echo
 echo "If the dock still shows the old/no icon for an already-pinned shortcut:"
 echo "  • unpin Mentor from the taskbar, then re-pin it from the app menu, OR"
-echo "  • run:  kquitapp6 plasmashell && (setsid kstart plasmashell &) disown"
+echo "  • log out and back in (safest — reloads the desktop cleanly)."
+echo
+echo "NB: do NOT run a bare 'plasmashell' or 'kstart plasmashell' to reload —"
+echo "plasmashell is single-instance per session; a second one aborts and takes"
+echo "the live desktop down with it. A manual restart must quit first, and is a"
+echo "USER action in a real terminal, never something a script/agent runs:"
+echo "      kquitapp6 plasmashell && (setsid kstart plasmashell &) disown"

@@ -12,6 +12,7 @@ import collections
 import json
 import logging
 import os
+import shutil
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -480,6 +481,17 @@ async def _direct_fallback(
             if sudo_pass and ("sudo " in content or content.startswith("sudo")):
                 cmd = content.replace("sudo ", "sudo -S ", 1)
                 stdin_data = (sudo_pass + "\n").encode()
+            # Try sudo -A with a GUI askpass first (shows native OS dialog)
+            elif not sudo_pass and ("sudo " in content or content.startswith("sudo")):
+                _askpass = None
+                for _ap in ("ksshaskpass", "ssh-askpass", "lxqt-openssh-askpass", "x11-ssh-askpass"):
+                    _ap_path = shutil.which(_ap)
+                    if _ap_path:
+                        _askpass = _ap_path
+                        break
+                if _askpass and os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+                    cmd = content.replace("sudo ", "sudo -A ", 1)
+                    _subproc_env = {**_subproc_env, "SUDO_ASKPASS": _askpass}
 
             proc = await asyncio.create_subprocess_shell(
                 cmd,
@@ -502,9 +514,10 @@ async def _direct_fallback(
             err = stderr.rstrip()
             if err:
                 output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-            # Detect sudo password prompt failure
+            # Detect sudo password prompt failure — fall back to in-chat password dialog
             _sudo_markers = ("sudo: a password is required", "sudo: du må oppgi et passord",
-                             "sudo: a terminal is required", "sudo: du trenger en ekte terminal")
+                             "sudo: a terminal is required", "sudo: du trenger en ekte terminal",
+                             "sudo: askpass", "sudo: no askpass program")
             if rc != 0 and any(m in (output or "") for m in _sudo_markers):
                 return {"output": output, "exit_code": rc,
                         "needs_sudo_password": True,

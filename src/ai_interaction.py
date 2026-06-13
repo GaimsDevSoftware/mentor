@@ -69,7 +69,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
     """
     import httpx
     from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+    from src.llm_core import _detect_provider, ANTHROPIC_MODELS, is_endpoint_broken
     from src.auth_helpers import owner_filter
 
     spec = spec.strip()
@@ -95,45 +95,67 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
             raise ValueError("No enabled endpoints found" +
                              (f" matching '{target_endpoint_name}'" if target_endpoint_name else ""))
 
-        for ep in endpoints:
+        # Two-pass strategy: first pass skips endpoints with a recent
+        # 401/402/403/404 failure marker (TTL 5 min). If nothing matches —
+        # either because all candidates are marked or because none have
+        # the model — fall back to a second pass that considers broken
+        # endpoints too, so the call still has SOMETHING to attempt and
+        # the user gets the real upstream error. Qualified
+        # `model@EndpointName` specs skip the health filter entirely: the
+        # user explicitly asked for that endpoint and overriding their
+        # choice would be surprising.
+        skipped_for_health: List[Any] = []
+
+        def _try_one(ep):
             base = _normalize_base(ep.base_url)
             provider = _detect_provider(base)
             headers = build_headers(ep.api_key, base)
-
             if provider == "anthropic":
-                # Anthropic: match against hardcoded model list
-                matched = None
                 for am in ANTHROPIC_MODELS:
                     if model_name.lower() in am.lower() or am.lower() in model_name.lower():
-                        matched = am
-                        break
-                if matched:
-                    return build_chat_url(base), matched, headers
-            else:
-                # OpenAI-compatible and native Ollama: probe the provider's model list.
-                try:
-                    r = httpx.get(build_models_url(base), headers=headers, timeout=5)
-                    r.raise_for_status()
-                    data = r.json()
-                    model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                    if not model_ids:
-                        model_ids = [
-                            m.get("name") or m.get("model")
-                            for m in (data.get("models") or [])
-                            if m.get("name") or m.get("model")
-                        ]
-                except Exception:
-                    model_ids = []
+                        return build_chat_url(base), am, headers
+                return None
+            # OpenAI-compatible / native Ollama: probe /models.
+            try:
+                r = httpx.get(build_models_url(base), headers=headers, timeout=5)
+                r.raise_for_status()
+                data = r.json()
+                model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                if not model_ids:
+                    model_ids = [
+                        m.get("name") or m.get("model")
+                        for m in (data.get("models") or [])
+                        if m.get("name") or m.get("model")
+                    ]
+            except Exception:
+                model_ids = []
+            for mid in model_ids:
+                if mid.lower() == model_name.lower():
+                    return build_chat_url(base), mid, headers
+            for mid in model_ids:
+                if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
+                    return build_chat_url(base), mid, headers
+            return None
 
-                # Exact match first
-                for mid in model_ids:
-                    if mid.lower() == model_name.lower():
-                        return build_chat_url(base), mid, headers
-
-                # Partial match
-                for mid in model_ids:
-                    if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
-                        return build_chat_url(base), mid, headers
+        respect_health = not target_endpoint_name  # explicit @endpoint → trust user
+        for ep in endpoints:
+            if respect_health and is_endpoint_broken(_normalize_base(ep.base_url)):
+                skipped_for_health.append(ep)
+                continue
+            res = _try_one(ep)
+            if res:
+                return res
+        # Nothing matched on healthy endpoints. Retry against the ones we
+        # skipped so the chat still gets an answer (or a real error from
+        # the only-known-to-have-this-model endpoint).
+        for ep in skipped_for_health:
+            res = _try_one(ep)
+            if res:
+                logger.warning(
+                    "[resolve] Falling back to broken endpoint %s for %s — "
+                    "no healthy endpoint has it. The call may fail again.",
+                    ep.base_url, spec)
+                return res
 
         raise ValueError(f"Model '{spec}' not found on any configured endpoint")
     finally:

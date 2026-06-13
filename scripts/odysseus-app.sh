@@ -65,7 +65,7 @@ ensure_server() {
 # Detect an already-running Mentor app window by the user-data-dir we always pass
 # to Chrome --app. Faster + more accurate than scanning by window class.
 running_pid() {
-  pgrep -f -- "--user-data-dir=${PROFILE}" 2>/dev/null | head -1
+  pgrep -f -- "--user-data-dir=${PROFILE}" 2>/dev/null | head -1 || true
 }
 
 # Focus existing Mentor window. KDE Plasma Wayland blocks wmctrl/xdotool, so
@@ -92,7 +92,8 @@ const wins = (typeof workspace.windowList === 'function') ? workspace.windowList
 for (const w of wins) {
   const cls  = (w.resourceClass || '').toString().toLowerCase();
   const name = (w.resourceName  || '').toString().toLowerCase();
-  if (cls === 'mentor' || name === 'mentor') {
+  const title = (w.caption || '').toString().toLowerCase();
+  if (cls === 'mentor' || name === 'mentor' || title.includes('mentor')) {
     if (w.minimized) w.minimized = false;
     try { workspace.activeWindow = w; } catch (e) {}
     try { if (typeof w.requestActivate === 'function') w.requestActivate(); } catch (e) {}
@@ -114,7 +115,11 @@ open_app() {
   case "$BROWSER_KIND" in
     chromium)
       # Detach so this launcher process can exit while Chrome lives on.
-      setsid "$BROWSER_BIN" --app="$URL" --class="$WMCLASS" \
+      # --class sets the window's WM_CLASS / Wayland app_id, which is what KDE
+      # Plasma matches against the launcher's StartupWMClass=Mentor. Without it
+      # the window gets Chrome's generic app id and shows as a separate "W" icon.
+      setsid "$BROWSER_BIN" --app="$URL" --class="Mentor" --title="Mentor" \
+        --icon="/home/robert/.local/share/icons/hicolor/256x256/apps/mentor.png" \
         --user-data-dir="$PROFILE" --no-first-run --no-default-browser-check \
         >/dev/null 2>&1 &
       disown 2>/dev/null || true
@@ -149,9 +154,10 @@ fi
 # ── single-instance gate ────────────────────────────────────────────────────
 # Serialize concurrent launcher invocations (e.g. rapid double-clicks on the
 # dock icon) so two windows can never race past the running-pid check.
-exec 9>"$LOCK_FILE" 2>/dev/null || true
+# Note: `exec N>file` can fail under set -e in detached sessions (no
+# controlling terminal). Use a subshell-safe approach instead.
 if command -v flock >/dev/null 2>&1; then
-  flock -w 5 9 || true
+  flock -w 5 "$LOCK_FILE" true 2>/dev/null || true
 fi
 
 ensure_server

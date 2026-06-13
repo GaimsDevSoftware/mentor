@@ -2601,6 +2601,35 @@ async def stream_agent_loop(
         # Separator in accumulated response
         full_response += "\n\n"
 
+    else:
+        # max_rounds EXHAUSTED while the model was still calling tools (no
+        # `break` from the "no tools — done" path and no loop-breaker forced
+        # answer). Without this, the turn ends on the last tool preamble —
+        # typically a dangling "La meg sjekke X:" — and the user never gets a
+        # conclusion. Force ONE tool-free synthesis round so EVERY turn ends
+        # with a real answer. (for...else runs only when the loop completes
+        # without break, i.e. exactly this exhaustion case.)
+        if not _force_answer:
+            try:
+                from src.llm_core import complete_with_continuation as _cwc
+                messages.append({"role": "user", "content": (
+                    "You've reached the step limit — do NOT call any more tools. "
+                    "Write your final answer to the user NOW: summarize what you "
+                    "found and did. If you're genuinely blocked, say plainly what's "
+                    "blocking you in a sentence or two.")})
+                _final_raw = (await _cwc(
+                    endpoint_url, model, messages, headers=headers or {},
+                    temperature=0.3, max_tokens=max_tokens, timeout=120)) or ""
+                _final = _THINK_RE.sub("", strip_tool_blocks(_final_raw)).strip()
+                if _final:
+                    if full_response.strip():
+                        full_response += "\n\n"
+                    full_response += _final
+                    yield f'data: {json.dumps({"delta": _final})}\n\n'
+                    logger.info("[agent] max_rounds exhausted — forced final answer (%d chars)", len(_final))
+            except Exception as _fin_err:
+                logger.warning("[agent] forced final answer after max_rounds failed: %s", _fin_err)
+
     # If the response is completely empty and no tools were executed,
     # yield a fallback message so the user is not left hanging.
     full_response, _fallback_chunk = _empty_response_fallback(

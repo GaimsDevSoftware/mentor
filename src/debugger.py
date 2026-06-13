@@ -335,14 +335,18 @@ def _check_serving_config() -> List[Dict[str, Any]]:
     if want_fa and fa not in ("1", "true", "True"):
         out.append(_warn("serving", "flash-attention",
                          "OLLAMA_FLASH_ATTENTION is not set on this host",
-                         "on the Ollama server: export OLLAMA_FLASH_ATTENTION=1 (required for KV-cache quant)"))
+                         "on the Ollama server: export OLLAMA_FLASH_ATTENTION=1 (required for KV-cache quant)",
+                         fix={"kind": "ollama_setting", "env_var": "OLLAMA_FLASH_ATTENTION", "value": "1",
+                              "label": "Set flash-attention on Ollama"}))
     else:
         out.append(_ok("serving", "flash-attention", f"flash attention: {fa or 'on'}"))
     if want_kv and not kv:
         out.append(_warn("serving", "kv-cache-quant",
                          f"OLLAMA_KV_CACHE_TYPE not set (want {want_kv}) — KV cache uses fp16, ~2× VRAM",
                          f"on the Ollama server: export OLLAMA_KV_CACHE_TYPE={want_kv} "
-                         "(q8_0 ≈ half the KV memory, tiny quality loss) → fits more context, fewer stalls"))
+                         "(q8_0 ≈ half the KV memory, tiny quality loss) → fits more context, fewer stalls",
+                         fix={"kind": "ollama_setting", "env_var": "OLLAMA_KV_CACHE_TYPE", "value": want_kv,
+                              "label": f"Set KV cache quant to {want_kv}"}))
     else:
         out.append(_ok("serving", "kv-cache-quant", f"KV cache type: {kv or want_kv}"))
     return out

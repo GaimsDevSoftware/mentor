@@ -8,9 +8,16 @@ and the task scheduler / builtin actions system.
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+# Grace window: a session opened or touched within this many seconds is NEVER
+# auto-deleted by tidy, even if it looks empty/throwaway. This stops the
+# session_created sweep from reaping the brand-new chat the user just opened
+# and is actively typing in (which would orphan the UI's session id → chat
+# stream 404s). Tidy still cleans genuinely old empty/throwaway sessions.
+_RECENT_GRACE_SECONDS = 900  # 15 minutes
 
 # Names that indicate a throwaway/test session
 _THROWAWAY_NAMES = {
@@ -50,8 +57,36 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
             *([DbSession.owner == owner] if owner else []),
         ).all()
 
+        # Never reap a session the user just opened / is actively using. Protect
+        # both anything touched within the grace window AND the single most-recent
+        # session outright (so an idle-but-open chat is always safe).
+        _now = datetime.utcnow()
+        _grace_cutoff = _now - timedelta(seconds=_RECENT_GRACE_SECONDS)
+
+        def _recently_active(s) -> bool:
+            for ts in (getattr(s, 'last_accessed', None),
+                       getattr(s, 'last_message_at', None),
+                       getattr(s, 'updated_at', None),
+                       getattr(s, 'created_at', None)):
+                if ts is not None and ts >= _grace_cutoff:
+                    return True
+            return False
+
+        _newest_id = None
+        if rows:
+            _newest = max(
+                rows,
+                key=lambda s: (getattr(s, 'last_accessed', None)
+                               or getattr(s, 'created_at', None)
+                               or _now),
+            )
+            _newest_id = _newest.id
+
         for row in rows:
             if getattr(row, 'is_important', False):
+                continue
+            # Protect freshly-opened / most-recent sessions from being reaped.
+            if row.id == _newest_id or _recently_active(row):
                 continue
             if (row.name or "").strip() == "Incognito":
                 deleted_throwaway += 1

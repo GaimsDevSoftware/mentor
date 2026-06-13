@@ -539,6 +539,10 @@ app.include_router(setup_admin_wipe_routes(session_manager))
 from routes.queue_routes import setup_queue_routes
 app.include_router(setup_queue_routes())
 
+# System memory (live VRAM + RAM status, free-memory action)
+from routes.sysmem_routes import setup_sysmem_routes
+app.include_router(setup_sysmem_routes())
+
 # Memory
 from routes.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)

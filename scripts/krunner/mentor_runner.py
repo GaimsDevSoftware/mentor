@@ -9,6 +9,7 @@ import os
 import subprocess
 
 import dbus
+import dbus.exceptions
 import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
@@ -57,8 +58,21 @@ class MentorRunner(dbus.service.Object):
 def main():
     DBusGMainLoop(set_as_default=True)
     bus = dbus.SessionBus()
-    dbus.service.BusName(BUSNAME, bus)
-    MentorRunner(bus, OBJPATH)
+    # Own the bus name exclusively. KRunner re-activates this D-Bus service many
+    # times over a long session; with dbus-python's default (queue) each extra
+    # activation spawns a resident process that never acquires the name yet never
+    # exits — they piled up to ~200 zombie processes (100s of MB) until logout.
+    # do_not_queue=True makes a duplicate activation raise here so it exits cleanly,
+    # leaving exactly one live instance.
+    # Keep strong refs for the process lifetime: if the BusName is garbage-
+    # collected the well-known name is released, so the runner would run but own
+    # nothing (KRunner could never reach it).
+    try:
+        name = dbus.service.BusName(BUSNAME, bus, do_not_queue=True)
+    except dbus.exceptions.NameExistsException:
+        return
+    runner = MentorRunner(bus, OBJPATH)
+    _keep_alive = (name, runner)  # noqa: F841 — referenced for lifetime
     GLib.MainLoop().run()
 
 
