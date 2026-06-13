@@ -336,6 +336,7 @@ _COOKBOOK = r"""<!doctype html><html><head><meta charset="utf-8">
  .btn:disabled{ opacity:.5; cursor:default; transform:none }
  .btn.mini{ padding:5px 10px; font-size:12px; border-radius:8px }
  .btn.mini.rec-tier{ opacity:.55 } .btn.mini.rec-tier.on{ opacity:1; border-color:var(--brass); color:var(--brass); background:color-mix(in srgb,var(--brass) 8%,transparent) }
+ .btn.danger{ color:var(--dim) } .btn.danger:hover{ border-color:var(--err); color:var(--err); background:color-mix(in srgb,var(--err) 8%,transparent) }
  input.fld, textarea.fld{ width:100%; background:var(--tint); color:var(--txt); border:1px solid var(--sep-2);
    border-radius:9px; padding:9px 11px; font:13px/1.4 inherit; outline:none; transition:border-color .15s }
  input.fld:focus, textarea.fld:focus{ border-color:var(--brass) }
@@ -811,7 +812,8 @@ j('/api/model/cached').then(d=>{
     return `<div class="item"><span class="badge ${ready?'ok':''}">${ready?'ready':esc(m.status||'partial')}</span>`
       +`<span class="grow"><div class="name">${esc(m.repo_id||'?')}</div>`
       +`<div class="meta">${esc(m.size||'')}${m.is_gguf?' · GGUF':''}${m.is_local_dir?' · local dir':''}</div></span>`
-      +`${m.repo_id?`<button class="btn mini" data-serve="${esc(m.repo_id)}" data-gguf="${m.is_gguf?'1':''}">Serve</button>`:''}</div>`;
+      +`${m.repo_id?`<button class="btn mini" data-serve="${esc(m.repo_id)}" data-gguf="${m.is_gguf?'1':''}">Serve</button>`
+       +`<button class="btn mini danger" data-del="${esc(m.repo_id)}" data-ollama="${m.is_ollama?'1':''}" data-localdir="${m.is_local_dir?'1':''}" data-path="${esc(m.path||'')}" data-size="${esc(m.size||'')}" title="Delete from local storage">Delete</button>`:''}</div>`;
   }).join('');
 }).catch(e=>{ $('#cached').innerHTML = e===401?adminNote:'<span class="muted">Could not scan the model cache.</span>'; });
 
@@ -861,7 +863,7 @@ $('#serve-btn').addEventListener('click',()=>serveModel($('#serve-repo').value,$
 
 // Per-item buttons: a fit row's Download prefills + runs; a cached row's Serve
 // prefills the form (with a sensible default command) for review, then scrolls.
-document.addEventListener('click',(e)=>{
+document.addEventListener('click',async(e)=>{
   const dl=e.target.closest('[data-dl]');
   if(dl){ $('#dl-repo').value=dl.dataset.dl; downloadModel(dl.dataset.dl,$('#dl-include').value);
     const t=$('#tasks'); if(t) t.scrollIntoView({behavior:'smooth',block:'center'}); return; }
@@ -871,6 +873,24 @@ document.addEventListener('click',(e)=>{
     // confirm with the exact command — that's the review, no form to fill).
     const cmd = sv.dataset.gguf ? ('llama-server -m '+repo+' -ngl 99 -c 8192') : ('ollama run '+base.toLowerCase());
     serveModel(base, cmd, ''); return; }
+  // A cached row's Delete: confirm, then remove the model from local storage.
+  // Ollama models are removed with `ollama rm`; HF-cache / custom-dir models
+  // have their on-disk folder deleted (the server figures out which from the
+  // data-* flags carried on the button).
+  const del=e.target.closest('[data-del]');
+  if(del){
+    const repo=del.dataset.del; const sz=del.dataset.size?(' ('+del.dataset.size+')'):'';
+    if(!confirm('Delete '+repo+sz+' from local storage?\n\nThis permanently removes the model files from disk. You can download it again later.')) return;
+    const old=del.textContent; del.disabled=true; del.textContent='Deleting…';
+    try{
+      const r=await j('/api/model/cached/delete',{method:'POST',body:JSON.stringify({repo_id:repo, is_ollama:del.dataset.ollama==='1', is_local_dir:del.dataset.localdir==='1', path:del.dataset.path||null, platform:'linux'})});
+      if(r&&r.ok){
+        const item=del.closest('.item'); if(item) item.remove();
+        const wrap=$('#cached'); if(wrap && !wrap.querySelector('.item')) wrap.innerHTML='<span class="muted" style="font-size:13px">No downloaded models found in the local cache yet.</span>';
+      } else { alert((r&&(r.error||r.detail))||'Delete failed.'); del.disabled=false; del.textContent=old; }
+    }catch(err){ alert(err===401?'Admin only.':'Delete request failed.'); del.disabled=false; del.textContent=old; }
+    return;
+  }
 });
 
 // In-context AI explainers: a "?" on each section asks the teacher model what it

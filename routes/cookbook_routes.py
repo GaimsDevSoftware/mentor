@@ -51,6 +51,20 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'fi'
 )
 
+
+class ModelCacheDeleteRequest(BaseModel):
+    """Delete a model listed by /api/model/cached. The `is_ollama` /
+    `is_local_dir` / `path` fields mirror that endpoint's output so the server
+    can locate the model on disk; everything is re-validated before use."""
+    repo_id: str
+    is_ollama: bool | None = None
+    is_local_dir: bool | None = None
+    path: str | None = None
+    host: str | None = None
+    ssh_port: str | None = None
+    platform: str | None = None
+
+
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
     _cookbook_state_path = Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
@@ -754,6 +768,88 @@ def setup_cookbook_routes() -> APIRouter:
             logger.warning(f"stderr: {stderr_b.decode(errors='replace')[:500]}")
 
         return {"models": models, "host": host or "local"}
+
+    @router.post("/api/model/cached/delete")
+    async def model_cached_delete(request: Request, req: ModelCacheDeleteRequest):
+        """Delete a cached model from local storage.
+
+        Ollama models are removed with `ollama rm`; HuggingFace-cache and custom
+        model-dir entries have their on-disk folder deleted. Admin-gated, and
+        every value that reaches the filesystem or a remote shell is charset-
+        validated first (repo_id via _validate_serve_model_id, any base dir via
+        _validate_local_dir) — matching the sibling /api/model/cached and
+        /api/model/serve endpoints."""
+        require_admin(request)
+        repo_id = _validate_serve_model_id(req.repo_id)
+        host = _validate_remote_host(req.host)
+        ssh_port = _validate_ssh_port(req.ssh_port)
+        is_ollama = bool(req.is_ollama) or (req.path or "") == "ollama"
+        _pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
+
+        # ── Ollama: `ollama rm <name:tag>` ────────────────────────────────
+        if is_ollama:
+            if host:
+                inner = "ollama rm " + shlex.quote(repo_id)
+                proc = await asyncio.create_subprocess_shell(
+                    f"ssh {_pf}{host} {shlex.quote(inner)}",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                ollama = which_tool("ollama")
+                if not ollama:
+                    return {"ok": False, "error": "ollama not found on PATH"}
+                proc = await asyncio.create_subprocess_exec(
+                    ollama, "rm", repo_id,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+            _out, _err = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode != 0:
+                return {"ok": False, "error": _err.decode(errors="replace").strip() or "ollama rm failed"}
+            return {"ok": True, "repo_id": repo_id, "kind": "ollama"}
+
+        # ── HuggingFace cache / custom model-dir folder ───────────────────
+        # Custom-dir models are keyed by their leaf folder name (no slash) under
+        # their parent `path`; HF-cache models live under <hub>/models--<org>--<name>.
+        raw_path = (req.path or "").strip()
+        path = _validate_local_dir(raw_path) if raw_path and raw_path != "ollama" else None
+        if req.is_local_dir:
+            if "/" in repo_id:
+                raise HTTPException(400, "Invalid id for a local-dir model")
+            if not path:
+                raise HTTPException(400, "Missing path for a local-dir model")
+            base, leaf = path, repo_id
+        else:
+            base = path or "~/.cache/huggingface/hub"
+            leaf = "models--" + repo_id.replace("/", "--")
+        # leaf is derived from a validated repo_id, but assert no traversal.
+        if leaf in ("", ".", "..") or "/" in leaf or "\\" in leaf:
+            raise HTTPException(400, "Refusing to delete — unsafe target")
+
+        if host:
+            inner = "rm -rf " + _shell_path(base.rstrip("/") + "/" + leaf)
+            proc = await asyncio.create_subprocess_shell(
+                f"ssh {_pf}{host} {shlex.quote(inner)}",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            _out, _err = await asyncio.wait_for(proc.communicate(), timeout=60)
+            if proc.returncode != 0:
+                return {"ok": False, "error": _err.decode(errors="replace").strip() or "remote delete failed"}
+            return {"ok": True, "repo_id": repo_id, "kind": "hf"}
+
+        # LOCAL — delete with Python (no shell at all).
+        target = Path(os.path.expanduser(base)) / leaf
+        if not target.exists() and not target.is_symlink():
+            return {"ok": False, "error": f"Not found on disk: {target}"}
+        try:
+            if target.is_symlink():
+                target.unlink()
+            elif target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+        except OSError as e:
+            return {"ok": False, "error": f"Delete failed: {e}"}
+        return {"ok": True, "repo_id": repo_id, "kind": "hf", "path": str(target)}
 
     def _auto_register_image_endpoint(req: ServeRequest, remote: str | None) -> str | None:
         """Register a diffusion model as an image endpoint so it appears in the model selector."""
