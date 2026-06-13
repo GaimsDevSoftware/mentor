@@ -30,13 +30,26 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, n))
 
 
-def _format_probe_failure(model: str, exc: Exception) -> str:
+def _format_probe_failure(model: str, exc: Exception, endpoint: str = "") -> str:
     """Turn a failed research model probe into a user-facing message."""
     detail = getattr(exc, "detail", None)
     status = getattr(exc, "status_code", None)
     err = str(detail if detail is not None else exc).strip()
 
     if status in {401, 403} or "401" in err or "API key" in err or "Unauthorized" in err:
+        # OpenCode (Zen/Go) authenticates with your SUBSCRIPTION credential (the
+        # OAuth token from `opencode auth login`, read from auth.json), NOT a
+        # separately-purchased API key. A 401 here almost always means that
+        # stored credential is missing or has expired (OAuth tokens refresh, and
+        # the saved endpoint copy only updates on re-login) — so say the right
+        # thing instead of telling the user to get an API key they don't need.
+        if "opencode" in (endpoint or "").lower():
+            return (f"OpenCode rejected '{model}' (401). OpenCode uses your subscription, "
+                    f"NOT a separate API key. The usual cause is a model\u2194endpoint "
+                    f"mismatch: a Go-subscription model (e.g. 'qwen3.6-plus') pointed at the "
+                    f"Zen endpoint (/zen/v1) instead of the Go endpoint (/zen/go/v1), or "
+                    f"vice-versa. Check that the research model is assigned to the OpenCode "
+                    f"endpoint that actually serves it (Settings \u2192 Model sources).")
         return f"Model '{model}' requires an API key. Check your endpoint configuration."
 
     if status and err:
@@ -728,7 +741,7 @@ class ResearchHandler:
             logger.info(f"Endpoint probe OK: {model}")
         except Exception as e:
             logger.error(f"Probe failed for {model}: {e}")
-            raise RuntimeError(_format_probe_failure(model, e)) from e
+            raise RuntimeError(_format_probe_failure(model, e, endpoint)) from e
 
     async def call_research_service(
         self,
