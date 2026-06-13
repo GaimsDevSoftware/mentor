@@ -74,6 +74,50 @@ def test_meta_event_carries_contract_fields():
     assert payload["run_id"].startswith("run-")
 
 
+def _turn_end(events):
+    import json
+    for e in events:
+        if e.startswith("data: ") and '"type": "turn_end"' in e:
+            return json.loads(e[6:])
+    return None
+
+
+def test_turn_end_emitted_before_done_clean(monkeypatch):
+    monkeypatch.setattr(agent_runs, "_autocontinue_mode", lambda: "detect")
+
+    async def clean():
+        yield 'data: {"delta": "hello"}\n\n'
+        yield "data: [DONE]\n\n"
+    events = _run_and_collect(clean)
+    _assert_contract(events)                       # still meta + exactly one [DONE]
+    te = _turn_end(events)
+    assert te is not None and te["end_reason"] == "clean"
+    # turn_end must precede the terminal [DONE]
+    assert events.index(next(e for e in events if '"turn_end"' in e)) < events.index("data: [DONE]\n\n")
+
+
+def test_turn_end_truncated_on_finish_reason_length(monkeypatch):
+    monkeypatch.setattr(agent_runs, "_autocontinue_mode", lambda: "detect")
+
+    async def truncated():
+        yield 'data: {"delta": "partial answer"}\n\n'
+        yield 'data: {"type": "finish_reason", "reason": "length"}\n\n'
+        yield "data: [DONE]\n\n"
+    te = _turn_end(_run_and_collect(truncated))
+    assert te is not None and te["end_reason"] == "truncated" and te["resumable"] is True
+
+
+def test_turn_end_off_mode_emits_nothing(monkeypatch):
+    monkeypatch.setattr(agent_runs, "_autocontinue_mode", lambda: "off")
+
+    async def clean():
+        yield 'data: {"delta": "hi"}\n\n'
+        yield "data: [DONE]\n\n"
+    events = _run_and_collect(clean)
+    _assert_contract(events)
+    assert _turn_end(events) is None               # zero behaviour change when off
+
+
 def test_runnow_not_wedged_by_hung_previous_run(monkeypatch):
     """Run-now / rapid re-send: a NEW run must not be blocked forever behind a
     previous run whose cancellation is wedged (e.g. stuck in a long tool call so
