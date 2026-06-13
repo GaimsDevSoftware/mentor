@@ -140,6 +140,17 @@ def get_status(session_id: str) -> Optional[str]:
     return r.status if r else None
 
 
+def _autocontinue_mode() -> str:
+    """Turn-sentinel mode: 'off' | 'detect' | 'resume'. Default 'detect' —
+    classify and surface every turn end, but never auto-resume until the user
+    opts into 'resume'. 'off' restores the original zero-overhead behaviour."""
+    try:
+        from src.settings import get_setting
+        return str(get_setting("autocontinue_mode", "detect") or "detect").strip().lower()
+    except Exception:
+        return "detect"
+
+
 async def _drain(session_id: str, agen: AsyncGenerator[str, None],
                  prev_task: Optional[asyncio.Task] = None,
                  run_id: Optional[str] = None) -> None:
@@ -180,6 +191,56 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
     _publish(run, _meta_event(run_id or "", session_id))
 
     saw_done = False           # did the wrapped generator emit [DONE] itself?
+
+    # ── Turn-sentinel signal tracking ────────────────────────────────────────
+    # Observe (cheaply) how this turn is going so we can classify HOW it ended
+    # and emit a `turn_end` event right before the terminal [DONE]. Substring
+    # gating keeps the hot path cheap — we only json-parse the rare signal
+    # events (finish_reason / aegis_ask), never every delta.
+    _sig = {"content": False, "finish_reason": None, "awaiting_approval": False}
+    _turn_end_sent = [False]
+
+    def _send_turn_end(status: str, *, idle_timeout: bool = False, error_msg: str = "") -> None:
+        if _turn_end_sent[0]:
+            return
+        _turn_end_sent[0] = True
+        if _autocontinue_mode() == "off":
+            return                     # zero behaviour change when disabled
+        try:
+            from src import turn_sentinel
+            cls = turn_sentinel.classify(
+                status=status,
+                saw_content=_sig["content"],
+                finish_reason=_sig["finish_reason"],
+                idle_timeout=idle_timeout,
+                awaiting_approval=_sig["awaiting_approval"],
+                saw_error=bool(error_msg) or status == "error",
+                error_msg=error_msg,
+            )
+        except Exception as _ce:        # never let classification break the stream
+            logger.debug("[turn-sentinel] classify skipped: %s", _ce)
+            return
+        logger.info("[turn-sentinel] %s end_reason=%s resumable=%s ambiguous=%s "
+                    "(content=%s finish_reason=%s)", session_id, cls["end_reason"],
+                    cls["resumable"], cls["ambiguous"], _sig["content"], _sig["finish_reason"])
+        _publish(run, "data: " + json.dumps({"type": "turn_end", "run_id": run_id or "", **cls}) + "\n\n")
+
+    def _track(ev: str) -> None:
+        if _turn_end_sent[0]:
+            return
+        if not _sig["content"] and '"delta"' in ev \
+                and '"thinking": true' not in ev and '"thinking":true' not in ev:
+            _sig["content"] = True
+        elif '"finish_reason"' in ev:
+            try:
+                _d = json.loads(ev.split("data: ", 1)[1]) if "data: " in ev else {}
+                if _d.get("reason"):
+                    _sig["finish_reason"] = _d["reason"]
+            except Exception:
+                pass
+        elif '"aegis_ask"' in ev and 'true' in ev:
+            _sig["awaiting_approval"] = True
+
     try:
         # Manually pump the generator so we can apply a per-chunk idle timeout —
         # `async for` gives no hook to detect an upstream that hangs forever.
@@ -201,6 +262,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
                 # Close the wrapped generator so its own finally (partial-save,
                 # _active_streams cleanup) runs deterministically rather than
                 # waiting for GC.
+                _send_turn_end("error", idle_timeout=True)
                 try:
                     await agen.aclose()
                 except Exception:
@@ -209,6 +271,9 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
             if ev == _DONE_EVENT or ev == "data: [DONE]\n\n":
                 saw_done = True
                 logger.info("[agent-run] %s saw [DONE] from generator", session_id)
+                _send_turn_end("done")     # classify BEFORE forwarding the terminal sentinel
+            else:
+                _track(ev)
             _publish(run, ev)
         if run.status == "running":
             run.status = "done"
@@ -224,6 +289,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
             pass
         # Cancelled runs still get a [DONE] so a still-connected client (or a
         # reconnect replaying the buffer) settles its turn instead of hanging.
+        _send_turn_end("stopped")     # classify BEFORE the sentinel (→ user_stopped)
         if not saw_done:
             _publish(run, _DONE_EVENT)
             saw_done = True
@@ -236,6 +302,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
             "event: error\n"
             f"data: {json.dumps({'error': 'Agent run failed before completion.', 'status': 500})}\n\n",
         )
+        _send_turn_end("error", error_msg=str(e))
     finally:
         # THE guarantee: every run ends with exactly one [DONE], whatever path
         # we took to get here. If the wrapped generator already sent it, don't
@@ -244,6 +311,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         if not saw_done and run.status != "stopped":
             logger.info("[agent-run] %s finally: generator never sent [DONE] (status=%s) — emitting guaranteed [DONE]",
                         session_id, run.status)
+            _send_turn_end(run.status)   # idempotent; classify BEFORE the guaranteed [DONE]
             _publish(run, _DONE_EVENT)
         logger.info("[agent-run] %s closing: waking %d subscriber(s) with end sentinel",
                     session_id, len(run.subscribers))
