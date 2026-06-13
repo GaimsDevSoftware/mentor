@@ -310,6 +310,34 @@ def pop_warn(session_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     return _PENDING_WARN.pop(session_id or "", None)
 
 
+# ── session approval allowlist ───────────────────────────────────────────────
+# Tools the user chose to "approve all like this, for this session" for (the
+# Claude-Code-style don't-ask-again button on the approval dialog), keyed by
+# session_id. In-memory + per-process — a new session or a server restart
+# starts fresh, so a blanket approval can never silently outlive the
+# conversation it was granted in. Session-allowed calls still get AUDITED
+# (band "allow-session") so every auto-approved high-risk call leaves a trail.
+_SESSION_ALLOW: Dict[str, set] = {}
+
+
+def allow_tool_for_session(session_id: Optional[str], tool: str) -> bool:
+    """Auto-approve future high-risk `tool` calls for this session (no re-ask)."""
+    if not session_id or not tool:
+        return False
+    _SESSION_ALLOW.setdefault(session_id, set()).add(tool)
+    return True
+
+
+def session_allowed_tools(session_id: Optional[str]) -> list:
+    """Tools currently auto-approved for this session (for UI / introspection)."""
+    return sorted(_SESSION_ALLOW.get(session_id or "", set()))
+
+
+def clear_session_allow(session_id: Optional[str]) -> None:
+    """Forget a session's blanket approvals (e.g. on session reset)."""
+    _SESSION_ALLOW.pop(session_id or "", None)
+
+
 def _audit(record: Dict[str, Any]) -> None:
     try:
         path = os.path.join(_data_dir(), "aegis_audit.jsonl")
@@ -348,7 +376,19 @@ def guard(tool: str, content: str, *, owner: Optional[str] = None,
     will_ask = (mode == "ask" and score >= block_thr)
     will_block = (mode == "enforce" and score >= block_thr)
     will_warn = (mode == "warn" and score >= warn_thr)
-    band = ("ask" if will_ask else "block" if will_block
+
+    # Session allowlist: if the user already chose "approve all like this" for
+    # this tool this session, don't ask again — turn the ASK into an allow. Only
+    # short-circuits the ASK path (not enforce-block): a hard block stays a block.
+    session_allowed = bool(
+        will_ask and session_id
+        and tool in _SESSION_ALLOW.get(session_id, frozenset())
+    )
+    if session_allowed:
+        will_ask = False
+
+    band = ("allow-session" if session_allowed else
+            "ask" if will_ask else "block" if will_block
             else ("warn" if score >= warn_thr else "allow"))
 
     _audit({
@@ -359,9 +399,14 @@ def guard(tool: str, content: str, *, owner: Optional[str] = None,
         "content_preview": (content or "")[:200],
     })
 
-    if band != "allow":
+    if band not in ("allow", "allow-session"):
         logger.warning("aegis %s tool=%s score=%d reasons=%s",
                        band.upper(), tool, score, "; ".join(reasons))
+
+    # Pre-approved for the session — proceed without prompting (already audited).
+    if session_allowed:
+        logger.info("aegis ALLOW-SESSION tool=%s score=%d (pre-approved this session)", tool, score)
+        return None
 
     if will_ask:
         desc = f"{tool}: ASKING user approval (risk {score})"
