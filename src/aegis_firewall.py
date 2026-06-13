@@ -247,6 +247,22 @@ def _content_excerpt(content: str, limit: int = 1800) -> str:
     return text[:limit].rstrip() + f"\n…(+{len(text) - limit} more chars)"
 
 
+# Literal high-entropy credentials (same shapes as the "literal secret/key"
+# risk pattern). These are masked before the command is shown on screen: the
+# user must see *what* runs to approve it, but a live key doesn't need to flash
+# in the dialog for that decision. Paths / filenames are left intact — they're
+# usually the point of understanding the action. The raw value still reaches
+# the local audit log for forensics.
+_SECRET_LITERALS = re.compile(r"AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}")
+
+
+def _redact_secrets(text: str) -> str:
+    def _mask(m: "re.Match[str]") -> str:
+        s = m.group(0)
+        return f"{s[:6]}…[redacted]"
+    return _SECRET_LITERALS.sub(_mask, text or "")
+
+
 def explain_tool_call(tool: str, content: str) -> List[Dict[str, str]]:
     """Per-match, context-specific explanations for a proposed tool call.
 
@@ -263,7 +279,7 @@ def explain_tool_call(tool: str, content: str) -> List[Dict[str, str]]:
         if not m or why in seen:
             continue
         seen.add(why)
-        snippet = _excerpt_around(text, m)
+        snippet = _redact_secrets(_excerpt_around(text, m))
         tmpl = _EXPLAIN.get(why)
         detail = tmpl.format(snippet=snippet) if tmpl else f"Flagged as {why}: `{snippet}`."
         out.append({"label": why, "snippet": snippet, "detail": detail})
@@ -374,7 +390,7 @@ def guard(tool: str, content: str, *, owner: Optional[str] = None,
             "category": category,
             # Context-specific payload so the UI can explain the action on screen.
             "aegis_explanations": explanations,
-            "aegis_content": _content_excerpt(content),
+            "aegis_content": _redact_secrets(_content_excerpt(content)),
             "message": message,
             "exit_code": 0,  # Don't fail immediately; let UI handle approval
         }
@@ -420,7 +436,7 @@ def guard(tool: str, content: str, *, owner: Optional[str] = None,
             "aegis_reasons": flagged or [f"base:{category}({score})"],
             "aegis_category": category,
             "aegis_explanations": explanations,
-            "aegis_content": _content_excerpt(content),
+            "aegis_content": _redact_secrets(_content_excerpt(content)),
             "aegis_message": wmsg,
         })
         return None
