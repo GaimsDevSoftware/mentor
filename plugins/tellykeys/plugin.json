@@ -1,0 +1,26 @@
+{
+  "name": "tellykeys",
+  "version": "0.2.0",
+  "description": "Fjernkontroll for Google TV / Android TV via TellyKeys. Styr TV-en fra chatten — spill av serier, naviger, søk, juster volum.",
+  "permissions": [
+    "tools",
+    "hooks",
+    "routes"
+  ],
+  "entry": "plugin",
+  "enabled": true,
+  "settings": [
+    {
+      "key": "tellykeys_default_host",
+      "label": "Standard TV IP/host",
+      "type": "text",
+      "default": "10.0.0.2"
+    },
+    {
+      "key": "tellykeys_device_name",
+      "label": "Enhetsnavn for paring",
+      "type": "text",
+      "default": "Odysseus"
+    }
+  ]
+}

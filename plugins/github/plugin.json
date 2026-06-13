@@ -1,0 +1,34 @@
+{
+  "name": "github",
+  "version": "1.0.0",
+  "description": "GitHub integration for Odysseus — commit, push, create PRs, manage branches from Mentor.",
+  "permissions": [
+    "tools",
+    "routes",
+    "hooks"
+  ],
+  "entry": "plugin",
+  "enabled": true,
+  "settings": [
+    {
+      "key": "github_token",
+      "label": "GitHub Personal Access Token",
+      "type": "text",
+      "default": "",
+      "secret": true
+    },
+    {
+      "key": "github_default_repo",
+      "label": "Default repository (owner/repo)",
+      "type": "text",
+      "default": "robert/odysseus"
+    },
+    {
+      "key": "github_auto_open_pr",
+      "label": "Auto-open PR after push",
+      "type": "select",
+      "options": ["true", "false"],
+      "default": "true"
+    }
+  ]
+}
