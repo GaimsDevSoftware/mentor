@@ -322,7 +322,7 @@ def setup_chat_routes(
         # Research injection
         if use_research:
             try:
-                _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
+                _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess, owner)
                 research_ctx = await research_handler.call_research_service(
                     message, _r_ep, _r_model, llm_headers=_r_headers
                 )
@@ -695,7 +695,7 @@ def setup_chat_routes(
 
             # Run research as a background task (survives page refresh)
             if do_research and _research_flags["do"]:
-                _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
+                _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess, _user)
                 _auth_keys = list(_r_headers.keys()) if _r_headers else []
                 logger.info(f"Research endpoint resolved: model={_r_model}, endpoint={_r_ep}, auth_keys={_auth_keys}, sess_headers_keys={list(sess.headers.keys()) if isinstance(sess.headers, dict) else type(sess.headers)}")
 

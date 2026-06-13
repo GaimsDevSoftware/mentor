@@ -37,15 +37,90 @@ def _first_chat_model(models) -> str:
     return (models[0] if models else "")
 
 
-def _resolve_research_endpoint(sess) -> tuple:
-    """Return (endpoint_url, model, headers) for Deep Research, checking admin overrides."""
+def _ep_models(ep) -> list:
+    """Parsed cached_models list for an endpoint (empty = unknown catalog)."""
+    raw = getattr(ep, "cached_models", None)
+    if not raw:
+        return []
+    try:
+        m = json.loads(raw) if isinstance(raw, str) else raw
+        return [str(x).strip() for x in m] if isinstance(m, list) else []
+    except Exception:
+        return []
+
+
+def _base_matches(ep_base: str, resolved_url: str) -> bool:
+    b = (ep_base or "").rstrip("/")
+    r = (resolved_url or "").rstrip("/")
+    return bool(b) and (r == b or r.startswith(b + "/"))
+
+
+def _select_serving_endpoint(eps, model: str, resolved_url: str):
+    """Pure core of the model<->endpoint self-heal. Given the enabled endpoints,
+    the configured `model`, and the resolved chat `url`, return the endpoint to
+    RE-POINT to, or None to keep the resolved one.
+
+    If the resolved endpoint actually lists `model` (or has no catalog yet, i.e.
+    unknown), keep it. Otherwise pick another endpoint whose catalog DOES list
+    `model`. Fixes the recurring OpenCode case where a Go-subscription model
+    (qwen3.6-plus, only on /zen/go/v1) is configured against the Zen endpoint
+    (/zen/v1, which only has qwen3.6-plus-free) -> 401."""
+    model = (model or "").strip()
+    if not model:
+        return None
+    resolved = next((ep for ep in eps if _base_matches(getattr(ep, "base_url", ""), resolved_url)), None)
+    if resolved is not None:
+        cm = _ep_models(resolved)
+        if not cm or model in cm:
+            return None
+    for ep in eps:
+        if ep is resolved:
+            continue
+        if model in _ep_models(ep):
+            return ep
+    return None
+
+
+def _repair_research_endpoint(url, model, headers, owner: str = ""):
+    """Re-point the research endpoint when the configured model isn't served by
+    it but another of the owner's enabled endpoints serves it. Owner-scoped,
+    best-effort (any error -> return unchanged)."""
+    if not url or not (model or "").strip():
+        return url, model, headers
+    try:
+        from src.database import SessionLocal, ModelEndpoint
+        from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
+        db = SessionLocal()
+        try:
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+            if owner:
+                from src.auth_helpers import owner_filter
+                q = owner_filter(q, ModelEndpoint, owner)
+            eps = q.all()
+            target = _select_serving_endpoint(eps, model, url)
+            if target is not None:
+                base = normalize_base(target.base_url or "")
+                logger.warning("[research] model %r not served by the configured endpoint; "
+                               "re-pointing to %r (model<->endpoint self-heal)", model, target.name)
+                return build_chat_url(base), model, build_headers(target.api_key, base)
+            return url, model, headers
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug("[research] endpoint self-heal skipped: %s", e)
+        return url, model, headers
+
+
+def _resolve_research_endpoint(sess, owner: str = "") -> tuple:
+    """Return (endpoint_url, model, headers) for Deep Research, checking admin
+    overrides and self-healing a model<->endpoint mismatch."""
     url, model, headers = resolve_endpoint(
         "research",
         fallback_url=sess.endpoint_url,
         fallback_model=sess.model,
         fallback_headers=sess.headers,
     )
-    return url, model, headers
+    return _repair_research_endpoint(url, model, headers, owner=owner)
 
 
 def _owned_enabled_endpoint(db, owner, endpoint_id=None):
