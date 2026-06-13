@@ -10,6 +10,7 @@
 const POLL_IDLE = 4000;   // ms when nothing is running
 const POLL_BUSY = 1500;   // ms when something is running
 const COLLAPSE_KEY = 'odysseus-activity-collapsed';
+const POSITION_KEY = 'odysseus-activity-pos';
 
 let _panel, _body, _dot, _timer = null, _busy = false;
 
@@ -59,15 +60,87 @@ function _build() {
 
   const collapsed = localStorage.getItem(COLLAPSE_KEY) === '1';
   if (collapsed) { _body.style.display = 'none'; caret.textContent = '▸'; }
-  head.addEventListener('click', () => {
-    const now = _body.style.display === 'none';
-    _body.style.display = now ? '' : 'none';
-    caret.textContent = now ? '▾' : '▸';
-    localStorage.setItem(COLLAPSE_KEY, now ? '0' : '1');
-  });
 
   _panel.append(head, _body);
   document.body.appendChild(_panel);
+
+  _restorePosition();
+  _makeDraggable(head, caret);
+}
+
+function _toggleCollapse(caret) {
+  const now = _body.style.display === 'none';
+  _body.style.display = now ? '' : 'none';
+  caret.textContent = now ? '▾' : '▸';
+  localStorage.setItem(COLLAPSE_KEY, now ? '0' : '1');
+}
+
+// Clamp a desired (left, top) inside the viewport, switch the panel from its
+// default right/bottom anchoring to left/top, and apply it.
+function _applyPos(left, top) {
+  const w = _panel.offsetWidth || 360;
+  const maxLeft = Math.max(0, window.innerWidth - w);
+  const maxTop = Math.max(0, window.innerHeight - 40);   // keep the header grabbable
+  left = Math.min(Math.max(0, left), maxLeft);
+  top = Math.min(Math.max(0, top), maxTop);
+  _panel.style.left = left + 'px';
+  _panel.style.top = top + 'px';
+  _panel.style.right = 'auto';
+  _panel.style.bottom = 'auto';
+}
+
+function _savePos() {
+  try {
+    const r = _panel.getBoundingClientRect();
+    localStorage.setItem(POSITION_KEY, JSON.stringify({ left: r.left, top: r.top }));
+  } catch {}
+}
+
+function _restorePosition() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(POSITION_KEY) || 'null'); } catch {}
+  if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') {
+    _applyPos(saved.left, saved.top);
+  }
+  // If the window shrinks, re-clamp so the panel never strands off-screen.
+  window.addEventListener('resize', () => {
+    if (_panel.style.left && _panel.style.left !== 'auto') {
+      _applyPos(parseFloat(_panel.style.left), parseFloat(_panel.style.top));
+    }
+  });
+}
+
+// Drag the panel by its header. A press that doesn't move past a small
+// threshold is treated as a click → collapse/expand, so the header keeps both
+// behaviours (move + toggle).
+function _makeDraggable(head, caret) {
+  let startX = 0, startY = 0, baseLeft = 0, baseTop = 0, dragging = false, moved = false;
+  head.style.cursor = 'grab';
+  head.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    dragging = true; moved = false;
+    const r = _panel.getBoundingClientRect();
+    baseLeft = r.left; baseTop = r.top;
+    startX = e.clientX; startY = e.clientY;
+    head.style.cursor = 'grabbing';
+    try { head.setPointerCapture(e.pointerId); } catch {}
+  });
+  head.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX, dy = e.clientY - startY;
+    if (!moved && Math.abs(dx) + Math.abs(dy) > 4) moved = true;   // drag threshold
+    if (moved) _applyPos(baseLeft + dx, baseTop + dy);
+  });
+  const end = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    head.style.cursor = 'grab';
+    try { head.releasePointerCapture(e.pointerId); } catch {}
+    if (moved) _savePos();          // a real drag → remember the new spot
+    else _toggleCollapse(caret);    // a plain click → collapse/expand
+  };
+  head.addEventListener('pointerup', end);
+  head.addEventListener('pointercancel', end);
 }
 
 function _renderJob(j) {
