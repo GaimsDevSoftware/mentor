@@ -105,18 +105,35 @@ def _to_utc_naive(dt):
     return datetime(dt.year, dt.month, dt.day), True
 
 
+def _build_dav_client(url: str, username: str, password: str):
+    """Construct a CalDAV client with automatic redirects DISABLED (SSRF guard).
+
+    ``validate_caldav_url`` resolves and vets the *initial* host, but caldav's
+    underlying HTTP session follows 3xx redirects by default — so a URL that
+    passes validation can still be redirected at request time to loopback /
+    link-local / private space, re-opening the SSRF the host check closes. Pin
+    the session to zero redirects so any 3xx raises instead of silently
+    following an attacker-chosen ``Location``. Backport of upstream #2663.
+    """
+    import caldav
+    client = caldav.DAVClient(url=url, username=username, password=password)
+    # DAVClient exposes no per-request redirect flag; set it on the session,
+    # which exists right after __init__.
+    client.session.max_redirects = 0
+    return client
+
+
 def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
     """The actual sync — synchronous, intended to run in a threadpool.
     Returns counts: {calendars, events, deleted, errors}."""
     # Lazy imports so a missing `caldav` dep doesn't break app startup —
     # the integrations form still works, sync just no-ops with an error.
-    import caldav
     from caldav.lib.error import AuthorizationError, NotFoundError
     from core.database import CalendarCal, CalendarEvent, SessionLocal
 
     result = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
 
-    client = caldav.DAVClient(url=url, username=username, password=password)
+    client = _build_dav_client(url, username, password)
 
     # Discovery: try principal → calendars first; if the server doesn't
     # support discovery (or the URL points directly at a calendar), fall
