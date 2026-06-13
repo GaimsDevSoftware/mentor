@@ -21,6 +21,26 @@ def _sanitize_export_filename(name: str) -> str:
     return name[:128]
 
 
+def _content_to_text(content) -> str:
+    """Flatten a message's content to plain text for text-based exports.
+
+    History entries carry three shapes: a plain string, a multimodal list of
+    content blocks (vision/image attachments), or None (assistant turns that
+    persisted only native tool_calls). The txt/html/md exporters join and
+    string-munge this value, so a list crashed the export (TypeError on join,
+    AttributeError on .replace) and None rendered as the literal "None".
+    Coerce to the text blocks, returning "" for anything without text.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            b.get("text", "") for b in content
+            if isinstance(b, dict) and b.get("text")
+        )
+    return ""
+
+
 def _verify_session_owner(request: Request, session_id: str, session_manager=None):
     """Verify the current user owns the session. Raises 404 if not.
 
@@ -182,7 +202,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
-            rows = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False).all()
+            rows = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False, DbSession.owner == user).all()
             for row in rows:
                 folder_map[row.id] = row.folder
                 token_map[row.id] = (row.total_input_tokens or 0) + (row.total_output_tokens or 0)
@@ -204,12 +224,14 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 r[0] for r in db.query(Document.session_id)
                 .filter(Document.is_active == True,
                         Document.current_content != None,
-                        func.trim(Document.current_content) != "")
+                        func.trim(Document.current_content) != "",
+                        Document.owner == user)
                 .distinct().all()
             )
             img_session_ids = set(
                 r[0] for r in db.query(GalleryImage.session_id)
-                .filter(GalleryImage.session_id != None)
+                .filter(GalleryImage.session_id != None,
+                        GalleryImage.owner == user)
                 .distinct().all()
             )
         finally:
@@ -462,22 +484,25 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             ids = body.get("ids", [])
         except Exception:
             ids = []
+        deleted_count = 0
         for sid in ids:
             try:
                 _verify_session_owner(request, sid, session_manager)
-                session_manager.delete_session(sid)
+                
+                # Enforce "starred" protection consistent with single-session delete
                 db = SessionLocal()
                 try:
-                    db.query(_CM).filter(_CM.session_id == sid).delete()
-                    db.query(DbSession).filter(DbSession.id == sid).delete()
-                    db.commit()
-                except Exception:
-                    db.rollback()
+                    db_sess = db.query(DbSession).filter(DbSession.id == sid).first()
+                    if db_sess and db_sess.is_important:
+                        continue
                 finally:
                     db.close()
+
+                if session_manager.delete_session(sid):
+                    deleted_count += 1
             except Exception:
                 pass
-        return {"deleted": len(ids)}
+        return {"deleted": deleted_count}
 
     @router.delete("/session/{sid}")
     def delete_session(request: Request, sid: str):
@@ -692,7 +717,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             lines = []
             for m in session.history:
                 lines.append(f"[{m.role.upper()}]")
-                lines.append(m.content)
+                lines.append(_content_to_text(m.content))
                 lines.append("")
             out_name = filename or f"conversation_{safe_name}_{timestamp}.txt"
             return Response(
@@ -715,7 +740,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             ]
             for m in session.history:
                 cls = "user" if m.role == "user" else "ai"
-                content = m.content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                content = _content_to_text(m.content).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 content = content.replace("\n", "<br>")
                 html_parts.append(f'<div class="msg {cls}"><div class="role">{m.role}</div>{content}</div>')
             html_parts.append("</body></html>")
@@ -734,7 +759,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         markdown_lines.append("\n---\n")
         for message in session.history:
             role = message.role.upper()
-            content = message.content
+            content = _content_to_text(message.content)
             markdown_lines.append(f"### {role}")
             markdown_lines.append(f"{content}\n")
             markdown_lines.append("---\n")
@@ -924,7 +949,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         }
         _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
-            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).all()
+            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).limit(2000).all()
             folder_map = {r.id: r.folder for r in rows}
             # Precompute per-session message counts in TWO aggregate queries
             # instead of 1–3 queries PER session — with many chats the per-row

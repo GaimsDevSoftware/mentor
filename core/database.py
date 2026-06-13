@@ -1,7 +1,7 @@
 import os
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
@@ -9,6 +9,12 @@ from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship, sessionmaker, backref
 
 logger = logging.getLogger(__name__)
+
+
+def utcnow_naive() -> datetime:
+    """Return naive UTC for existing DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 # Create base class for declarative models
 Base = declarative_base()
@@ -1436,7 +1442,11 @@ class CalendarCal(TimestampMixin, Base):
     owner = Column(String, nullable=True, index=True)
     name  = Column(String, nullable=False)
     color = Column(String, default="#5b8abf")
-    source = Column(String, default="local")  # "local" or "timetree"
+    source = Column(String, default="local")  # "local" or "caldav"
+    # UUID of the CalDAV account in user prefs that owns this calendar.
+    # NULL for local calendars and for CalDAV calendars created before
+    # multi-account support was added (treated as "use any configured account").
+    account_id = Column(String, nullable=True, index=True)
 
     events = relationship("CalendarEvent", back_populates="calendar", cascade="all, delete-orphan")
 
@@ -1463,6 +1473,10 @@ class CalendarEvent(TimestampMixin, Base):
     importance  = Column(String, default="normal")    # low | normal | high | critical
     event_type  = Column(String, nullable=True)        # work | personal | health | travel | meal | social | admin | other
     last_pinged = Column(DateTime, nullable=True)      # last time the assistant pinged about this event
+    # "caldav" = pulled from a CalDAV server (so the sync may prune it when it
+    # vanishes upstream). NULL/local = created locally (agent, email triage, or
+    # a UI event whose write-back failed) and must NOT be pruned by the sync.
+    origin      = Column(String, nullable=True, index=True)
 
     calendar = relationship("CalendarCal", back_populates="events")
 
@@ -1594,9 +1608,38 @@ def init_db():
     _migrate_seed_email_account()
     _migrate_add_calendar_metadata()
     _migrate_add_calendar_is_utc()
+    _migrate_add_calendar_origin()
+    _migrate_add_calendar_account_id()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
+    _migrate_backfill_task_folders()
+
+
+def _migrate_backfill_task_folders():
+    """Backfill folder='Tasks' on pre-existing task/research sessions.
+
+    Sessions created by the task scheduler (LLM tasks, action tasks, research
+    runs) now set folder='Tasks' at creation time.  This migration tags any
+    older sessions that predate that assignment.  Idempotent — only touches
+    rows where folder is NULL or empty and the title matches known prefixes.
+    """
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))]
+            if "folder" not in cols:
+                return
+            res = conn.execute(text(
+                "UPDATE sessions SET folder = 'Tasks' "
+                "WHERE (folder IS NULL OR folder = '') "
+                "AND (name LIKE '[Task] %' OR name LIKE '[Research] %')"
+            ))
+            conn.commit()
+            if res.rowcount:
+                logging.getLogger(__name__).info(
+                    f"Backfilled folder='Tasks' on {res.rowcount} task/research sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"task folder backfill: {e}")
 
 
 def _migrate_add_email_smtp_security():
@@ -1734,6 +1777,49 @@ def _migrate_add_calendar_is_utc():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"is_utc migration failed: {e}")
+
+
+def _migrate_add_calendar_origin():
+    """Add `origin` to calendar_events so the CalDAV sync can tell server-pulled
+    rows (prunable when they vanish upstream) from locally-created ones (agent /
+    email triage / failed write-back), which must never be pruned. Idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(calendar_events)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "origin" not in columns:
+            conn.execute("ALTER TABLE calendar_events ADD COLUMN origin TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_calendar_events_origin ON calendar_events(origin)")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'origin' column to calendar_events")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"calendar_events.origin migration failed: {e}")
+
+
+def _migrate_add_calendar_account_id():
+    """Add `account_id` to calendars so each CalDAV-backed calendar knows which
+    credential set (from caldav_accounts in user prefs) owns it. Idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(calendars)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "account_id" not in columns:
+            conn.execute("ALTER TABLE calendars ADD COLUMN account_id TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_calendars_account_id ON calendars(account_id)")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'account_id' column to calendars")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"calendars.account_id migration failed: {e}")
 
 
 def _migrate_add_calendar_metadata():
