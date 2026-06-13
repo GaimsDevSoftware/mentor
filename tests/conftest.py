@@ -2,6 +2,19 @@
 import sys
 import os
 import types
+import tempfile
+
+# Tests must NEVER touch the user's real data/app.db. core.database reads
+# DATABASE_URL at import and runs create_all() on it, so point it at a fresh
+# throwaway SQLite file BEFORE anything imports core.database. setdefault() so
+# an explicit DATABASE_URL (e.g. CI) still wins.
+_test_db = os.path.join(tempfile.gettempdir(), "odysseus_pytest.db")
+try:
+    if os.path.exists(_test_db):
+        os.remove(_test_db)
+except OSError:
+    pass
+os.environ.setdefault("DATABASE_URL", "sqlite:///" + _test_db)
 import importlib.util
 from unittest.mock import MagicMock
 
