@@ -296,4 +296,25 @@ def setup_code_routes() -> APIRouter:
         _load_persisted_jobs()
         return _jobs.get(job_id) or {"error": "no such job"}
 
+    @router.get("/api/code/jobs")
+    async def jobs_list(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Read-only: recent code jobs (newest first) with a short live-log tail.
+
+        Powers the always-visible activity panel so the user can see what the
+        coder is doing in the background without opening each job's log.
+        """
+        _load_persisted_jobs()
+        out = []
+        for jid, j in sorted(_jobs.items(), key=lambda kv: kv[1].get("started_at", 0), reverse=True)[:8]:
+            ll = j.get("live_log") or []
+            out.append({
+                "id": jid,
+                "status": j.get("status"),
+                "stage": j.get("stage"),
+                "started_at": j.get("started_at"),
+                "finished_at": j.get("finished_at"),
+                "tail": ll[-15:],
+            })
+        return {"jobs": out}
+
     return router
