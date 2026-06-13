@@ -195,7 +195,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 session.message_count = len(session.history)
                 db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
                 if db_session:
-                    db_session.message_count = len(session.history)
+                    db_session.message_count = len(new_history)
                     from datetime import datetime, timezone
                     db_session.updated_at = datetime.now(timezone.utc)
 
@@ -581,11 +581,11 @@ def setup_history_routes(session_manager) -> APIRouter:
                 metadata={"compacted": True, "messages_removed": len(older)},
             )
             new_history = [system_summary, summary_msg] + list(recent)
-            session.history = new_history
-            session.message_count = len(session.history)
-            logger.info(f"Compact: session {session_id} history now has {len(session.history)} messages (was {msg_count_before})")
 
-            # Update DB: delete old messages, insert summary
+            # Update DB FIRST (delete old messages, insert summary). Only mutate
+            # the in-memory session AFTER the commit succeeds — otherwise a failed
+            # DB write leaves RAM compacted while the DB still holds the full
+            # history, a permanent count/replay desync.
             db = SessionLocal()
             try:
                 db_msgs = db.query(DbChatMessage).filter(
@@ -626,9 +626,17 @@ def setup_history_routes(session_manager) -> APIRouter:
                     db_session.message_count = len(session.history)
                     db_session.updated_at = datetime.now(timezone.utc)
                 db.commit()
+            except Exception as _ce:
+                db.rollback()
+                logger.error("Compact DB write failed for %s; conversation left unchanged: %s", session_id, _ce)
+                raise HTTPException(500, "Compaction failed — conversation left unchanged.")
             finally:
                 db.close()
 
+            # DB committed — NOW it is safe to swap the in-memory history.
+            session.history = new_history
+            session.message_count = len(new_history)
+            logger.info(f"Compact: session {session_id} history now has {len(new_history)} messages (was {msg_count_before})")
             session_manager.save_sessions()
 
             used_after = estimate_tokens(session.get_context_messages())

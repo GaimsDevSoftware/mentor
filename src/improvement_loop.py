@@ -667,6 +667,12 @@ async def _apply(data: Dict[str, Any], *, spec: str, owner: Optional[str],
                  candidate_kind: str = "") -> Dict[str, Any]:
     """Apply a teacher response. Returns a summary of what changed."""
     minconf = _min_confidence()
+    # Auto-minted RULES are GLOBAL (regelverk has no owner), so a single user's
+    # turn could otherwise activate a rule that changes behaviour for EVERYONE.
+    # Default to queuing them as DRAFT (human-review-gated) by using an
+    # unreachable activation threshold; opt into auto-activation explicitly.
+    # (Skills are already owner-scoped via do_manage_skills(owner=...).)
+    _rule_minconf = minconf if _get("improve_rules_auto_activate", False) else 2.0
     applied = {"skill": None, "skill_status": None, "skill_reason": None,
                "skill_skipped": None, "rules": []}
 
@@ -726,7 +732,7 @@ async def _apply(data: Dict[str, Any], *, spec: str, owner: Optional[str],
                 source="self-improvement",
                 teacher_model=spec,
                 confidence=float(r.get("confidence", 0.0) or 0.0),
-                min_confidence=minconf,
+                min_confidence=_rule_minconf,
                 session_id=session_id,
             )
             applied["rules"].append({"rule": r.get("rule"),

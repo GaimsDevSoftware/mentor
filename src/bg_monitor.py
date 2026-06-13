@@ -110,6 +110,18 @@ async def _run_followup(rec: dict) -> bool:
 
     full, tool_events = await _drain_agent(sess, context)
 
+    # RE-CHECK after the (awaited) drain: a live turn may have STARTED while we
+    # were generating. add_message/save_sessions are synchronous (atomic under
+    # asyncio's cooperative scheduling — no await between here and the write),
+    # so re-checking now closes the interleave window the initial check left open.
+    try:
+        from src import agent_runs
+        if agent_runs.is_active(sess.id):
+            logger.info("bg-followup: session %s went live during drain — deferring job %s", sess.id, rec.get("id"))
+            return False
+    except Exception:
+        pass
+
     # Persist ONLY the assistant continuation so it renders as a normal agent
     # turn — a standard chat bubble plus `tool_events` that the frontend
     # rebuilds into the usual agent-thread tool cards (chatRenderer:1494). The
