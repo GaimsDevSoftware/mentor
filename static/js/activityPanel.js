@@ -160,9 +160,10 @@ function _renderJob(j) {
 }
 
 async function _tick() {
-  const [code, sc] = await Promise.all([
+  const [code, sc, heal] = await Promise.all([
     _get('/api/code/jobs'),
     _get('/api/plugins/self_coder/status'),
+    _get('/api/manage/autoheal'),
   ]);
 
   const parts = [];
@@ -184,6 +185,25 @@ async function _tick() {
       `<div style="display:flex;gap:6px;align-items:baseline"><span style="color:var(--warn,#e6a23c)">●</span>` +
       `<span style="flex:1">Self-coder · ${st}${age}</span></div>` +
       (detail ? `<div style="margin-top:4px;color:var(--dim,#9a9aa6);white-space:pre-wrap">${detail}</div>` : '') +
+      `</div>`
+    );
+  }
+
+  // Auto-heal events: a model silently switched (quota/offline → fallback).
+  // Surface recent ones (last hour) so a behind-the-scenes model change is
+  // never invisible to the user. (Read-only /api/manage/autoheal.)
+  const _now = Date.now() / 1000;
+  const heals = ((heal && heal.heals) || [])
+    .filter(h => h && h.ts && (_now - h.ts) < 3600)
+    .slice(-3).reverse();
+  for (const h of heals) {
+    const oldm = _esc(h.old || h.old_model || '?');
+    const newm = _esc(h.new || h.new_model || '?');
+    parts.push(
+      `<div style="margin:6px 0;padding:6px 8px;border-radius:8px;background:var(--tint,#23232a)">` +
+      `<div style="display:flex;gap:6px;align-items:baseline"><span style="color:var(--ok,#30d158)">↻</span>` +
+      `<span style="flex:1;min-width:0">Model auto-switched · ${_esc(h.role || '')}: ${oldm} → ${newm} · ${_ago(h.ts)}</span></div>` +
+      (h.reason ? `<div style="margin-top:4px;color:var(--dim,#9a9aa6)">${_esc(h.reason)}</div>` : '') +
       `</div>`
     );
   }
