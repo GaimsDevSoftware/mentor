@@ -3712,7 +3712,7 @@ async function initUnifiedIntegrations() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = format === 'csv' ? 'odysseus-contacts.csv' : 'odysseus-contacts.vcf';
+        a.download = format === 'csv' ? 'mentor-contacts.csv' : 'mentor-contacts.vcf';
         document.body.appendChild(a);
         a.click();
         a.remove();
