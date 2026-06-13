@@ -122,7 +122,12 @@ export function hasUnclosedThinkTag(text) {
 }
 
 export function startsWithReasoningPrefix(text) {
-  return /^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )/i.test(text || '');
+  // First-person openers ("I need / I can / I will / I should") were removed:
+  // real answers — especially from cloud models — routinely start that way, and
+  // matching them hid the reply as "thinking". Keep the explicit "thinking:" /
+  // "reasoning:" tags and the third-person narration openers, which almost never
+  // begin a genuine reply.
+  return /^\s*(?:thinking(?:\s+process)?\s*:|reasoning\s*:|the user |they are |the question )/i.test(text || '');
 }
 
 function normalizePlainThinking(text) {

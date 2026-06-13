@@ -1327,6 +1327,12 @@ try { window.turnManager = turnManager; } catch (_) {}
       let metrics = null;
       let isThinking = false;
       let thinkingStartTime = null;
+      // Only models that stream reasoning as plain (untagged) text — i.e. local
+      // / self-hosted endpoints — should trigger the "reasoning prefix" thinking
+      // heuristic below. Cloud models (Claude, etc.) send native thinking deltas,
+      // so running it for them hid normal replies opening with "I can…/The
+      // question…". The backend sets this on the model_info event.
+      let _plainReasoningModel = false;
       // Streaming TTS: synthesize sentence-by-sentence during streaming
       const streamingTTS = !!(window.aiTTSManager && window.aiTTSManager.autoPlay && window.aiTTSManager.available);
       if (streamingTTS) window.aiTTSManager.streamingStart();
@@ -1824,7 +1830,7 @@ try { window.turnManager = turnManager; } catch (_) {}
                 // Detect non-tag thinking patterns: "Thinking:", "Thinking Process:", Gemma-style reasoning
                 // These patterns don't use <think> tags, so we simulate unclosed thinking during streaming
                 const _replyPrefixes = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
-                if (!hasUnclosedThink && !roundText.includes('<think')) {
+                if (_plainReasoningModel && !hasUnclosedThink && !roundText.includes('<think')) {
                   const _trimmedRT = roundText.trimStart();
                   const _isReasoning = markdownModule.startsWithReasoningPrefix(_trimmedRT);
                   if (_isReasoning) {
@@ -2163,6 +2169,7 @@ try { window.turnManager = turnManager; } catch (_) {}
                 }
                 continue;
               } else if (json.type === 'model_info') {
+                _plainReasoningModel = !!json.plain_reasoning;
                 // Update role label with model name as soon as we know it
                 if (!_isBg && holder) {
                   const roleEl = holder.querySelector('.role');
@@ -2561,6 +2568,16 @@ try { window.turnManager = turnManager; } catch (_) {}
                   }).catch(e => console.error('Failed to load aegis-approval module:', e));
 
                   continue;
+                }
+
+                // --- Aegis warn notice (Cowork-style: ran anyway, flag it) ---
+                // Unlike aegis_ask this does NOT block or `continue`: the tool
+                // already executed, so we show a non-blocking banner and let the
+                // normal tool-output rendering below proceed as usual.
+                if (json.aegis_warn) {
+                  import('./aegis-approval.js').then(aegisModule => {
+                    if (aegisModule.showAegisWarning) aegisModule.showAegisWarning(json);
+                  }).catch(e => console.error('Failed to load aegis-approval module:', e));
                 }
 
                 // --- Update the current thread node ---

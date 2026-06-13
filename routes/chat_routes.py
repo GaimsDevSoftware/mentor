@@ -808,7 +808,19 @@ def setup_chat_routes(
 
             # Send model name early so the frontend can show it during streaming
             _model_suffix = "Research" if do_research else None
-            _model_info = {"type": "model_info", "model": sess.model}
+            # Whether this turn's model may stream reasoning as plain (untagged)
+            # prose — true only for local / self-hosted endpoints. Cloud models
+            # (Claude, etc.) send native thinking deltas, so the frontend's
+            # plain-text "reasoning prefix" heuristic must NOT run for them: it
+            # was hiding normal cloud replies that open with "I can…/The
+            # question…" as if they were the model thinking out loud.
+            try:
+                from src.endpoint_resolver import _is_local_base
+                _plain_reasoning = _is_local_base(getattr(sess, "endpoint_url", "") or "")
+            except Exception:
+                _plain_reasoning = False
+            _model_info = {"type": "model_info", "model": sess.model,
+                           "plain_reasoning": _plain_reasoning}
             if _model_suffix:
                 _model_info["suffix"] = _model_suffix
             if ctx.preset.character_name:
