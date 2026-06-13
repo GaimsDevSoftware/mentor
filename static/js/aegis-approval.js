@@ -63,6 +63,10 @@ export function showAegisApproval(toolCall, result) {
         <button class="aegis-btn aegis-btn-approve" data-action="approve">
           Approve & Continue
         </button>
+        <button class="aegis-btn aegis-btn-approve-all" data-action="approve-all"
+                title="Approve this and stop asking about ${escapeHtml(result.tool)} calls for the rest of this session">
+          ✓ Approve all <code>${escapeHtml(result.tool)}</code> this session
+        </button>
       </div>
     </div>
   `;
@@ -301,6 +305,7 @@ export function showAegisApproval(toolCall, result) {
 
     .aegis-approval-actions {
       display: flex;
+      flex-wrap: wrap;
       gap: 12px;
       padding: 16px 24px 24px;
       border-top: 1px solid #e5e5ea;
@@ -338,6 +343,27 @@ export function showAegisApproval(toolCall, result) {
       box-shadow: 0 4px 12px rgba(255, 69, 58, 0.3);
     }
 
+    /* "Approve all like this" wraps to its own full-width row below the
+       primary deny/approve pair — a deliberately lower-key, secondary action. */
+    .aegis-btn-approve-all {
+      flex-basis: 100%;
+      background: #fff3cd;
+      color: #664d03;
+      border: 1px solid #ffe08a;
+      font-weight: 600;
+    }
+
+    .aegis-btn-approve-all code {
+      font-family: 'Menlo', 'Monaco', monospace;
+      background: rgba(0,0,0,0.06);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    .aegis-btn-approve-all:hover {
+      background: #ffe9a8;
+    }
+
     @keyframes pulse {
       0%, 100% { transform: scale(1); }
       50% { transform: scale(1.2); }
@@ -366,6 +392,7 @@ export function showAegisApproval(toolCall, result) {
   // Handle buttons
   const denyBtn = overlay.querySelector('[data-action="deny"]');
   const approveBtn = overlay.querySelector('[data-action="approve"]');
+  const approveAllBtn = overlay.querySelector('[data-action="approve-all"]');
   const closeBtn = overlay.querySelector('.aegis-close');
 
   denyBtn.addEventListener('click', () => {
@@ -375,6 +402,13 @@ export function showAegisApproval(toolCall, result) {
   approveBtn.addEventListener('click', () => {
     handleAegisApproval(approvalId, true);
   });
+
+  if (approveAllBtn) {
+    approveAllBtn.addEventListener('click', () => {
+      // Approve this call AND auto-approve future like-tool calls this session.
+      handleAegisApproval(approvalId, true, true);
+    });
+  }
 
   closeBtn.addEventListener('click', () => {
     handleAegisApproval(approvalId, false);
@@ -521,7 +555,7 @@ function _ensureAegisWarnStyle() {
 /**
  * Handle approval/denial decision
  */
-export function handleAegisApproval(approvalId, approved) {
+export function handleAegisApproval(approvalId, approved, approveSimilar = false) {
   const approval = _aegisApprovals.get(approvalId);
   if (!approval) return;
 
@@ -534,9 +568,15 @@ export function handleAegisApproval(approvalId, approved) {
     setTimeout(() => dialog.remove(), 300);
   }
 
-  // Dispatch event so chat.js can continue or stop execution
+  // Dispatch event so chat.js can continue or stop execution. `approveSimilar`
+  // (+ tool) tells chat.js to also register a session-wide allow for this tool
+  // so the gate stops asking about it for the rest of the session.
   const event = new CustomEvent('aegis-decision', {
-    detail: { approvalId, approved, toolCall: approval.toolCall }
+    detail: {
+      approvalId, approved, approveSimilar,
+      tool: (approval.result && approval.result.tool) || (approval.toolCall && approval.toolCall.tool) || '',
+      toolCall: approval.toolCall,
+    }
   });
   document.dispatchEvent(event);
 }

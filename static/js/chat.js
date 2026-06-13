@@ -2613,6 +2613,18 @@ try { window.turnManager = turnManager; } catch (_) {}
                         if (event.detail.approved) {
                           // User approved — send continuation message to server
                           console.log('Aegis approval granted for:', json.tool);
+                          // "Approve all like this" → register a session-wide allow
+                          // for this tool so the gate stops asking about it. Best-
+                          // effort + non-blocking; the continuation proceeds either way.
+                          if (event.detail.approveSimilar) {
+                            const _sid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+                            fetch(`${API_BASE}/api/aegis/allow-session`, {
+                              method: 'POST', credentials: 'same-origin',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ session_id: _sid, tool: event.detail.tool || json.tool }),
+                            }).catch(() => {});
+                            try { uiModule.showToast(`Aegis: approving all ${event.detail.tool || json.tool} this session`, 4000); } catch (_) {}
+                          }
                           // The server will retry the same tool call with aegis_override flag
                           _sendMessage(`@continue aegis approval: proceed with ${json.tool}`, { _aegis_override_id: approvalId });
                         } else {
