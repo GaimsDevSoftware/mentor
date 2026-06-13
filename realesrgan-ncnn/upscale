@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Real-ESRGAN ncnn-vulkan wrapper. Usage: ./upscale input.jpg [output.png] [model] [scale]
+# Models: realesrgan-x4plus (default), realesrgan-x4plus-anime, realesr-animevideov3-x4
+set -e
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IN="$1"; OUT="${2:-${1%.*}_upscaled.png}"; MODEL="${3:-realesrgan-x4plus}"; SCALE="${4:-4}"
+"$DIR/realesrgan-ncnn-vulkan" -i "$IN" -o "$OUT" -n "$MODEL" -s "$SCALE" -m "$DIR/models"
+echo "-> $OUT"

@@ -1,0 +1,22 @@
+{
+    "project": "Gmail Cleanup & Football Stats",
+    "active_accounts": [
+        {
+            "name": "rakanin@gmail.com",
+            "status": "connected",
+            "accounts": 3,
+            "gmail_user": "rakanin@gmail.com"
+        }
+    ],
+    "tasks": [
+        {
+            "desc": "Rydd opp i innboks (spammfilter)",
+            "priority": "high"
+        },
+        {
+            "desc": "F\u00f8lg RBK og Norge landslaget fotball",
+            "type": "preference"
+        }
+    ],
+    "memory_backup": "Dette systemet holder styr p\u00e5 ting selv n\u00e5r modell-sesjonen d\u00f8r."
+}

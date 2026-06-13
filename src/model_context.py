@@ -101,8 +101,8 @@ KNOWN_CONTEXT_WINDOWS = {
 
     # --- Mentor persona tags (built FROM gemma4:26b) ---
     'mentor:26b-long': 131072,
-    'mentor:26b': 32768,
-    'mentor': 32768,
+    'mentor:26b': 131072,
+    'mentor': 131072,
 
     # --- Mistral ---
     'mistral-large': 128000,

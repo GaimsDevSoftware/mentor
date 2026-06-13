@@ -1,0 +1,15 @@
+[Unit]
+Description=Odysseus UI
+After=network.target
+
+[Service]
+Type=simple
+User=robert
+WorkingDirectory=/home/robert/odysseus
+ExecStart=/home/robert/odysseus/venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7000
+Restart=always
+RestartSec=3
+EnvironmentFile=-/home/robert/odysseus/.env
+
+[Install]
+WantedBy=multi-user.target
