@@ -242,6 +242,12 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
                 pass
         elif '"aegis_ask"' in ev and 'true' in ev:
             _sig["awaiting_approval"] = True
+        elif '"type": "ask_user"' in ev:
+            # Plan-mode / clarification: the agent posed a multiple-choice
+            # question and ENDED the turn to wait for the user's pick (#638).
+            # Classify as awaiting-user so the sentinel never auto-resumes over
+            # a pending choice — same treatment as a pending aegis approval.
+            _sig["awaiting_approval"] = True
 
     try:
         # Manually pump the generator so we can apply a per-chunk idle timeout —

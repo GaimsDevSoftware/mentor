@@ -130,6 +130,23 @@ def test_turn_end_off_mode_emits_nothing(monkeypatch):
     assert _turn_end(events) is None               # zero behaviour change when off
 
 
+def test_ask_user_turn_classified_awaiting_not_resumed(monkeypatch):
+    """Integration guard: plan-mode/clarification ask_user (#638) ends the turn
+    to wait for the user's pick. The turn sentinel must classify it as
+    awaiting_user (NOT resumable) so resume mode never talks over a pending
+    choice."""
+    monkeypatch.setattr(agent_runs, "_autocontinue_mode", lambda: "resume")
+
+    async def asks():
+        yield 'data: {"delta": "Which approach do you want?"}\n\n'
+        yield 'data: {"type": "ask_user", "data": {"question": "Which approach?", "options": []}}\n\n'
+        yield "data: [DONE]\n\n"
+    te = _turn_end(_run_and_collect(asks))
+    assert te is not None
+    assert te["end_reason"] == "awaiting_user"
+    assert te["resumable"] is False
+
+
 def test_runnow_not_wedged_by_hung_previous_run(monkeypatch):
     """Run-now / rapid re-send: a NEW run must not be blocked forever behind a
     previous run whose cancellation is wedged (e.g. stuck in a long tool call so
