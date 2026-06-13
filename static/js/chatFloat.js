@@ -19,6 +19,12 @@ let _floated = false;
 let _btn = null;
 const _popouts = new Map();   // sessionId → { modal, sse, … }
 let _popoutCounter = 0;
+// Bring-to-front: any interaction with a pop-out raises it above the others.
+// Starts above the static .modal stack (250) and modalManager's bump base (300).
+let _popoutTopZ = 600;
+function _raisePopout(modal) {
+  if (modal) modal.style.setProperty('z-index', String(++_popoutTopZ), 'important');
+}
 
 const esc = s => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -101,7 +107,7 @@ function _updateBtn() {
 async function popOut(sessionId, sessionName) {
   if (_popouts.has(sessionId)) {
     const existing = _popouts.get(sessionId).modal;
-    if (existing) { existing.style.display = 'flex'; return; }
+    if (existing) { existing.style.display = 'flex'; _raisePopout(existing); return; }
   }
 
   _popoutCounter++;
@@ -135,6 +141,11 @@ async function popOut(sessionId, sessionName) {
   const content = modal.querySelector('.modal-content');
   const header = modal.querySelector('.modal-header');
   makeWindowDraggable(modal, { content, header });
+
+  // Raise to front on any interaction; raise now so the newest pop-out opens on
+  // top. Capture phase so it fires before inner click handlers.
+  modal.addEventListener('mousedown', () => _raisePopout(modal), true);
+  _raisePopout(modal);
 
   // Stagger position
   const offsetX = 40 * ((n - 1) % 6);
