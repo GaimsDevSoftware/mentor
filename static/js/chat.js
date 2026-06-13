@@ -464,6 +464,18 @@ try { window.turnManager = turnManager; } catch (_) {}
   function _persistQueue() {
     const sid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
     if (!sid) return;               // no session yet (pending new chat) → nothing to persist under
+    // Incognito chats leave NO trace on the server — so never persist the queued
+    // messages either (they'd otherwise land in the QueuedMessage table).
+    const _inc = (typeof document !== 'undefined') && document.getElementById('incognito-toggle');
+    if (_inc && _inc.checked) {
+      // Best-effort: also clear any rows persisted before incognito was toggled on.
+      fetch(`${API_BASE}/api/queue/${encodeURIComponent(sid)}`, {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texts: [] }),
+      }).catch(() => {});
+      return;
+    }
     if (_persistTimer) clearTimeout(_persistTimer);
     _persistTimer = setTimeout(() => {
       const texts = turnManager.queue.map(q => q.text);
