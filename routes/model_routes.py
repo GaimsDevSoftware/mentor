@@ -1449,9 +1449,12 @@ def setup_model_routes(model_discovery):
                 ep_obj = db2.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
                 if ep_obj:
                     ep_obj.hidden_models = json.dumps(failed) if failed else None
-                    if all_models:
-                        all_models = _apply_source_filter(ep_obj, all_models)
-                    ep_obj.cached_models = json.dumps(all_models) if all_models else None
+                    # `all_models` is captured from the enclosing scope. Assigning
+                    # to it inside this nested generator would make it _stream-local
+                    # and UnboundLocalError the read on the same line — the classic
+                    # closure-shadowing bug. Filter into a separate local instead.
+                    _cached = _apply_source_filter(ep_obj, all_models) if all_models else all_models
+                    ep_obj.cached_models = json.dumps(_cached) if _cached else None
                     db2.commit()
             finally:
                 db2.close()
