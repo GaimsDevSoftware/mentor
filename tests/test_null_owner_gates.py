@@ -153,13 +153,19 @@ def test_document_owner_filter_applies_owner_clause():
 # gallery._owner_filter
 # ---------------------------------------------------------------------------
 
-def test_gallery_owner_filter_blocks_anonymous():
+def test_gallery_owner_filter_none_user_is_unscoped_single_user():
+    # DELIBERATE fork design: when auth is disabled, get_current_user() returns
+    # None and gallery is single-user → "show everything" (see _owner_filter
+    # docstring + test_gallery_owner_filter_single_user). Multi-user requests
+    # always carry a real user, so scoping still applies then; the auth
+    # middleware 401s unauthenticated requests before they reach this filter.
+    # So None must NOT add a filter — it returns the query unchanged. (The old
+    # block-anonymous expectation broke single-user galleries — issue #622.)
     from routes.gallery_routes import _owner_filter
     fake_q = MagicMock()
     out = _owner_filter(fake_q, user=None)
-    # Anonymous → q.filter(False) → contradiction, empty result set.
-    fake_q.filter.assert_called_once_with(False)
-    assert out is fake_q.filter.return_value
+    fake_q.filter.assert_not_called()
+    assert out is fake_q
 
 
 def test_gallery_owner_filter_passes_user():
