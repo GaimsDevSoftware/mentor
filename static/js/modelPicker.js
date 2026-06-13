@@ -257,11 +257,78 @@ function _initModelPickerDropdown() {
   const _collapsedProviders = new Set(_loadList('odysseus-model-collapsed'));
   let _justExpandedProvider = null;
 
+  // ── Filters (chips above the list) ──────────────────────────────────────────
+  const _FILTER_KEY = 'odysseus-model-filters';
+  const _filters = Object.assign(
+    { hideNonChat: true, loc: 'all', vision: false, favs: false },
+    (() => { try { return JSON.parse(localStorage.getItem(_FILTER_KEY) || '{}'); } catch { return {}; } })()
+  );
+  function _saveFilters() { try { localStorage.setItem(_FILTER_KEY, JSON.stringify(_filters)); } catch { /* quota */ } }
+  function _isLocalUrl(u) { return /localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?|:11434/i.test(u || ''); }
+  function _isNonChat(mid) {
+    return /(?:^|[-_/])(tts|stt|asr|whisper|transcribe|embed|embeddings?|rerank(?:er)?|guard|moderation|orpheus|parakeet|canary|voxtral-(?:tts|transcribe|realtime|mini-realtime|mini-transcribe))/i.test(mid || '')
+      || /jina-embeddings|bge-|gte-|e5-|prompt-guard/i.test(mid || '');
+  }
+  function _isVision(mid) {
+    return /(-vl\b|vision|llava|gemma-?4|gemma-?3|qwen.*vl|pixtral|minicpm-?v|moondream|internvl|mentor)/i.test(mid || '');
+  }
+  function _passesFilters(m) {
+    const id = m.mid || '';
+    if (_filters.hideNonChat && _isNonChat(id)) return false;
+    if (_filters.loc === 'local' && !_isLocalUrl(m.url)) return false;
+    if (_filters.loc === 'cloud' && _isLocalUrl(m.url)) return false;
+    if (_filters.vision && !_isVision(id)) return false;
+    if (_filters.favs && !_loadFavorites().includes(id)) return false;
+    return true;
+  }
+  function _buildFilterChips() {
+    if (!searchRow || document.getElementById('mp-filter-chips')) return;
+    const bar = document.createElement('div');
+    bar.id = 'mp-filter-chips';
+    bar.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:6px 10px;border-bottom:1px solid var(--sep,#2c2c35)';
+    const defs = [
+      { key: 'hideNonChat', label: 'Kun chat', on: () => _filters.hideNonChat },
+      { key: 'local', label: 'Lokale', on: () => _filters.loc === 'local' },
+      { key: 'cloud', label: 'Sky', on: () => _filters.loc === 'cloud' },
+      { key: 'vision', label: 'Vision', on: () => _filters.vision },
+      { key: 'favs', label: '★ Favoritter', on: () => _filters.favs },
+    ];
+    const chips = [];
+    function _paint() {
+      chips.forEach(({ el, d }) => {
+        const active = d.on();
+        el.style.background = active ? 'var(--accent-primary,#7c9cff)' : 'var(--tint,#23232a)';
+        el.style.color = active ? '#0e0e12' : 'var(--dim,#9a9aa6)';
+        el.style.borderColor = active ? 'var(--accent-primary,#7c9cff)' : 'var(--sep,#2c2c35)';
+      });
+    }
+    defs.forEach(d => {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.textContent = d.label;
+      el.style.cssText = 'border:1px solid var(--sep,#2c2c35);border-radius:99px;padding:3px 10px;font-size:11px;cursor:pointer;background:var(--tint,#23232a);color:var(--dim,#9a9aa6)';
+      el.addEventListener('click', () => {
+        if (d.key === 'hideNonChat') _filters.hideNonChat = !_filters.hideNonChat;
+        else if (d.key === 'local') _filters.loc = _filters.loc === 'local' ? 'all' : 'local';
+        else if (d.key === 'cloud') _filters.loc = _filters.loc === 'cloud' ? 'all' : 'cloud';
+        else if (d.key === 'vision') _filters.vision = !_filters.vision;
+        else if (d.key === 'favs') _filters.favs = !_filters.favs;
+        _saveFilters(); _paint(); _populate(search ? search.value : '');
+      });
+      chips.push({ el, d });
+      bar.appendChild(el);
+    });
+    searchRow.insertAdjacentElement('afterend', bar);
+    _paint();
+  }
+  _buildFilterChips();
+
   function _populate(filter) {
     listEl.innerHTML = '';
-    const all = _getAllModels();
+    const allRaw = _getAllModels();
+    const all = allRaw.filter(_passesFilters);
     const q = (filter || '').trim().toLowerCase();
-    const hasAnyModel = all.length > 0;
+    const hasAnyModel = allRaw.length > 0;
     listEl.classList.toggle('is-empty', !hasAnyModel);
     menu.classList.toggle('no-models', !hasAnyModel);
     if (search) {
@@ -272,6 +339,7 @@ function _initModelPickerDropdown() {
     }
 
     if (!hasAnyModel) return; // collapsed empty list — nothing to render
+    if (!all.length) { _addEmpty('Ingen modeller matcher filtrene'); return; }
 
     // Unique lookup so Recent/Favorites (stored as bare model IDs) can be
     // resolved back to full model objects; drops anything no longer offered.
