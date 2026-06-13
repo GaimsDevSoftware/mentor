@@ -26,6 +26,44 @@ function _raisePopout(modal) {
   if (modal) modal.style.setProperty('z-index', String(++_popoutTopZ), 'important');
 }
 
+// ── Minimize pop-outs to a dock of chips ─────────────────────────────────────
+let _minDock = null;
+function _ensureMinDock() {
+  if (!_minDock) {
+    _minDock = document.createElement('div');
+    _minDock.id = 'popout-min-dock';
+    _minDock.style.cssText = 'position:fixed;left:12px;bottom:12px;display:flex;gap:6px;flex-wrap:wrap;z-index:9000;max-width:60vw';
+    document.body.appendChild(_minDock);
+  }
+  _minDock.style.display = 'flex';
+  return _minDock;
+}
+function _clearChip(st) {
+  if (st && st.chip) { st.chip.remove(); st.chip = null; }
+  if (_minDock && !_minDock.children.length) _minDock.style.display = 'none';
+}
+function _minimizePopout(sessionId) {
+  const st = _popouts.get(sessionId);
+  if (!st || !st.modal || st.chip) return;
+  st.modal.style.display = 'none';
+  const name = st.modal.querySelector('.popout-chat-title')?.textContent || String(sessionId).slice(0, 8);
+  const chip = document.createElement('button');
+  chip.className = 'popout-min-chip';
+  chip.title = 'Gjenåpne ' + name;
+  chip.textContent = '💬 ' + name;
+  chip.style.cssText = 'background:var(--card,#1f1f25);color:var(--fg,#e8e8e8);border:1px solid var(--bubble-border,#2c2c35);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  chip.addEventListener('click', () => _restorePopout(sessionId));
+  st.chip = chip;
+  _ensureMinDock().appendChild(chip);
+}
+function _restorePopout(sessionId) {
+  const st = _popouts.get(sessionId);
+  if (!st || !st.modal) return;
+  st.modal.style.display = 'flex';
+  _raisePopout(st.modal);
+  _clearChip(st);
+}
+
 const esc = s => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;')
   .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -124,6 +162,7 @@ async function popOut(sessionId, sessionName) {
     <div class="modal-content popout-chat-content">
       <div class="modal-header popout-chat-header">
         <h4 class="popout-chat-title">${esc(name)}</h4>
+        <button class="close-btn popout-min" title="Minimer">&#x2014;</button>
         <button class="close-btn popout-close" title="Close">&#x2716;</button>
       </div>
       <div class="popout-chat-body">
@@ -160,6 +199,7 @@ async function popOut(sessionId, sessionName) {
 
   // Close handler
   modal.querySelector('.popout-close').addEventListener('click', () => closePopOut(sessionId));
+  modal.querySelector('.popout-min').addEventListener('click', () => _minimizePopout(sessionId));
   modal.addEventListener('click', (e) => { if (e.target === modal) closePopOut(sessionId); });
 
   // Send handler
@@ -296,6 +336,7 @@ function closePopOut(sessionId) {
   if (!state) return;
   if (state.abortCtrl) state.abortCtrl.abort();
   if (state.modal) state.modal.remove();
+  _clearChip(state);
   _popouts.delete(sessionId);
 }
 
