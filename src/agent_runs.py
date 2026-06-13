@@ -204,7 +204,8 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         if _turn_end_sent[0]:
             return
         _turn_end_sent[0] = True
-        if _autocontinue_mode() == "off":
+        _mode = _autocontinue_mode()
+        if _mode == "off":
             return                     # zero behaviour change when disabled
         try:
             from src import turn_sentinel
@@ -223,7 +224,8 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         logger.info("[turn-sentinel] %s end_reason=%s resumable=%s ambiguous=%s "
                     "(content=%s finish_reason=%s)", session_id, cls["end_reason"],
                     cls["resumable"], cls["ambiguous"], _sig["content"], _sig["finish_reason"])
-        _publish(run, "data: " + json.dumps({"type": "turn_end", "run_id": run_id or "", **cls}) + "\n\n")
+        _publish(run, "data: " + json.dumps({"type": "turn_end", "run_id": run_id or "",
+                                              "mode": _mode, **cls}) + "\n\n")
 
     def _track(ev: str) -> None:
         if _turn_end_sent[0]:

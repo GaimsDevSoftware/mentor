@@ -107,6 +107,18 @@ def test_turn_end_truncated_on_finish_reason_length(monkeypatch):
     assert te is not None and te["end_reason"] == "truncated" and te["resumable"] is True
 
 
+def test_turn_end_payload_carries_mode(monkeypatch):
+    # The client only auto-resumes when turn_end.mode === 'resume', so the
+    # backend must stamp the active mode onto the event.
+    monkeypatch.setattr(agent_runs, "_autocontinue_mode", lambda: "resume")
+
+    async def clean():
+        yield 'data: {"delta": "hi"}\n\n'
+        yield "data: [DONE]\n\n"
+    te = _turn_end(_run_and_collect(clean))
+    assert te is not None and te["mode"] == "resume"
+
+
 def test_turn_end_off_mode_emits_nothing(monkeypatch):
     monkeypatch.setattr(agent_runs, "_autocontinue_mode", lambda: "off")
 
