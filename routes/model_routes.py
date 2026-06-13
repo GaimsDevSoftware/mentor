@@ -907,8 +907,11 @@ def setup_model_routes(model_discovery):
                 raise HTTPException(401, "Not authenticated")
         except HTTPException:
             raise
-        except Exception:
-            pass
+        except Exception as e:
+            # Fail CLOSED: a broken auth_manager (or an error from is_configured)
+            # must not silently grant the model list to an anonymous caller.
+            logger.error("Auth gate error in GET /api/models, failing closed: %s", e)
+            raise HTTPException(status_code=500, detail="Internal error")
         # Admins see every endpoint (they manage the global pool); regular
         # users get the owner-scoped view.
         _is_admin = False
