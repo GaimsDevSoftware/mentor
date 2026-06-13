@@ -2488,8 +2488,28 @@ async def stream_agent_loop(
             elif "error" in result:
                 output_text = result["error"][:2000]
 
+            # Aegis "warn" mode: the tool already ran, but the firewall stashed a
+            # non-blocking notice for this session — merge it into the result so
+            # it rides along on the tool_output event (UI shows a red banner).
+            try:
+                from src import aegis_firewall as _aegisfw
+                _awarn = _aegisfw.pop_warn(session_id)
+                if _awarn and isinstance(result, dict):
+                    for _wk, _wv in _awarn.items():
+                        result.setdefault(_wk, _wv)
+            except Exception:
+                pass
+
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
+            # Forward Aegis signals (ask / warn / blocked) so the frontend can
+            # raise the approval modal or the non-blocking warn banner.
+            for k in ("aegis_ask", "aegis_warn", "aegis_blocked", "aegis_score",
+                      "aegis_reasons", "aegis_category", "aegis_message",
+                      "aegis_explanations", "aegis_content",
+                      "reasons", "category", "message"):
+                if isinstance(result, dict) and k in result and k not in tool_output_data:
+                    tool_output_data[k] = result[k]
             if "ui_event" in result:
                 tool_output_data["ui_event"] = result["ui_event"]
                 for k in ("toggle_name", "state", "mode", "model", "endpoint_url", "theme_name", "colors"):

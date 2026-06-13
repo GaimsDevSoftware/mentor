@@ -13,10 +13,20 @@ autonomous runs need a gate, not blind trust.
 
 Modes (setting `aegis_mode`):
   • "off"     — no-op (default; zero behaviour change until you opt in).
-  • "audit"   — score + log every call, never block. Use first to see what it
-                would do against YOUR real traffic before enforcing.
+  • "audit"   — score + log every call, never block, SILENT. Use first to see
+                what it would do against YOUR real traffic before enforcing.
+  • "warn"    — Cowork-style "run it anyway, but tell me": risky calls at/above
+                `aegis_warn_threshold` still execute, but a prominent non-blocking
+                red banner is surfaced in the UI and the call is audited. This is
+                the "carry out warned-against actions regardless" mode.
+  • "ask"     — prompt user with prominent UI notification (blinking borders)
+                before executing risky calls at/above threshold. User can approve/deny.
   • "enforce" — block calls at/above `aegis_block_threshold`; allow the rest
                 (still audited). Warn-band calls are logged as "warn".
+
+The "warn" and "ask" modes are the two halves of the Cowork permission model:
+"ask" stops and prompts; "warn" proceeds but flags. They share the same risk
+scorer and audit log — only the return signal differs.
 
 All thresholds are settings-tunable and the whole thing is reversible by setting
 aegis_mode=off. No external deps. The audit log is data/aegis_audit.jsonl.
@@ -148,7 +158,141 @@ def score_tool_call(tool: str, content: str) -> Tuple[int, List[str], str]:
     return min(100, score), reasons, category
 
 
+# ── context-specific explanations ────────────────────────────────────────────
+# The score tells the user *how* risky; these tell them *why this call, right
+# now* — in plain language, quoting the exact text matched in THIS call. The
+# `{snippet}` slot is filled with that text so the approval dialog explains the
+# action on screen instead of a generic "this could harm your system".
+_EXPLAIN: Dict[str, str] = {
+    "recursive/forced delete":
+        "Recursively force-deletes files (`{snippet}`). Everything under the "
+        "target path is removed at once — no recycle bin, no undo.",
+    "disk format/partition":
+        "Formats or repartitions a disk (`{snippet}`). This erases all data on "
+        "the target device.",
+    "raw disk write (dd)":
+        "Writes raw bytes to a device with dd (`{snippet}`). A wrong target "
+        "overwrites your filesystem irreversibly.",
+    "write to block device":
+        "Redirects output straight to a block device (`{snippet}`), bypassing "
+        "the filesystem — can corrupt the disk.",
+    "fork bomb":
+        "Matches a fork-bomb shape (`{snippet}`) that spawns processes until the "
+        "machine becomes unresponsive.",
+    "world-writable chmod":
+        "Makes files world-writable (`{snippet}`) — any local user or process "
+        "can then read and modify them.",
+    "recursive chown":
+        "Recursively changes ownership (`{snippet}`) — can lock you out of files "
+        "or hand them to another account.",
+    "privilege escalation":
+        "Runs with elevated privileges (`{snippet}`). The action can affect the "
+        "whole system, not just your own files.",
+    "pipe-to-shell (RCE)":
+        "Downloads code from the network and pipes it straight into a shell "
+        "(`{snippet}`). The remote server decides what runs on your machine.",
+    "obfuscated pipe-to-shell":
+        "Decodes data and pipes it into a shell (`{snippet}`), hiding what "
+        "actually executes.",
+    "eval()":
+        "Executes a constructed string with eval() (`{snippet}`); what runs "
+        "depends on runtime data and is hard to audit.",
+    "credential file access":
+        "Touches a credential / SSH / system file (`{snippet}`) — could read or "
+        "leak private keys or password hashes.",
+    "secret-bearing path/term":
+        "References a secret-bearing path or term (`{snippet}`) — may expose API "
+        "keys, tokens, or passwords.",
+    "literal secret/key":
+        "Contains what looks like a real key or token in plaintext (`{snippet}`) "
+        "— risks leaking a live credential.",
+    "destructive SQL":
+        "Runs destructive SQL (`{snippet}`) — can drop or empty database tables.",
+    "bulk delete/purge":
+        "Performs a bulk delete / purge (`{snippet}`) — removes many records at "
+        "once and is hard to undo.",
+    "external network egress":
+        "Sends data to an external host (`{snippet}`) — information leaves your "
+        "machine.",
+    "raw network tool":
+        "Uses a raw networking tool (`{snippet}`) that can open arbitrary "
+        "connections or move data off the box.",
+}
+
+
+def _excerpt_around(text: str, m: "re.Match[str]", trail: int = 56) -> str:
+    """The exact text a pattern matched, plus a little trailing context.
+
+    The patterns match the *verb* (e.g. ``rm -rf``); the dangerous *object*
+    (the path, URL, or device) usually follows, so we extend a few chars past
+    the match — trimmed at the next newline — to show what is actually targeted.
+    """
+    start = m.start()
+    end = min(len(text), m.end() + trail)
+    frag = text[start:end]
+    nl = frag.find("\n")
+    if nl != -1:
+        frag = frag[:nl]
+    frag = frag.strip()
+    if len(frag) > 140:
+        frag = frag[:140].rstrip() + "…"
+    return frag
+
+
+def _content_excerpt(content: str, limit: int = 1800) -> str:
+    """Trimmed copy of the raw tool content for display in the approval UI."""
+    text = (content or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + f"\n…(+{len(text) - limit} more chars)"
+
+
+def explain_tool_call(tool: str, content: str) -> List[Dict[str, str]]:
+    """Per-match, context-specific explanations for a proposed tool call.
+
+    Re-runs the risk patterns and, for each one that fires, returns the exact
+    text it matched in THIS call plus a plain-language description of the
+    concrete harm — so the approval dialog can explain the action on screen,
+    not risk in the abstract.
+    """
+    text = content or ""
+    out: List[Dict[str, str]] = []
+    seen: set = set()
+    for pat, _delta, why in _PATTERNS:
+        m = pat.search(text)
+        if not m or why in seen:
+            continue
+        seen.add(why)
+        snippet = _excerpt_around(text, m)
+        tmpl = _EXPLAIN.get(why)
+        detail = tmpl.format(snippet=snippet) if tmpl else f"Flagged as {why}: `{snippet}`."
+        out.append({"label": why, "snippet": snippet, "detail": detail})
+    return out
+
+
 # ── audit log ────────────────────────────────────────────────────────────────
+
+# ── pending warn notices (for "warn" mode) ──────────────────────────────────
+# In "warn" mode the call is ALLOWED (guard returns None so the tool runs), but
+# we stash a non-blocking notice keyed by session so the streaming layer can
+# attach it to the tool_output event and the UI can show a banner. guard()
+# clears any stale notice at the start of every call, so a slot can never leak
+# from one tool call into the next.
+_PENDING_WARN: Dict[str, Dict[str, Any]] = {}
+
+
+def _set_warn(session_id: Optional[str], meta: Dict[str, Any]) -> None:
+    _PENDING_WARN[session_id or ""] = meta
+
+
+def _clear_warn(session_id: Optional[str]) -> None:
+    _PENDING_WARN.pop(session_id or "", None)
+
+
+def pop_warn(session_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Return and clear the pending warn notice for a session (or None)."""
+    return _PENDING_WARN.pop(session_id or "", None)
+
 
 def _audit(record: Dict[str, Any]) -> None:
     try:
@@ -167,9 +311,13 @@ def guard(tool: str, content: str, *, owner: Optional[str] = None,
     """Risk-score a tool call at the chokepoint.
 
     Returns None to ALLOW (caller proceeds), or a (description, result) tuple
-    that the caller should return verbatim to BLOCK the call — matching the
+    that the caller should return verbatim to BLOCK/ASK the call — matching the
     shape `execute_tool_block` already uses for its other gates.
     """
+    # Drop any stale warn notice for this session before assessing this call, so
+    # a previous call's banner can never bleed onto an unrelated tool result.
+    _clear_warn(session_id)
+
     mode = str(_get("aegis_mode", "off") or "off").lower()
     if mode == "off":
         return None
@@ -181,8 +329,11 @@ def guard(tool: str, content: str, *, owner: Optional[str] = None,
         block_thr, warn_thr = 80, 60
 
     score, reasons, category = score_tool_call(tool, content)
+    will_ask = (mode == "ask" and score >= block_thr)
     will_block = (mode == "enforce" and score >= block_thr)
-    band = "block" if will_block else ("warn" if score >= warn_thr else "allow")
+    will_warn = (mode == "warn" and score >= warn_thr)
+    band = ("ask" if will_ask else "block" if will_block
+            else ("warn" if score >= warn_thr else "allow"))
 
     _audit({
         "ts": time.time(), "tool": tool, "category": category,
@@ -196,19 +347,82 @@ def guard(tool: str, content: str, *, owner: Optional[str] = None,
         logger.warning("aegis %s tool=%s score=%d reasons=%s",
                        band.upper(), tool, score, "; ".join(reasons))
 
+    if will_ask:
+        desc = f"{tool}: ASKING user approval (risk {score})"
+        explanations = explain_tool_call(tool, content)
+        if explanations:
+            why_lines = "\n".join(f"• {e['detail']}" for e in explanations)
+            message = (
+                f"⚠️ HIGH-RISK ACTION — {tool} (risk {score}/100)\n\n"
+                f"Flagged before running, because of what this specific call does:\n\n"
+                f"{why_lines}\n\n"
+                f"Review the exact command shown above and approve only if you "
+                f"intend precisely this."
+            )
+        else:
+            message = (
+                f"⚠️ HIGH-RISK ACTION — {tool} (risk {score}/100)\n\n"
+                f"This is a high-risk tool surface ({category}). No single dangerous "
+                f"pattern matched, but the action can have wide effects. Review the "
+                f"command shown above and approve only if you intend it."
+            )
+        result = {
+            "aegis_ask": True,
+            "aegis_score": score,
+            "tool": tool,
+            "reasons": reasons,
+            "category": category,
+            # Context-specific payload so the UI can explain the action on screen.
+            "aegis_explanations": explanations,
+            "aegis_content": _content_excerpt(content),
+            "message": message,
+            "exit_code": 0,  # Don't fail immediately; let UI handle approval
+        }
+        return desc, result
+
     if will_block:
         desc = f"{tool}: BLOCKED by Aegis (risk {score})"
+        explanations = explain_tool_call(tool, content)
+        why = explanations[0]["detail"] if explanations else "high-risk tool surface"
         result = {
             "error": (
                 f"Aegis firewall blocked this {tool} call (risk score {score} ≥ "
-                f"{block_thr}). Flagged: {', '.join(r for r in reasons if r.startswith('+')) or 'high-risk surface'}. "
+                f"{block_thr}). {why} "
                 "If this is legitimate, lower aegis_block_threshold, switch "
                 "aegis_mode to 'audit', or perform the action manually."
             ),
             "exit_code": 1,
             "aegis_blocked": True,
             "aegis_score": score,
+            "aegis_explanations": explanations,
         }
         return desc, result
+
+    if will_warn:
+        # Cowork-style "run it anyway, but tell me": ALLOW the call (return None
+        # so the caller executes it), but stash a non-blocking notice the agent
+        # loop attaches to the tool_output event for a prominent UI banner.
+        flagged = [r for r in reasons if r.startswith("+")]
+        explanations = explain_tool_call(tool, content)
+        if explanations:
+            wmsg = (
+                f"⚠️ Aegis ran this {tool} call (risk {score}/100) but flagged it: "
+                + "; ".join(e["detail"] for e in explanations)
+            )
+        else:
+            wmsg = (
+                f"⚠️ Aegis flagged this {tool} call (risk {score}/100) "
+                f"but ran it anyway — 'warn' mode is on."
+            )
+        _set_warn(session_id, {
+            "aegis_warn": True,
+            "aegis_score": score,
+            "aegis_reasons": flagged or [f"base:{category}({score})"],
+            "aegis_category": category,
+            "aegis_explanations": explanations,
+            "aegis_content": _content_excerpt(content),
+            "aegis_message": wmsg,
+        })
+        return None
 
     return None
