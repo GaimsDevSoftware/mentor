@@ -141,3 +141,20 @@ async def test_list_documents_filters_foreign_docs_in_visible_session():
         assert bob_doc not in ids
     finally:
         droutes.SessionLocal = previous_session_local
+
+
+# ── Stop polluting later test modules ────────────────────────────────────────
+# This module needs the REAL core.database at import (above) to build a real
+# engine + ORM models, so it evicts the conftest fake src.database stub. But
+# leaving the real module in sys.modules leaks into mock-based tests collected
+# AFTER us (they expect the stub) — the order-dependent IntegrityError failures.
+# Our own tests hold real references (cdb / the overridden SessionLocal), so
+# they do not need src.database real at run time. Re-install the conftest fake
+# stub now that our module-level imports are done.
+import sys as _sys
+import types as _types
+from unittest.mock import MagicMock as _MM
+_fake_srcdb = _types.ModuleType("src.database")
+_fake_srcdb.SessionLocal = _MM()
+_fake_srcdb.ModelEndpoint = _MM()
+_sys.modules["src.database"] = _fake_srcdb

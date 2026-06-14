@@ -54,4 +54,4 @@ def test_pdf_body_marker_stripped_without_eating_text(monkeypatch, tmp_path):
     assert "[Page 1 text]:" in body
     assert "to the board, the agenda is set" in body
     # The old lstrip(chars) corruption ate "[P" then "to" -> "age 1 text]: the board".
-    assert "age 1 text" not in body
+    assert not body.lstrip().startswith("age 1 text")  # real corruption sig; bare "age 1 text" is a substring of the CORRECT "[Page 1 text]:"
