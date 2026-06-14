@@ -25,6 +25,7 @@ if "core.database" not in sys.modules:
         "McpServer",
     ]:
         setattr(_core_db, _name, MagicMock())
+    _core_db.__getattr__ = lambda name: MagicMock()  # auto-mock transitive names (utcnow_naive, …); isolation-only
     sys.modules["core.database"] = _core_db
 
 import routes.model_routes as model_routes

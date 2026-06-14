@@ -40,6 +40,10 @@ def _null_owner_stubs(monkeypatch):
             m = types.ModuleType(_stub)
             for _name in _attrs:
                 setattr(m, _name, MagicMock())
+            # Auto-mock any other name a transitive import (e.g.
+            # core.session_manager → utcnow_naive) pulls from the stub. Only
+            # fires in isolation; the full suite has the real module. PEP 562.
+            m.__getattr__ = lambda name: MagicMock()
             sys.modules[_stub] = m
         else:
             m = sys.modules[_stub]

@@ -29,6 +29,7 @@ for _name in (
 ):
     if not hasattr(_cd, _name):
         setattr(_cd, _name, MagicMock())
+_cd.__getattr__ = lambda name: MagicMock()  # auto-mock transitive names (utcnow_naive, …); isolation-only
 
 from routes.compare_routes import _owned_endpoint_by_url  # noqa: E402
 

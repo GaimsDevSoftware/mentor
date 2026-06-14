@@ -125,6 +125,7 @@ class TestMaybeCompactFourthMessage:
         # is hermetic (no network, no real endpoint resolution).
         orig_ctx = cc.get_context_length
         orig_call = cc.llm_call_async
+        orig_cont = cc.complete_with_continuation
         orig_resolve = cc.resolve_endpoint
         orig_update = cc._update_session_history
 
@@ -133,6 +134,9 @@ class TestMaybeCompactFourthMessage:
 
         cc.get_context_length = lambda url, model: context_length
         cc.llm_call_async = _fake_summary
+        # Production builds the summary via complete_with_continuation (not
+        # llm_call_async); stub that too or the test reaches the real endpoint.
+        cc.complete_with_continuation = _fake_summary
         cc.resolve_endpoint = lambda which: (None, None, None)
         cc._update_session_history = lambda *a, **k: None
         try:
@@ -148,6 +152,7 @@ class TestMaybeCompactFourthMessage:
         finally:
             cc.get_context_length = orig_ctx
             cc.llm_call_async = orig_call
+            cc.complete_with_continuation = orig_cont
             cc.resolve_endpoint = orig_resolve
             cc._update_session_history = orig_update
 

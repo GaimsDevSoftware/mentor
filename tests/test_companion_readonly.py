@@ -23,6 +23,11 @@ if "core.database" not in sys.modules:
     _db = types.ModuleType("core.database")
     _db.SessionLocal = MagicMock()
     _db.ModelEndpoint = MagicMock()
+    # Auto-mock any other name (Session, utcnow_naive, …) that companion.routes
+    # or its transitive imports pull from core.database. Only fires in isolation;
+    # in the full suite the real module is already loaded and this branch is
+    # skipped. PEP 562 module __getattr__.
+    _db.__getattr__ = lambda name: MagicMock()
     sys.modules["core.database"] = _db
 
 import companion.routes as companion_routes
