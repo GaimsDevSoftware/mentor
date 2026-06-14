@@ -1,4 +1,4 @@
-# Mentor — Handover (2026-06-08)
+# Mentor — Handover (updated 2026-06-14)
 
 > **For the next assistant taking over this codebase.** Read the "Don't touch
 > without thinking" block before changing anything model/budget-related.
@@ -6,8 +6,88 @@
 > `/home/robert/.claude/projects/-home-robert-odysseus/memory/mentor-rebrand-cohesion.md`
 > and the wider memory index at `/home/robert/.claude/projects/-home-robert-odysseus/memory/MEMORY.md`.
 
-Branch: **`feat/self-improvement-stack`** · HEAD: `f3574df` · 49 commits this session.
-Worktree: `/home/robert/odysseus/.claude/worktrees/brave-jemison-fe1f2c` (project root: `/home/robert/odysseus`).
+Branch: **`code/agentic-rebuild`** · HEAD: `e7cf649`.
+Project root: `/home/robert/odysseus` (no worktree — operate directly).
+
+**Remotes — push ONLY to the fork:**
+- `origin` = `github.com/pewdiepie-archdaemon/odysseus` — **UPSTREAM, READ-only**
+  for the logged-in gh account (`GaimsDevSoftware`). Never push here.
+- `fork` = `github.com/GaimsDevSoftware/mentor` — the user's own fork (ADMIN).
+  `code/agentic-rebuild` tracks `fork/code/agentic-rebuild`. Push here.
+  `gh` is authenticated as `GaimsDevSoftware`; `pewdiepie-archdaemon` is the
+  user's *other* account (owns the upstream repo).
+
+**Green-CI gate:** single-process `pytest tests/` shows ~30+ failures that are
+**collection-order pollution, not bugs** (some tests import the real
+`core.database`/`src.database` at collection time and evict conftest's mock
+stub). The canonical gate is **`scripts/run-tests.sh`** — one fresh interpreter
+per file. Last run: **416/416 green**. Use it before every commit.
+
+---
+
+## Latest session — 2026-06-14 (this handoff)
+
+Three pieces of work landed on `code/agentic-rebuild` (commits `2ce16b6` →
+`e7cf649`), all pushed to the fork:
+
+### 1. Green test suite + per-file runner (`2ce16b6`, `55fd2f2`, `d9b0ce1`, `666fd16`)
+- `tests/conftest.py` now isolates the test DB to a tempfile so the suite
+  **never touches the user's real `data/app.db`**.
+- Fixed genuine test-quality bugs surfaced once the suite ran against the
+  model's canonical schema: helpers omitting the NOT-NULL `endpoint_url`
+  column; a self-contradictory PDF-marker assertion; periodic split-chunks
+  data; stale `core.database` stubs missing newly-added symbols
+  (`utcnow_naive`, `Session`, `resolve_search_endpoint`) — fixed with a PEP-562
+  `__getattr__` auto-mock that only fires in isolation.
+- **One real product fix** (`services/hwfit/fit.py`): the 2+ GPU "drop GGUF
+  Q-tier" filter fired even for an *explicit* `target_quant`, silently dropping
+  the user's chosen quant. Now only the auto-resolved default is filtered.
+- `scripts/run-tests.sh` (the green gate above). No new deps.
+
+### 2. OpenCode CLI coder backend (`e7cf649`)
+Replaces Aider as the **default** editor for coder / self-coder / plugin-builder
+(Aider kept as fallback via the new `coder_backend` setting, default
+`"opencode"`). Why: Aider needs the model to emit strict diff fences; weaker /
+local models just talk ("only text, no code"), and the OpenCode **Go**
+subscription fails Aider's litellm API-key auth. OpenCode's CLI (`opencode run`)
+is agentic (real edit/write tools) and authenticates Zen/Go via its own
+`~/.local/share/opencode/auth.json`.
+
+Single chokepoint in **`src/code_edit.py`** (all three call sites use it):
+- `opencode_bin()` → `~/.opencode/bin/opencode` (installed, v1.17.6)
+- `resolve_opencode_model(model)` → maps app model to `opencode-go/…` (Go) /
+  `opencode/…` (free Zen); returns None → caller falls back to Aider
+- `select_coder_backend(model)` → honors `coder_backend`, graceful fallback
+- `build_coder_cmd(sel, instr, files, cwd=…)` → **gotchas baked in**:
+  instruction MUST precede `-f` (--file is a greedy yargs array), `-f` needs
+  ABSOLUTE paths, and `--dangerously-skip-permissions` is required (= aider's
+  `--yes-always`; without it a non-interactive `run` auto-rejects edits and
+  changes nothing)
+- `opencode_event(line)` → parses `--format json` events to (stage, log, error)
+
+Rewired: `run_edit` (code_edit), `_run_aider` (self_coder), `build_with_aider`
+(plugin_forge). Read-only status at `GET /api/manage/coder-backend`.
+
+### 3. Source-grouped coder model picker (`e7cf649`)
+- `list_coder_models()` groups **OpenCode Go** (subscription), **OpenCode Zen
+  FREE-only** (`-free`), and **local Ollama**; coder-suited models flagged +
+  sorted first. The model id encodes the backend route, so one picker drives all
+  three tools (all read `aider_model`).
+- `GET /api/code/models` returns `groups` (flat `models` kept for back-compat);
+  the Code page (`_CODE` in `routes/app_routes.py`, `loadModels()`) renders
+  source-grouped optgroups with search + a tool-calling caveat on the local group.
+
+### ⚠ Known limitation — local model tool-calling
+The user's `aider_model` is `ollama/qwen3-coder:30b`. **It does not emit proper
+tool calls** — it leaks them as text (`<function=write>…`), so it produces
+"only text, no code" in BOTH aider and opencode. This is a *model* problem, not
+an editor problem. Proven working: opencode + `opencode/north-mini-code-free`
+(free Zen) edits files correctly. **Recommend the user pick a Go or free-Zen
+model in the Code picker** for real coding. `~/.config/opencode/opencode.json`
+was created to register the local Ollama provider (so `ollama/*` at least
+routes), but it's machine-local, not in the repo. Open question for next
+session: whether to point local Ollama through ollama's native `/api/chat`
+(better tool parsing) instead of the openai-compatible `/v1`.
 
 ---
 
@@ -55,9 +135,10 @@ pillars, modelled on Claude Desktop's Cowork + Code:
   `_OFFICE` in `routes/app_routes.py`, `src/agent_orchestrator.py`,
   `src/agents_store.py`)
 - **Code** = a real vibe-code workspace (`_CODE` in `routes/app_routes.py`,
-  `src/code_edit.py`, `routes/code_routes.py`) backed by Aider; can scaffold
-  a new app (`POST /api/code/new-project`) and edit a real git repo with
-  live diff.
+  `src/code_edit.py`, `routes/code_routes.py`) backed by the **OpenCode CLI**
+  (default) with **Aider** as fallback — see the `coder_backend` setting and
+  the "Latest session" notes above; can scaffold a new app
+  (`POST /api/code/new-project`) and edit a real git repo with live diff.
 
 Plus: **Cookbook** (Hugging Face / serve, `_COOKBOOK`), **Workspace** (tile
 multiple Mentor surfaces as iframes, `_WORKSPACE`), and **Admin** at `/manage`.
