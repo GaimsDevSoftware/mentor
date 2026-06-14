@@ -192,6 +192,14 @@ DEFAULT_SETTINGS = {
     # "ollama/qwen3-coder" or "openrouter/<free-model>:free" — a FREE coder.
     "plugin_builder_backend": "auto",
     "aider_model": "",
+    # ── Coder backend (coder, self-coder, plugin builder) ──
+    # Which CLI actually performs code edits. "opencode" uses the OpenCode CLI
+    # (`opencode run`), which authenticates the Zen / Go subscription via its own
+    # credential store — so the Go subscription works without the litellm API-key
+    # dance that fails under Aider. "aider" forces the classic git-aware editor.
+    # Either way the backend falls back to the other if the preferred one isn't
+    # usable for the chosen model, and neither auto-commits (diffs stay reviewable).
+    "coder_backend": "opencode",
     # ── Ollama serving (set on the OLLAMA SERVER, not the app) ──
     # KV-cache quantization fits longer context in much less VRAM (q8_0 ≈ ½ the
     # KV memory of fp16, tiny quality loss) — needs Flash Attention. Less VRAM

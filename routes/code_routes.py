@@ -95,7 +95,10 @@ def setup_code_routes() -> APIRouter:
 
     @router.get("/api/code/models")
     async def models(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
-        from src.code_edit import list_local_models
+        from src.code_edit import list_local_models, list_coder_models
+        # Curated, source-grouped picker (Go / free Zen / local). The flat
+        # `models` list below stays for backward compatibility.
+        grouped = list_coder_models()
         out = await list_local_models()
         # Include cloud/subscription models from configured endpoints.
         # Label each with the litellm-compatible prefix so Aider knows
@@ -129,7 +132,8 @@ def setup_code_routes() -> APIRouter:
                 db.close()
         except Exception:
             pass
-        return {"models": out, "current": _get("aider_model", "")}
+        return {"models": out, "groups": grouped.get("groups", []),
+                "current": _get("aider_model", "")}
 
     @router.post("/api/code/new-project")
     async def new_project(payload: Dict[str, Any] = Body(...), _admin: str = Depends(require_admin)) -> Dict[str, Any]:

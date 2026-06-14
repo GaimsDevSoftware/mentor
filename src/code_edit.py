@@ -121,6 +121,298 @@ def resolve_aider_model(model: str) -> tuple:
     return aider_model, env
 
 
+# ── OpenCode CLI backend ────────────────────────────────────────────────────
+# The OpenCode CLI (`opencode run`) is an alternative to Aider for the coder /
+# self-coder. It authenticates to the OpenCode Zen / Go subscription via its own
+# credential store (~/.local/share/opencode/auth.json), so it sidesteps the
+# litellm API-key dance that makes the Go subscription fail under Aider. Models
+# are passed as `provider/model` (e.g. opencode-go/qwen3.7-max), output is parsed
+# from `--format json` events, and it does NOT auto-commit (same as Aider's
+# --no-auto-commits) so the existing git-diff snapshot logic is unchanged.
+
+# Provider prefixes the opencode CLI resolves natively (see `opencode models`).
+_OPENCODE_NATIVE_PREFIXES = (
+    "opencode/", "opencode-go/", "google/", "anthropic/", "openai/",
+    "openrouter/", "ollama/", "github-copilot/", "deepseek/", "xai/", "groq/",
+    "mistral/", "azure/",
+)
+
+
+def opencode_bin():
+    """Resolve the opencode binary: the official installer's path first
+    (~/.opencode/bin), then PATH, then ~/.local/bin. None if not found."""
+    import shutil
+    cand = os.path.expanduser("~/.opencode/bin/opencode")
+    if os.path.exists(cand):
+        return cand
+    found = shutil.which("opencode")
+    if found:
+        return found
+    local = os.path.expanduser("~/.local/bin/opencode")
+    return local if os.path.exists(local) else None
+
+
+def resolve_opencode_model(model: str):
+    """Map the app's model string to an opencode `provider/model` spec, or None
+    if it can't be confidently mapped (caller should then fall back to Aider).
+
+    Mirrors resolve_aider_model's endpoint lookup but emits opencode-native
+    provider prefixes (opencode-go/ for the /zen/go/ subscription, opencode/ for
+    pay-as-you-go Zen) instead of litellm env vars."""
+    m = (model or "").strip()
+    if not m:
+        return None
+    if any(m.lower().startswith(p) for p in _OPENCODE_NATIVE_PREFIXES):
+        return m  # already a native provider/model spec
+    try:
+        from core.database import ModelEndpoint, SessionLocal
+        import json as _json
+        db = SessionLocal()
+        try:
+            _prefix, _, _bare = m.partition("/")
+            if not _bare:
+                _bare = _prefix
+            eps = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            # Prefer the Go subscription endpoint when the model lives on both.
+            eps.sort(key=lambda e: 0 if "/zen/go/" in (e.base_url or "").lower() else 1)
+            for ep in eps:
+                url = (ep.base_url or "").lower()
+                cached = _json.loads(ep.cached_models or "[]") if ep.cached_models else []
+                pinned = _json.loads(ep.pinned_models or "[]") if ep.pinned_models else []
+                allm = cached + pinned
+                if not (m in allm or _bare in allm or any(_bare in x for x in allm)):
+                    continue
+                if "/zen/go/" in url:
+                    return f"opencode-go/{_bare}"
+                if "zen" in url and "opencode" in url:
+                    return f"opencode/{_bare}"
+                if "openrouter" in url:
+                    return f"openrouter/{_bare}"
+                if "anthropic" in url:
+                    return f"anthropic/{_bare}"
+                if "openai.com" in url:
+                    return f"openai/{_bare}"
+                # Generic OpenAI-compatible endpoint: opencode can't reach it
+                # without provider config → signal fallback to Aider.
+                return None
+        finally:
+            db.close()
+    except Exception:
+        return None
+    return None
+
+
+def select_coder_backend(model: str) -> dict:
+    """Pick the coder backend for this run, honoring the `coder_backend` setting
+    (default 'opencode') with graceful fallback to whatever is actually usable.
+
+    Returns {backend: 'opencode'|'aider'|None, bin, model, env, error, fellback}.
+    The caller builds the command via build_coder_cmd() and need not know which
+    backend won."""
+    from src.plugin_forge import aider_bin
+    try:
+        from src.settings import get_setting
+        pref = (get_setting("coder_backend", "opencode") or "opencode").strip().lower()
+    except Exception:
+        pref = "opencode"
+
+    oc_bin = opencode_bin()
+    ai_bin = aider_bin()
+
+    def _aider():
+        am, env = resolve_aider_model(model)
+        return {"backend": "aider", "bin": ai_bin, "model": am, "env": env,
+                "error": None}
+
+    def _opencode(oc_model):
+        return {"backend": "opencode", "bin": oc_bin, "model": oc_model,
+                "env": dict(os.environ), "error": None}
+
+    if pref == "aider":
+        if ai_bin:
+            return _aider()
+        ocm = resolve_opencode_model(model) if oc_bin else None
+        if oc_bin and ocm:
+            return {**_opencode(ocm), "fellback": True}
+        return {"backend": None, "bin": None, "model": None, "env": None,
+                "error": "Aider isn't installed yet — use the Install button."}
+
+    # default: opencode preferred
+    ocm = resolve_opencode_model(model) if oc_bin else None
+    if oc_bin and ocm:
+        return _opencode(ocm)
+    if ai_bin:
+        return {**_aider(), "fellback": True}
+    return {"backend": None, "bin": None, "model": None, "env": None,
+            "error": ("OpenCode CLI not found — install it (~/.opencode/bin) or "
+                      "set coder_backend to 'aider'." if not oc_bin else
+                      "This model can't be mapped to OpenCode and Aider isn't "
+                      "installed.")}
+
+
+def build_coder_cmd(sel: dict, instruction: str, files, *,
+                    no_git: bool = False, pretty: bool = True, cwd: str = None) -> list:
+    """Build the subprocess argv for the selected backend. `no_git`/`pretty`
+    only affect Aider (opencode run has no equivalents); `cwd` is used to make
+    opencode's -f attachments absolute."""
+    files = [f for f in (files or []) if f]
+    if sel.get("backend") == "opencode":
+        # --dangerously-skip-permissions is opencode's equivalent of aider's
+        # --yes-always: without it, a non-interactive `run` (no TTY to prompt)
+        # AUTO-REJECTS file edits as "external_directory" and changes nothing.
+        # The coder/self-coder are autonomous by design and gated downstream by
+        # the feature-branch + diff review + Aegis approval flow, so auto-approve
+        # is correct here (mirrors the existing aider --yes-always trust model).
+        # The instruction MUST come before -f: --file is a greedy array option,
+        # so a positional placed after it gets swallowed as another filename.
+        # -f also needs absolute paths (relative ones don't resolve against the
+        # subprocess cwd), so anchor them to `cwd`.
+        cmd = [sel["bin"], "run", "-m", sel["model"], "--format", "json",
+               "--dangerously-skip-permissions", instruction]
+        for f in files:
+            af = f if (os.path.isabs(f) or not cwd) else os.path.join(cwd, f)
+            cmd += ["-f", af]
+        return cmd
+    cmd = [sel["bin"], "--model", sel["model"], "--yes-always",
+           "--no-auto-commits", "--no-show-model-warnings"]
+    if no_git:
+        cmd.append("--no-git")
+    if not pretty:
+        cmd.append("--no-pretty")
+    cmd += ["--message", instruction] + files
+    return cmd
+
+
+def opencode_event(line: str):
+    """Parse one `opencode run --format json` line into (stage, log, is_error).
+
+    Any element may be None; a non-JSON line returns (None, raw_line, False) so
+    it still shows up in the log. Used by both the Code page (stage updates) and
+    the self-coder (heartbeat log)."""
+    line = (line or "").strip()
+    if not line:
+        return None, None, False
+    try:
+        o = json.loads(line)
+    except Exception:
+        return None, line, False
+    t = o.get("type")
+    part = o.get("part") or {}
+    if t == "tool_use":
+        tool = part.get("tool") or ""
+        fp = (((part.get("state") or {}).get("input")) or {}).get("filePath") or ""
+        base = os.path.basename(fp) if fp else ""
+        if tool in ("read", "grep", "glob", "list", "webfetch"):
+            return "analyzing the repo…", f"[{tool}] {base}".strip(), False
+        if tool in ("edit", "write", "patch", "multiedit"):
+            return (f"writing changes{(' to ' + base) if base else ''}…",
+                    f"[{tool}] {base}".strip(), False)
+        if tool == "bash":
+            return "running a command…", "[bash]", False
+        return None, f"[{tool}] {base}".strip(), False
+    if t == "step_start":
+        return "model is thinking…", None, False
+    if t == "text":
+        txt = part.get("text") or o.get("text") or ""
+        return None, (txt or None), False
+    if t == "error" or part.get("error"):
+        msg = o.get("error") or part.get("error") or "error"
+        return None, f"ERROR: {msg}", True
+    return None, None, False
+
+
+# Keywords that mark a model as coder-suited (sorted/flagged first in the picker).
+_CODER_HINTS = ("code", "coder", "qwen", "kimi", "deepseek", "glm", "minimax",
+                "devstral", "codestral", "starcoder", "mistral", "gpt", "claude")
+
+
+def _coder_suited(model_id: str) -> bool:
+    return any(h in (model_id or "").lower() for h in _CODER_HINTS)
+
+
+def list_coder_models() -> dict:
+    """Curated, source-grouped coder models for the picker. Three sources:
+    OpenCode Go (subscription, via opencode CLI), OpenCode Zen FREE-only (the
+    `-free` tier), and local Ollama. The returned model id encodes the backend
+    route (opencode-go/…, opencode/…, ollama/…), so picking a model is all the
+    coder/self-coder need — select_coder_backend() routes from the id.
+
+    Returns {groups: [{source, label, backend, note?, models: [{id, label,
+    suited}]}], current}."""
+    groups = []
+    go_models, zen_free, local = [], [], []
+    try:
+        from core.database import ModelEndpoint, SessionLocal
+        import json as _json
+        db = SessionLocal()
+        try:
+            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+                url = (ep.base_url or "").lower()
+                cached = _json.loads(ep.cached_models or "[]") if ep.cached_models else []
+                pinned = _json.loads(ep.pinned_models or "[]") if ep.pinned_models else []
+                ids = [m for m in (cached + pinned) if m]
+                if "/zen/go/" in url:
+                    for m in ids:
+                        bare = m.split("/", 1)[-1]
+                        go_models.append(f"opencode-go/{bare}")
+                elif "zen" in url and "opencode" in url:
+                    for m in ids:
+                        bare = m.split("/", 1)[-1]
+                        if bare.endswith("-free"):   # user: only the fully-free tier
+                            zen_free.append(f"opencode/{bare}")
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+    # Local Ollama models — prefer tool-capable ones (proper tool calls are what
+    # make the agentic editor actually write code, not just talk about it).
+    try:
+        import httpx
+        with httpx.Client(timeout=4) as client:
+            data = client.get("http://localhost:11434/api/tags").json() or {}
+        for m in (data.get("models") or []):
+            name = m.get("name", "")
+            if name:
+                local.append(f"ollama/{name}")
+    except Exception:
+        pass
+
+    def _mk(ids):
+        seen, items = set(), []
+        for mid in ids:
+            if mid in seen:
+                continue
+            seen.add(mid)
+            items.append({"id": mid, "label": mid.split("/", 1)[-1],
+                          "suited": _coder_suited(mid)})
+        # coder-suited first, then alphabetical
+        items.sort(key=lambda x: (not x["suited"], x["label"].lower()))
+        return items
+
+    if go_models:
+        groups.append({"source": "go", "label": "OpenCode Go (subscription)",
+                       "backend": "opencode", "models": _mk(go_models)})
+    if zen_free:
+        groups.append({"source": "zen-free", "label": "OpenCode Zen (free)",
+                       "backend": "opencode", "models": _mk(zen_free)})
+    if local:
+        groups.append({"source": "local", "label": "Local (Ollama)",
+                       "backend": "opencode/aider",
+                       "note": "Local models vary in tool-calling — if a run only "
+                               "prints text and makes no edits, the model isn't "
+                               "emitting proper tool calls; try a Go/Zen model.",
+                       "models": _mk(local)})
+
+    cur = ""
+    try:
+        from src.settings import get_setting
+        cur = (get_setting("aider_model", "") or "").strip()
+    except Exception:
+        pass
+    return {"groups": groups, "current": cur}
+
+
 async def list_local_models() -> list:
     """Local Ollama models as aider/litellm names ('ollama/<name>'), for the
     model picker. Best-effort — empty if Ollama isn't running."""
@@ -202,10 +494,11 @@ async def run_edit(instruction: str, files, project: str, model: str,
     if not model:
         return {"error": "Pick a coder model first.", "exit_code": 1}
 
-    from src.plugin_forge import aider_bin
-    _bin = aider_bin()
-    if not _bin:
-        return {"error": "Aider isn't installed yet — use the Install button.", "exit_code": 1}
+    sel = select_coder_backend(model)
+    if sel.get("error"):
+        return {"error": sel["error"], "exit_code": 1}
+    backend = sel["backend"]
+    backend_label = "OpenCode" if backend == "opencode" else "Aider"
 
     files = files or []
     if isinstance(files, str):
@@ -228,7 +521,7 @@ async def run_edit(instruction: str, files, project: str, model: str,
                                  capture_output=True, text=True, timeout=5).stdout.strip()
             if cur in ("main", "master"):
                 slug = _re.sub(r"[^a-z0-9]+", "-", instruction.lower())[:32].strip("-") or "edit"
-                new_branch = f"aider/{int(time.time())}-{slug}"
+                new_branch = f"{backend}/{int(time.time())}-{slug}"
                 r = subprocess.run(["git", "-C", project, "checkout", "-b", new_branch],
                                    capture_output=True, text=True, timeout=10)
                 if r.returncode == 0:
@@ -253,11 +546,9 @@ async def run_edit(instruction: str, files, project: str, model: str,
     except Exception:
         snapshot = None
 
-    _stage("Aider is editing the code…")
-    aider_model, env = resolve_aider_model(model)
-
-    cmd = [_bin, "--model", aider_model, "--yes-always", "--no-auto-commits",
-           "--no-show-model-warnings", "--message", instruction] + safe_files
+    _stage(f"{backend_label} is editing the code…")
+    cmd = build_coder_cmd(sel, instruction, safe_files, cwd=project)
+    env = sel["env"]
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -270,6 +561,17 @@ async def run_edit(instruction: str, files, project: str, model: str,
                 if not line:
                     break
                 text = line.decode(errors="replace").rstrip()
+                if backend == "opencode":
+                    # Parse the JSON event stream → readable log + stage updates.
+                    stage, log_txt, _is_err = opencode_event(text)
+                    if log_txt:
+                        lines.append(log_txt)
+                        if line_cb:
+                            try: line_cb(log_txt)
+                            except Exception: pass
+                    if stage:
+                        _stage(stage)
+                    continue
                 lines.append(text)
                 if line_cb and text:
                     try: line_cb(text)
@@ -291,11 +593,11 @@ async def run_edit(instruction: str, files, project: str, model: str,
                 proc.kill()
             except Exception:
                 pass
-            return {"error": "Aider timed out (10 min).", "exit_code": 1}
+            return {"error": f"{backend_label} timed out (10 min).", "exit_code": 1}
         await proc.wait()
         out_s = "\n".join(lines)
     except Exception as e:
-        return {"error": f"Aider run failed: {e}", "exit_code": 1}
+        return {"error": f"{backend_label} run failed: {e}", "exit_code": 1}
 
     _stage("collecting the diff…")
     diff = ""
@@ -312,17 +614,17 @@ async def run_edit(instruction: str, files, project: str, model: str,
     except Exception:
         pass
 
-    # Honest exit code: trust Aider's returncode, AND scan the output for the
-    # known failure markers Aider prints without crashing (auth errors come
-    # out as text on stdout in many providers — litellm wraps the exception
-    # then Aider just keeps the chat going with zero edits).
+    # Honest exit code: trust the backend's returncode, AND scan the output for
+    # known failure markers it prints without crashing (auth errors come out as
+    # text on stdout in many providers — litellm/opencode wrap the exception
+    # then keep the chat going with zero edits).
     rc = proc.returncode if proc.returncode is not None else 1
     out_lc = out_s.lower()
     error_markers = (
         "authenticationerror", "insufficient balance", "invalid api key",
         "rate limit", "ratelimiterror", "could not connect",
         "litellm.apiconnectionerror", "litellm.authenticationerror",
-        "litellm.notfounderror",
+        "litellm.notfounderror", "requires an api key", "unauthorized",
     )
     failed_marker = next((m for m in error_markers if m in out_lc), None)
     if failed_marker and rc == 0:
@@ -330,20 +632,21 @@ async def run_edit(instruction: str, files, project: str, model: str,
 
     branch_note = f" on branch '{branched}'" if branched else ""
     if rc != 0:
-        why = failed_marker or f"aider exited with code {rc}"
-        return {"error": f"Aider failed: {why}. See log for details.",
+        why = failed_marker or f"{backend} exited with code {rc}"
+        return {"error": f"{backend_label} failed: {why}. See log for details.",
                 "instruction": instruction, "branch_created": branched,
                 "files_used": safe_files, "auto_picked": auto_picked,
+                "backend": backend,
                 "log": out_s[-2000:], "diff": diff[:12000] or "(no changes)",
                 "exit_code": rc}
 
-    response_msg = (f"Aider applied the change in {project}{branch_note} "
+    response_msg = (f"{backend_label} applied the change in {project}{branch_note} "
                     "(not committed — review the diff).")
     if not diff.strip():
         # Honest: zero exit code AND no diff = nothing actually happened.
-        response_msg = (f"Aider exited cleanly in {project}{branch_note} but "
+        response_msg = (f"{backend_label} exited cleanly in {project}{branch_note} but "
                         "made no changes. Re-check the instruction or the model.")
     return {"response": response_msg,
             "instruction": instruction, "branch_created": branched,
-            "files_used": safe_files, "auto_picked": auto_picked,
+            "files_used": safe_files, "auto_picked": auto_picked, "backend": backend,
             "log": out_s[-2000:], "diff": diff[:12000] or "(no changes)", "exit_code": rc}

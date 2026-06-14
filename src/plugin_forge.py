@@ -242,35 +242,35 @@ async def build_with_aider(slug: str, intent: str, overwrite: bool = False) -> D
            + SCAFFOLD_GUIDE.format(intent=intent.strip()[:2000], existing="(see other plugins)")
            + "\nKeep manifest enabled=false. Edit ONLY these two files.")
     import asyncio
-    _bin = aider_bin()
-    if not _bin:
-        return {"ok": False, "detail": "aider not installed (use the Install Aider button in /manage)"}
-    from src.code_edit import resolve_aider_model
-    _aider_model, _aider_env = resolve_aider_model(model)
+    from src.code_edit import select_coder_backend, build_coder_cmd
+    sel = select_coder_backend(model)
+    if sel.get("error"):
+        return {"ok": False, "detail": sel["error"]}
+    backend = sel["backend"]
+    # Scope the edit to the two plugin files; --no-git keeps Aider from indexing
+    # the whole repo (opencode run scopes via cwd + the -f attachments).
+    cmd = build_coder_cmd(sel, msg, ["plugin.py", "plugin.json"], no_git=True, cwd=pdir)
     try:
         proc = await asyncio.create_subprocess_exec(
-            _bin, "--model", _aider_model, "--no-git", "--yes-always",
-            "--no-show-model-warnings",
-            "--message", msg, "plugin.py", "plugin.json",
-            cwd=pdir, env=_aider_env,
+            *cmd, cwd=pdir, env=sel["env"],
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         try:
             await asyncio.wait_for(proc.wait(), timeout=300)
         except asyncio.TimeoutError:
             proc.kill()
-            return {"ok": False, "detail": "Aider timed out (300s)"}
+            return {"ok": False, "detail": f"{backend} timed out (300s)"}
     except FileNotFoundError:
-        return {"ok": False, "detail": "aider not installed (pip install aider-chat)"}
+        return {"ok": False, "detail": f"{backend} not installed"}
     except Exception as e:
-        return {"ok": False, "detail": f"Aider run failed: {e}"}
+        return {"ok": False, "detail": f"{backend} run failed: {e}"}
 
     try:
         manifest = json.loads(open(os.path.join(pdir, "plugin.json"), encoding="utf-8").read())
         code = open(os.path.join(pdir, "plugin.py"), encoding="utf-8").read()
     except Exception as e:
-        return {"ok": False, "detail": f"could not read Aider output: {e}"}
+        return {"ok": False, "detail": f"could not read {backend} output: {e}"}
     res = build_from_code(slug, manifest, code, overwrite=True)
-    res["via"] = "aider"
+    res["via"] = backend
     return res
 
 

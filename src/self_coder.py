@@ -262,26 +262,30 @@ async def _run_aider(p: Dict[str, Any], instruction: str, safe_files: List[str],
     ``'failed'`` (red). ``p['last_activity_ts']`` is kept fresh throughout so the
     UI can show "last activity Ns ago" and a traffic-light state."""
     import asyncio
-    from src.plugin_forge import aider_bin
     from src.settings import get_setting
-    from src.code_edit import resolve_aider_model
+    from src.code_edit import select_coder_backend, build_coder_cmd, opencode_event
 
     stall_s = int(_get("self_coder_stall_seconds", 90) or 90)
     hard_s = int(_get("self_coder_hard_timeout", 300) or 300)
 
     model = (get_setting("aider_model", "") or "").strip()
-    aider_model, aider_env = resolve_aider_model(model)
+    sel = select_coder_backend(model)
+    if sel.get("error"):
+        p.update(status="failed", state="failed", detail=sel["error"])
+        _save(p)
+        return False
+    backend = sel["backend"]
+    # --no-pretty (aider) keeps the log parse-friendly; opencode uses --format
+    # json which build_coder_cmd already sets.
+    cmd = build_coder_cmd(sel, instruction, safe_files, pretty=False, cwd=wt)
     try:
-        # NOTE: streaming is intentionally ON (no --no-stream) so silence is a
-        # genuine signal that the model/Ollama is stuck, not just mid-generation.
+        # NOTE: streaming is intentionally ON so silence is a genuine signal
+        # that the model is stuck, not just mid-generation.
         proc = await asyncio.create_subprocess_exec(
-            aider_bin(), "--model", aider_model, "--yes-always", "--no-auto-commits",
-            "--no-show-model-warnings",
-            "--no-pretty", "--message", instruction, *safe_files,
-            cwd=wt, env=aider_env,
+            *cmd, cwd=wt, env=sel["env"],
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     except Exception as e:
-        p.update(status="failed", state="failed", detail=f"could not start aider: {e}")
+        p.update(status="failed", state="failed", detail=f"could not start {backend}: {e}")
         _save(p)
         return False
 
@@ -331,7 +335,12 @@ async def _run_aider(p: Dict[str, Any], instruction: str, safe_files: List[str],
                 p.update(state="working")
                 _progress(p, "resumed")
             txt = line.decode(errors="replace")
-            p["aider_log"] = ((p.get("aider_log") or "") + txt)[-20000:]
+            if backend == "opencode":
+                # Distill the JSON event stream into a readable heartbeat line.
+                _stage, _log, _err = opencode_event(txt)
+                txt = ((_log + "\n") if _log else "") if (_log or _err) else ""
+            if txt:
+                p["aider_log"] = ((p.get("aider_log") or "") + txt)[-20000:]
             if time.time() - last_save > 2:
                 _save(p)
                 last_save = time.time()

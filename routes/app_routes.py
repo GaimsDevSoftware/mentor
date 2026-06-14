@@ -2064,6 +2064,9 @@ _CODE = r"""<!doctype html><html><head><meta charset="utf-8">
  .mp-item:hover{background:var(--tint-2)}
  .mp-item.mp-active{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent);font-weight:500}
  .mp-empty{padding:12px;text-align:center;color:var(--faint);font-size:12px;font-style:italic}
+ .mp-note{padding:0 12px 6px;font-size:11px;color:var(--faint);line-height:1.4;font-style:italic}
+ .mp-item{display:flex;align-items:center;gap:8px}
+ .mp-suited{margin-left:auto;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:4px;padding:1px 5px;font-weight:600}
 </style></head><body>
 <nav class="topbar"><a class="jump" href="/app">Home</a><a class="jump" href="/">Chat</a><a class="jump" href="/app/office">Office</a><a class="jump" href="/app/code">Code</a><a class="jump" href="/app/cookbook">Cookbook</a><a class="jump" href="/manage">Admin</a>
  <div class="theme-switch"><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button><button data-theme-set="atlas">Atlas</button></div></nav>
@@ -2230,8 +2233,18 @@ async function loadModels(cur){
   const badge=$('#model-selected');
   const badgeName=badge.querySelector('.mp-selected-name');
   const badgeClear=badge.querySelector('.mp-selected-clear');
-  const local=[],cloud=[];
-  MODELS.forEach(m=>{(m.startsWith('ollama/')?local:cloud).push(m);});
+  // Source-grouped picker (OpenCode Go / free Zen / local). Falls back to a
+  // flat Local/Cloud split if the backend didn't send groups.
+  function fallbackGroups(){
+    const loc=[],cl=[];
+    MODELS.forEach(m=>{(String(m).startsWith('ollama/')?loc:cl).push({id:m,label:m,suited:false});});
+    const g=[];
+    if(loc.length)g.push({label:'Local (Ollama)',models:loc});
+    if(cl.length)g.push({label:'Cloud / API',models:cl});
+    return g;
+  }
+  const groups=(d&&d.groups&&d.groups.length)?d.groups:fallbackGroups();
+  const allIds=[]; groups.forEach(g=>(g.models||[]).forEach(m=>allIds.push(m.id)));
 
   function selectModel(m){
     hidden.value=m;
@@ -2256,23 +2269,24 @@ async function loadModels(cur){
   function renderList(filter){
     const q=(filter||'').toLowerCase();
     dd.innerHTML='';
-    function addGroup(label,items){
-      const filtered=q?items.filter(m=>m.toLowerCase().includes(q)):items;
+    groups.forEach(g=>{
+      const items=g.models||[];
+      const filtered=q?items.filter(m=>String(m.id).toLowerCase().includes(q)):items;
       if(!filtered.length) return;
-      const hdr=document.createElement('div');hdr.className='mp-group';hdr.textContent=label;dd.appendChild(hdr);
+      const hdr=document.createElement('div');hdr.className='mp-group';hdr.textContent=g.label;dd.appendChild(hdr);
+      if(g.note){const n=document.createElement('div');n.className='mp-note';n.textContent=g.note;dd.appendChild(n);}
       filtered.forEach(m=>{
-        const row=document.createElement('div');row.className='mp-item'+(m===hidden.value?' mp-active':'');
-        row.dataset.model=m;row.textContent=m;
-        row.onclick=()=>{selectModel(m);search.blur();};
+        const row=document.createElement('div');row.className='mp-item'+(m.id===hidden.value?' mp-active':'');
+        row.dataset.model=m.id;row.textContent=m.label||m.id;
+        if(m.suited){const t=document.createElement('span');t.className='mp-suited';t.textContent='coder';row.appendChild(t);}
+        row.onclick=()=>{selectModel(m.id);search.blur();};
         dd.appendChild(row);
       });
-    }
-    addGroup('Local',local);
-    addGroup('Cloud / API',cloud);
+    });
     if(!dd.children.length){const e=document.createElement('div');e.className='mp-empty';e.textContent=q?'No matches — type full model spec to use custom':'No models available';dd.appendChild(e);}
   }
   renderList('');
-  if(cur && MODELS.includes(cur)){ selectModel(cur); }
+  if(cur && allIds.includes(cur)){ selectModel(cur); }
   else if(cur){ selectModel(cur); }  // custom model from settings
   else { badge.style.display='none'; search.style.display=''; }
 

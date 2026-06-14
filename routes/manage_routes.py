@@ -1692,6 +1692,30 @@ def setup_manage_routes() -> APIRouter:
         from src import plugin_forge
         return {**_install_state, "installed": bool(plugin_forge.aider_bin())}
 
+    @router.get("/api/manage/coder-backend")
+    async def coder_backend_status(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
+        """Read-only: which coder backend (OpenCode CLI vs Aider) is configured,
+        which binaries are present, and what will actually run for the current
+        aider_model — so the toggle's effect is visible, not hidden."""
+        from src import plugin_forge
+        from src.code_edit import opencode_bin, select_coder_backend
+        from src.settings import get_setting
+        pref = (get_setting("coder_backend", "opencode") or "opencode").strip().lower()
+        oc = opencode_bin()
+        ai = plugin_forge.aider_bin()
+        model = (get_setting("aider_model", "") or "").strip()
+        sel = select_coder_backend(model) if model else {}
+        return {
+            "preference": pref,
+            "opencode_installed": bool(oc),
+            "opencode_bin": oc,
+            "aider_installed": bool(ai),
+            "model": model,
+            "effective_backend": sel.get("backend"),
+            "fellback": bool(sel.get("fellback")),
+            "error": sel.get("error"),
+        }
+
     @router.post("/api/setup/install-ollama")
     async def install_ollama(_admin: str = Depends(require_admin)) -> Dict[str, Any]:
         """One-click install of Ollama (the easy local engine) via the official
