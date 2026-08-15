@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/odysseus-wordmark.png" alt="Odysseus" width="238">
+  <img src="designs/mentor-identity.png" alt="Mentor" width="238">
 </p>
 
 <p align="center">
-  A self-hosted AI workspace for chat, agents, research, documents, email, notes, calendar, and local model workflows.
+  Mentor is Robert's fork of Odysseus: a self-hosted AI workspace for chat, agents, research, documents, email, notes, calendar, and local model workflows.
 </p>
 
 <p align="center">
@@ -25,11 +25,11 @@
 
 ## Quick Start
 
-> `dev` is the default branch and gets the newest changes first. Use [`main`](https://github.com/odysseus-dev/odysseus/tree/main) if you want the more curated branch.
+> This Mentor branch tracks the latest Odysseus `dev` branch. Use [`main`](https://github.com/odysseus-dev/odysseus/tree/main) if you want the more curated upstream branch.
 
 ```bash
-git clone https://github.com/odysseus-dev/odysseus.git
-cd odysseus
+git clone https://github.com/GaimsDevSoftware/mentor.git
+cd mentor
 cp .env.example .env
 docker compose up -d --build
 ```
