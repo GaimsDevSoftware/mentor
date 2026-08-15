@@ -102,7 +102,11 @@ open_ui() {
         exe="$(/usr/bin/defaults read "$base/$b.app/Contents/Info" CFBundleExecutable 2>/dev/null)"
         bin="$base/$b.app/Contents/MacOS/$exe"
         if [ -x "$bin" ]; then
-          "$bin" --app="$URL" --new-window >/dev/null 2>&1 &
+          if [ "$(uname -m)" = "arm64" ]; then
+            arch -arm64 "$bin" --app="$URL" --new-window >/dev/null 2>&1 &
+          else
+            "$bin" --app="$URL" --new-window >/dev/null 2>&1 &
+          fi
           return 0
         fi
       fi
